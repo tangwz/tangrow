@@ -170,5 +170,12 @@
   "Open a file to use its tools.": "打开文件后即可使用这些工具。",
   "Insert body timestamp": "正文插入时间戳",
   "Quick actions": "快捷操作",
-  "Open task overview": "打开任务总览"
+  "Open task overview": "打开任务总览",
+  "Recently opened": "最近打开",
+  "Return to a recent note": "回到最近打开的笔记",
+  "Notes you open will appear here.": "打开过的笔记会按最近访问顺序显示在这里。",
+  "Show more opened notes": "查看更多最近打开",
+  "Return to a recent file": "回到最近打开的文件",
+  "Files you open will appear here.": "打开过的文件会按最近访问顺序显示在这里。",
+  "Show more opened files": "查看更多最近打开"
 }

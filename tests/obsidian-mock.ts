@@ -1,4 +1,18 @@
 export const notices: string[] = [];
+export const Platform = { isDesktopApp: true };
+
+class MockEvents {
+  private listeners = new Map<string, Set<(...args: unknown[]) => void>>();
+  on = (name: string, callback: (...args: unknown[]) => void): object => {
+    const callbacks = this.listeners.get(name) ?? new Set<(...args: unknown[]) => void>();
+    callbacks.add(callback);
+    this.listeners.set(name, callbacks);
+    return { name, callback };
+  };
+  trigger = (name: string, ...args: unknown[]): void => {
+    for (const callback of this.listeners.get(name) ?? []) callback(...args);
+  };
+}
 
 export class TFolder {
   name: string;
@@ -38,10 +52,12 @@ export function parseYaml(content: string): Record<string, unknown> {
 }
 
 export class MockVault {
+  private events = new MockEvents();
   entries = new Map<string, TFile | TFolder>();
   createdPaths: string[] = [];
   processedPaths: string[] = [];
   failCreates = 0;
+  getMarkdownFilesCalls = 0;
 
   seedFolder(path: string): TFolder {
     const existing = this.entries.get(path);
@@ -62,7 +78,7 @@ export class MockVault {
     return file;
   }
   getAbstractFileByPath(path: string): TFile | TFolder | null { return this.entries.get(path) ?? null; }
-  getMarkdownFiles(): TFile[] { return [...this.entries.values()].filter((file): file is TFile => file instanceof TFile && file.extension === 'md'); }
+  getMarkdownFiles(): TFile[] { this.getMarkdownFilesCalls++; return [...this.entries.values()].filter((file): file is TFile => file instanceof TFile && file.extension === 'md'); }
   getFiles(): TFile[] { return [...this.entries.values()].filter((file): file is TFile => file instanceof TFile); }
   getAllFolders(): TFolder[] { return [...this.entries.values()].filter((entry): entry is TFolder => entry instanceof TFolder); }
   async createFolder(path: string): Promise<void> {
@@ -89,7 +105,39 @@ export class MockVault {
     }
     return next;
   }
-  on(): object { return {}; }
+  async rename(entry: TFile | TFolder, path: string): Promise<void> {
+    const oldPath = entry.path;
+    const changed = [...this.entries.values()].filter((item) => item.path === oldPath || item.path.startsWith(`${oldPath}/`));
+    for (const item of changed) this.entries.delete(item.path);
+    for (const item of changed) {
+      item.path = path + item.path.slice(oldPath.length);
+      item.name = item.path.split('/').at(-1) ?? '';
+      if (item instanceof TFile) {
+        const dot = item.name.lastIndexOf('.');
+        item.basename = dot < 0 ? item.name : item.name.slice(0, dot);
+        item.extension = dot < 0 ? '' : item.name.slice(dot + 1);
+      }
+      this.entries.set(item.path, item);
+    }
+    for (const item of changed) {
+      const slash = item.path.lastIndexOf('/');
+      item.parent = slash < 0 ? null : this.seedFolder(item.path.slice(0, slash));
+    }
+    this.trigger('rename', entry, oldPath);
+  }
+  async delete(entry: TFile | TFolder): Promise<void> {
+    for (const path of [...this.entries.keys()]) {
+      if (path === entry.path || path.startsWith(`${entry.path}/`)) this.entries.delete(path);
+    }
+    this.trigger('delete', entry);
+  }
+  on = this.events.on;
+  trigger = this.events.trigger;
+}
+
+interface MockNavigationLeaf {
+  view: { getViewType(): string };
+  openFile(file: TFile): Promise<void>;
 }
 
 export function createMockApp() {
@@ -99,9 +147,25 @@ export function createMockApp() {
   let mostRecentLeaf: { view: MarkdownView } | null = null;
   const rootLeaves: { view: MarkdownView }[] = [];
   const locatedFiles: string[] = [];
+  const workspaceEvents = new MockEvents();
+  const cacheEvents = new MockEvents();
+  const layoutCallbacks: (() => void)[] = [];
+  const lastOpenFiles: string[] = [];
+  const navigationRequests: ('tab' | boolean | undefined)[] = [];
+  const rootOpenedFiles: string[] = [];
+  let navigationLeaf: MockNavigationLeaf | null = null;
+  const rootFileLeaf: MockNavigationLeaf = {
+    view: { getViewType: () => 'empty' },
+    openFile: async (file) => { activeFile = file; rootOpenedFiles.push(file.path); workspaceEvents.trigger('file-open', file); }
+  };
   const workspace = {
     rootLeaves,
     locatedFiles,
+    lastOpenFiles,
+    navigationRequests,
+    rootOpenedFiles,
+    setNavigationLeaf: (leaf: MockNavigationLeaf | null): void => { navigationLeaf = leaf; },
+    getLastOpenFiles: (): string[] => [...lastOpenFiles],
     getActiveFile: (): TFile | null => activeFile,
     setActiveFile: (file: TFile | null): void => { activeFile = file; },
     setActiveView: (view: MarkdownView | null): void => { activeView = view; if (view?.file) activeFile = view.file; },
@@ -110,11 +174,16 @@ export function createMockApp() {
     getMostRecentLeaf: (): { view: MarkdownView } | null => mostRecentLeaf,
     iterateAllLeaves: (callback: (leaf: { view: MarkdownView }) => void): void => { rootLeaves.forEach(callback); },
     iterateRootLeaves: (callback: (leaf: { view: MarkdownView }) => void): void => { rootLeaves.forEach(callback); },
-    getLeaf: () => ({ openFile: async (file: TFile): Promise<void> => { activeFile = file; } }),
+    getLeaf: (newLeaf?: 'tab' | boolean): MockNavigationLeaf => {
+      navigationRequests.push(newLeaf);
+      return newLeaf === 'tab' || newLeaf === true ? rootFileLeaf : navigationLeaf ?? rootFileLeaf;
+    },
     ensureSideLeaf: async () => ({ view: { revealInFolder: async (file: TFile): Promise<void> => { locatedFiles.push(file.path); } } }),
     getLeavesOfType: (): never[] => [],
-    on: (): object => ({}),
-    onLayoutReady: (): void => {}
+    on: workspaceEvents.on,
+    trigger: workspaceEvents.trigger,
+    onLayoutReady: (callback: () => void): void => { layoutCallbacks.push(callback); },
+    emitLayoutReady: (): void => { layoutCallbacks.splice(0).forEach((callback) => callback()); }
   };
   const metadataCache = {
     getFileCache: (file: TFile) => {
@@ -125,7 +194,8 @@ export function createMockApp() {
       });
       return { frontmatter: frontmatter ? parseYaml(frontmatter) : undefined, listItems };
     },
-    on: (): object => ({})
+    on: cacheEvents.on,
+    trigger: cacheEvents.trigger
   };
   const fileManager = { generateMarkdownLink: (file: TFile): string => `[[${file.path}]]` };
   return { vault, workspace, metadataCache, fileManager };
@@ -207,7 +277,11 @@ export function setIcon(): void {}
 export function normalizePath(path: string): string { return path.replace(/\/+/g, '/').replace(/^\/+|\/+$/g, ''); }
 export function moment(input?: string | number | Date): { format(pattern: string): string } {
   const date = input === undefined ? new Date(Date.now()) : new Date(input);
-  return { format: (pattern) => pattern === 'YYYY-MM-DD' ? date.toISOString().slice(0, 10) : date.toISOString() };
+  const parts: Record<string, string> = {
+    YYYY: String(date.getFullYear()), MM: String(date.getMonth() + 1).padStart(2, '0'), DD: String(date.getDate()).padStart(2, '0'),
+    HH: String(date.getHours()).padStart(2, '0'), mm: String(date.getMinutes()).padStart(2, '0'), ss: String(date.getSeconds()).padStart(2, '0'), Z: '+00:00'
+  };
+  return { format: (pattern) => pattern.replace(/\[[^\]]*\]|YYYY|MM|DD|HH|mm|ss|Z/g, (token) => token.startsWith('[') ? token.slice(1, -1) : parts[token]!) };
 }
 export function setTooltip(): void {}
 export function getFrontMatterInfo(content: string): { exists: boolean; frontmatter: string; from: number; to: number; contentStart: number } {

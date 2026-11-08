@@ -5,6 +5,9 @@ import { dayKey, inFolder, readSession, readSettings, recentDays, safeFolder, sa
 import { openNativeSettings, revealInFileList, runNativeCommand } from './compat';
 import { TangrowSidebar, VIEW_TYPE } from './sidebar';
 import { TangrowReport, REPORT_VIEW_TYPE } from './report';
+import { TangrowCapture, CAPTURE_VIEW_TYPE, openCaptureWindow as revealCaptureWindow } from './capture-window';
+import { captureCreated, sortCaptures } from './capture-data';
+import { normalizeRecentOpened, recordRecentOpened, renameRecentOpened, removeRecentOpened } from './recent-opened';
 import { stampHeadingDate } from './note-tools';
 import { matchesGeneratedContent } from './managed-files';
 import { translate, describeError, type TranslationValues } from './i18n';
@@ -12,7 +15,7 @@ import { DEFAULT_SETTINGS, type ComposerState, type Habit, type Locale, type Act
 
 const dateTime = moment as unknown as (input?: number | string | Date) => { format(pattern: string): string };
 
-interface SavedData { version: number; settings: Settings; focus: FocusSession | null; scratch: string; composer: ComposerState }
+interface SavedData { version: number; settings: Settings; focus: FocusSession | null; scratch: string; composer: ComposerState; recentOpened: string[] }
 
 class PromptModal extends Modal {
   constructor(app: Plugin['app'], private title: string, private placeholder: string, private submit: (value: string) => Promise<void>, private language: Locale) { super(app); }
@@ -40,6 +43,10 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   private focus: FocusSession | null = null;
   private scratch = '';
   private composer: ComposerState = { capture: '', scratchTitle: '' };
+  private composerListeners = new Set<() => void>();
+  private captureRevision = 0;
+  private captureSubmissions = new Map<number, Promise<void>>();
+  private recentOpened: string[] = [];
   private listeners = new Set<() => void>();
   private writes: Promise<unknown> = Promise.resolve();
   private operations: Promise<unknown> = Promise.resolve();
@@ -56,7 +63,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   private ribbon: HTMLElement | null = null;
 
   async onload(): Promise<void> {
-    const stored = await this.loadData() as Partial<SavedData> | null;
+    const stored = (await this.loadData() ?? null) as Partial<SavedData> | null;
     this.settings = readSettings(stored?.settings);
     this.focus = readSession(stored?.focus);
     this.scratch = typeof stored?.scratch === 'string' ? stored.scratch : '';
@@ -64,6 +71,8 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       capture: typeof stored?.composer?.capture === 'string' ? stored.composer.capture : '',
       scratchTitle: typeof stored?.composer?.scratchTitle === 'string' ? stored.composer.scratchTitle : ''
     };
+    const hasHistory = stored !== null && Object.hasOwn(stored, 'recentOpened');
+    this.recentOpened = normalizeRecentOpened(hasHistory ? stored.recentOpened : this.app.workspace.getLastOpenFiles(), (path) => this.app.vault.getAbstractFileByPath(path) instanceof TFile);
     if (this.focus) {
       const session = this.focus;
       try {
@@ -76,22 +85,33 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     }
     this.registerView(VIEW_TYPE, (leaf: WorkspaceLeaf) => new TangrowSidebar(leaf, this));
     this.registerView(REPORT_VIEW_TYPE, (leaf: WorkspaceLeaf) => new TangrowReport(leaf, this));
+    this.registerView(CAPTURE_VIEW_TYPE, (leaf: WorkspaceLeaf) => new TangrowCapture(leaf, this));
     if (!stored?.settings?.language && this.settings.language === 'zh-CN') {
       await this.localizeManagedFiles('en');
       await this.persist();
+    }
+    if (stored?.version !== 3 || !hasHistory || JSON.stringify(stored.recentOpened) !== JSON.stringify(this.recentOpened)) {
+      try { await this.persist(); } catch (error) { new Notice(this.error(error)); }
     }
     this.ribbon = this.addRibbonIcon('sprout', this.t('Open Tangrow'), () => { void this.openSidebar().catch((error) => new Notice(this.error(error))); });
     this.registerCommands();
     this.addSettingTab(new TangrowSettings(this));
     const refresh = (): void => this.scheduleRefresh();
-    this.registerEvent(this.app.workspace.on('file-open', refresh));
+    this.registerEvent(this.app.workspace.on('file-open', (file) => {
+      if (file instanceof TFile) this.updateRecentOpened(recordRecentOpened(this.recentOpened, file.path, (path) => this.app.vault.getAbstractFileByPath(path) instanceof TFile));
+      refresh();
+    }));
     this.registerEvent(this.app.workspace.on('active-leaf-change', refresh));
     this.registerEvent(this.app.metadataCache.on('changed', refresh));
     this.registerEvent(this.app.metadataCache.on('resolved', refresh));
     this.registerEvent(this.app.vault.on('create', refresh));
-    this.registerEvent(this.app.vault.on('delete', refresh));
+    this.registerEvent(this.app.vault.on('delete', (file) => {
+      this.updateRecentOpened(removeRecentOpened(this.recentOpened, file.path));
+      refresh();
+    }));
     this.registerEvent(this.app.vault.on('rename', (file, oldPath) => {
       if (this.widePages.delete(oldPath)) this.widePages.add(file.path);
+      this.updateRecentOpened(renameRecentOpened(this.recentOpened, oldPath, file.path, (path) => this.app.vault.getAbstractFileByPath(path) instanceof TFile));
       refresh();
     }));
     this.registerMarkdownPostProcessor((element, context) => {
@@ -122,11 +142,13 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     this.alive = false;
     this.app.workspace.getLeavesOfType(VIEW_TYPE).forEach((leaf) => leaf.detach());
     this.app.workspace.getLeavesOfType(REPORT_VIEW_TYPE).forEach((leaf) => leaf.detach());
+    this.app.workspace.getLeavesOfType(CAPTURE_VIEW_TYPE).forEach((leaf) => leaf.detach());
     window.clearTimeout(this.scratchTimer);
     window.clearTimeout(this.refreshTimer);
     void this.persist().catch((error) => console.error('Tangrow save failed', error));
     this.app.workspace.iterateAllLeaves((leaf) => leaf.view.containerEl.removeClass('tangrow-wide'));
     this.listeners.clear();
+    this.composerListeners.clear();
   }
 
   t(source: string, values?: TranslationValues): string { return translate(this.settings.language, source, values); }
@@ -134,12 +156,14 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
 
   private registerCommands(): void {
     if (this.commandsRegistered) {
-      for (const id of ['open-companion', 'open-report', 'setup-bases', 'quick-capture', 'pin-note']) this.removeCommand(id);
+      for (const id of ['open-companion', 'open-report', 'open-capture-window', 'setup-bases', 'quick-capture', 'pin-note']) this.removeCommand(id);
     }
     this.addCommand({ id: 'open-companion', name: this.t('Open companion'), callback: () => { void this.openSidebar().catch((error) => new Notice(this.error(error))); } });
     this.addCommand({ id: 'open-report', name: this.t('Open report'), callback: () => { void this.openReport().catch((error) => new Notice(this.error(error))); } });
     this.addCommand({ id: 'setup-bases', name: this.t('Set up companion Bases'), callback: () => { void this.setup().catch((error) => new Notice(this.error(error))); } });
-    this.addCommand({ id: 'quick-capture', name: this.t('Quick capture'), callback: () => new PromptModal(this.app, 'Capture a thought', 'A thought worth keeping', (text) => this.capture(text), this.settings.language).open() });
+    const captureWindow = (): void => { void this.openCaptureWindow().catch((error) => new Notice(this.error(error))); };
+    this.addCommand({ id: 'quick-capture', name: this.t('Quick capture'), callback: captureWindow });
+    this.addCommand({ id: 'open-capture-window', name: this.t('Open capture window'), callback: captureWindow });
     this.addCommand({ id: 'pin-note', name: this.t('Pin or unpin current note'), checkCallback: (checking) => {
       if (!this.activeMarkdown()) return false;
       if (!checking) void this.action('toggle-pin').catch((error) => new Notice(this.error(error)));
@@ -180,12 +204,16 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
         for (const leaf of this.app.workspace.getLeavesOfType(REPORT_VIEW_TYPE)) {
           if (leaf.view instanceof TangrowReport) leaf.view.refreshLanguage();
         }
+        for (const leaf of this.app.workspace.getLeavesOfType(CAPTURE_VIEW_TYPE)) {
+          if (leaf.view instanceof TangrowCapture) leaf.view.refreshLanguage();
+        }
         this.notify();
       }
     });
   }
 
   async openSidebar(): Promise<void> { await this.app.workspace.ensureSideLeaf(VIEW_TYPE, 'right', { active: false }); }
+  openCaptureWindow(): Promise<void> { return revealCaptureWindow(this.app, this); }
   async openReport(): Promise<void> {
     const existing = this.app.workspace.getLeavesOfType(REPORT_VIEW_TYPE)[0];
     const leaf = existing ?? this.app.workspace.getLeaf('tab');
@@ -193,6 +221,13 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     await this.app.workspace.revealLeaf(leaf);
   }
   subscribe(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+  subscribeComposer(listener: () => void): () => void { this.composerListeners.add(listener); return () => this.composerListeners.delete(listener); }
+  private updateRecentOpened(paths: string[]): void {
+    if (JSON.stringify(paths) === JSON.stringify(this.recentOpened)) return;
+    this.recentOpened = paths;
+    this.cachedSnapshot = null;
+    this.scheduleComposerSave();
+  }
   private notify(): void {
     this.cachedSnapshot = null;
     this.applyWidths();
@@ -204,7 +239,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   }
   private persist(): Promise<void> {
     const next = this.writes.catch(() => undefined).then(async () => {
-      const data: SavedData = { version: 2, settings: this.settings, focus: this.focus, scratch: this.scratch, composer: this.composer };
+      const data: SavedData = { version: 3, settings: this.settings, focus: this.focus, scratch: this.scratch, composer: this.composer, recentOpened: this.recentOpened };
       await this.saveData(structuredClone(data));
     });
     this.writes = next;
@@ -225,9 +260,18 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   loadScratch(): string { return this.scratch; }
   loadComposer(): ComposerState { return { ...this.composer }; }
   saveComposer(patch: Partial<ComposerState>): void {
-    if (typeof patch.capture === 'string') this.composer.capture = patch.capture;
-    if (typeof patch.scratchTitle === 'string') this.composer.scratchTitle = patch.scratchTitle;
+    let changed = false;
+    if (typeof patch.capture === 'string' && patch.capture !== this.composer.capture) {
+      this.composer.capture = patch.capture;
+      this.captureRevision++;
+      changed = true;
+    }
+    if (typeof patch.scratchTitle === 'string' && patch.scratchTitle !== this.composer.scratchTitle) {
+      this.composer.scratchTitle = patch.scratchTitle;
+      changed = true;
+    }
     this.scheduleComposerSave();
+    if (changed) for (const listener of this.composerListeners) listener();
   }
   saveScratch(value: string): void {
     this.scratch = value;
@@ -297,8 +341,12 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       activePinned: active ? this.app.metadataCache.getFileCache(active)?.frontmatter?.tangrow_pin === true : false,
       counts: { notes: notes.length, projects: notes.filter((file) => inFolder(file.path, this.settings.projectFolder)).length, captures: notes.filter((file) => byKind(file, 'capture')).length, drafts: notes.filter((file) => byKind(file, 'draft')).length, focusMinutes: Math.round(totalMinutes), tasks: taskNotes.length },
       recent: recent.slice(0, 8).map((file) => this.summary(file)),
+      recentOpened: this.recentOpened.flatMap((path) => {
+        const file = this.app.vault.getAbstractFileByPath(path);
+        return file instanceof TFile ? [this.summary(file)] : [];
+      }),
       pins: recent.filter((file) => this.app.metadataCache.getFileCache(file)?.frontmatter?.tangrow_pin === true).map((file) => this.summary(file)),
-      captures: recent.filter((file) => byKind(file, 'capture')).slice(0, 12).map((file) => this.summary(file)),
+      captures: sortCaptures(notes.filter((file) => byKind(file, 'capture')).map((file) => ({ ...this.summary(file), created: captureCreated(this.app.metadataCache.getFileCache(file)?.frontmatter?.created, file.stat.ctime, file.stat.mtime) }))),
       drafts: recent.filter((file) => byKind(file, 'draft')).slice(0, 12).map((file) => this.summary(file)),
       tasks: taskNotes,
       habits: this.settings.habits.map((habit) => {
@@ -362,7 +410,8 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   async openNote(path: string, line?: number): Promise<void> {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile)) throw new Error('This note no longer exists.');
-    const leaf = this.app.workspace.getLeaf(false);
+    const candidate = this.app.workspace.getLeaf(false);
+    const leaf = candidate.view.getViewType() === CAPTURE_VIEW_TYPE ? this.app.workspace.getLeaf('tab') : candidate;
     await leaf.openFile(file, { active: true, eState: line === undefined ? undefined : { line } });
   }
   async createNote(kind: NoteKind, title: string, projectFolder?: string): Promise<void> {
@@ -388,6 +437,28 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     await this.exclusive(() => this.createUnique(this.settings.inboxFolder, title, text, { tangrow_kind: 'capture', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') }));
     this.notify();
     new Notice(this.t('Captured in your inbox.'));
+  }
+  submitCaptureDraft(): Promise<void> {
+    const source = this.composer.capture;
+    if (!source.trim()) return Promise.reject(new Error('Write something before saving.'));
+    const revision = this.captureRevision;
+    const pending = this.captureSubmissions.get(revision);
+    if (pending) return pending;
+    const submission = this.capture(source).then(async () => {
+      if (this.captureRevision === revision && this.composer.capture === source) this.saveComposer({ capture: '' });
+      try { await this.persist(); }
+      catch {
+        new Notice(this.t('Capture saved, but draft state could not be saved. It will be retried.'));
+        this.scheduleComposerSave();
+      }
+    }).finally(() => { this.captureSubmissions.delete(revision); });
+    this.captureSubmissions.set(revision, submission);
+    return submission;
+  }
+  async readCapture(path: string): Promise<string> {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile) || file.extension !== 'md' || this.app.metadataCache.getFileCache(file)?.frontmatter?.tangrow_kind !== 'capture') throw new Error('This capture no longer exists.');
+    return this.app.vault.cachedRead(file);
   }
   async saveDraft(text: string, title: string): Promise<void> {
     if (!text.trim()) throw new Error('Write a draft before saving.');

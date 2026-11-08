@@ -15,6 +15,8 @@ interface TestPlugin extends MockPlugin {
   writes: Promise<unknown>;
   onload(): Promise<void>;
   setup(): Promise<void>;
+  openNote(path: string, line?: number): Promise<void>;
+  openBase(id: 'captures'): Promise<void>;
   snapshot(): Snapshot;
   action(id: ActionId): Promise<void>;
   createNote(kind: NoteKind, title: string, projectFolder?: string): Promise<void>;
@@ -23,6 +25,10 @@ interface TestPlugin extends MockPlugin {
   saveScratch(value: string): void;
   loadComposer(): ComposerState;
   saveComposer(patch: Partial<ComposerState>): void;
+  subscribe(listener: () => void): () => void;
+  subscribeComposer(listener: () => void): () => void;
+  submitCaptureDraft(): Promise<void>;
+  readCapture(path: string): Promise<string>;
   startFocus(minutes: number): Promise<void>;
   pauseFocus(): Promise<void>;
   resumeFocus(): Promise<void>;
@@ -39,13 +45,15 @@ interface Harness {
   TFolder: typeof MockFolder;
   MarkdownView: typeof MockMarkdownView;
   notices: string[];
+  Platform: { isDesktopApp: boolean };
+  openCaptureWindow(app: unknown, host: unknown): Promise<void>;
 }
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const bundled = await build({
   absWorkingDir: repository,
   stdin: {
-    contents: "export { default as TangrowPlugin } from './src/main'; export * from './tests/obsidian-mock';",
+    contents: "export { default as TangrowPlugin } from './src/main'; export { openCaptureWindow } from './src/capture-window'; export * from './tests/obsidian-mock';",
     resolveDir: repository,
     sourcefile: 'integration-entry.ts',
     loader: 'ts'
@@ -612,5 +620,377 @@ test('a completed focus record blocks resume and reload recovers the stopped ses
       assert.equal(record.content, recordedContent);
       assert.equal(harness.notices.at(-1), 'Focus saved: 3 minutes.');
     });
+  });
+});
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+function captureFiles(app: MockApp): MockFile[] {
+  return app.vault.getMarkdownFiles().filter((file) => app.metadataCache.getFileCache(file).frontmatter?.tangrow_kind === 'capture');
+}
+
+test('shared composers notify each subscriber synchronously without refreshing vault snapshots', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    plugin.snapshot();
+    const scans = app.vault.getMarkdownFilesCalls;
+    let fullUpdates = 0;
+    const first: ComposerState[] = [];
+    const second: ComposerState[] = [];
+    const stopFull = plugin.subscribe(() => { fullUpdates++; });
+    const stopFirst = plugin.subscribeComposer(() => first.push(plugin.loadComposer()));
+    const stopSecond = plugin.subscribeComposer(() => second.push(plugin.loadComposer()));
+    plugin.saveComposer({ capture: 'The shared capture.' });
+    assert.deepEqual(first, [{ capture: 'The shared capture.', scratchTitle: '' }]);
+    assert.deepEqual(second, first);
+    plugin.saveComposer({ scratchTitle: 'The shared title' });
+    assert.deepEqual(first.at(-1), { capture: 'The shared capture.', scratchTitle: 'The shared title' });
+    assert.deepEqual(second, first);
+    stopFirst();
+    plugin.saveComposer({ capture: 'A newer shared capture.' });
+    assert.equal(first.length, 2);
+    assert.equal(second.length, 3);
+    assert.equal(second.at(-1)?.capture, 'A newer shared capture.');
+    assert.equal(fullUpdates, 0);
+    assert.equal(app.vault.getMarkdownFilesCalls, scans);
+    stopSecond();
+    stopFull();
+  });
+});
+
+test('concurrent submissions of the same shared capture create one record and clear every client view', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    const firstClient: string[] = [];
+    const secondClient: string[] = [];
+    plugin.subscribeComposer(() => firstClient.push(plugin.loadComposer().capture));
+    plugin.subscribeComposer(() => secondClient.push(plugin.loadComposer().capture));
+    plugin.saveComposer({ capture: 'Save this thought exactly once.' });
+    const first = plugin.submitCaptureDraft();
+    const second = plugin.submitCaptureDraft();
+    const third = plugin.submitCaptureDraft();
+    assert.equal(second, first);
+    assert.equal(third, first);
+    await Promise.all([first, second, third]);
+    const records = captureFiles(app);
+    assert.equal(records.length, 1);
+    assert.ok(records[0]!.content.includes('Save this thought exactly once.'));
+    assert.equal(plugin.loadComposer().capture, '');
+    assert.equal(firstClient.at(-1), '');
+    assert.deepEqual(secondClient, firstClient);
+  });
+});
+
+test('text entered while a shared capture is being saved remains available for the next submission', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    plugin.saveComposer({ capture: 'The thought already being saved.' });
+    const entered = deferred();
+    const release = deferred();
+    const originalCreate = app.vault.create.bind(app.vault);
+    app.vault.create = async (path, content) => {
+      entered.resolve();
+      await release.promise;
+      return originalCreate(path, content);
+    };
+    const saving = plugin.submitCaptureDraft();
+    await entered.promise;
+    plugin.saveComposer({ capture: 'The newer thought typed during the save.' });
+    release.resolve();
+    await saving;
+    assert.equal(plugin.loadComposer().capture, 'The newer thought typed during the save.');
+    assert.equal(captureFiles(app).length, 1);
+    assert.ok(captureFiles(app)[0]!.content.includes('The thought already being saved.'));
+    await plugin.submitCaptureDraft();
+    assert.equal(captureFiles(app).length, 2);
+    assert.equal(plugin.loadComposer().capture, '');
+    assert.ok(captureFiles(app).some((file) => file.content.includes('The newer thought typed during the save.')));
+  });
+});
+
+test('failed shared capture submissions retain the draft and release the submission guard for retry', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    plugin.saveComposer({ capture: 'Keep this thought when writing fails.' });
+    app.vault.failCreates = 1;
+    await assert.rejects(plugin.submitCaptureDraft(), /Simulated vault write failure/);
+    assert.equal(plugin.loadComposer().capture, 'Keep this thought when writing fails.');
+    assert.equal(captureFiles(app).length, 0);
+    await plugin.submitCaptureDraft();
+    assert.equal(captureFiles(app).length, 1);
+    assert.equal(plugin.loadComposer().capture, '');
+  });
+});
+
+test('capture history exposes every record with its creation timestamp and lazy content reads', async () => {
+  const { plugin, app } = createPlugin();
+  const expected = new Map<string, number>();
+  for (let index = 0; index < 20; index++) {
+    const timestamp = Date.UTC(2026, 10, 1) + index * 60_000;
+    const file = app.vault.seedFile(`00-Inbox/Capture ${index}.md`, `---\ntangrow_kind: "capture"\ncreated: "${new Date(timestamp).toISOString()}"\n---\n\n# Capture ${index}\n\nSaved thought ${index}.\n`);
+    file.stat.mtime = Date.UTC(2026, 10, 2) - index * 60_000;
+    expected.set(file.path, timestamp);
+  }
+  const history = plugin.snapshot().captures;
+  assert.equal(history.length, 20);
+  assert.equal(plugin.snapshot().counts.captures, 20);
+  for (const capture of history) assert.equal(capture.created, expected.get(capture.path));
+  const content = await plugin.readCapture('00-Inbox/Capture 0.md');
+  assert.ok(content.includes('Saved thought 0.'));
+  assert.equal(app.vault.createdPaths.length, 0);
+});
+
+test('recently opened notes seed from native history and file opens are distinct from modifications', async () => {
+  await withWindow(async (timers) => {
+    const { plugin, app } = createPlugin();
+    const first = app.vault.seedFile('00-Inbox/First note.md', '# First note\n');
+    const second = app.vault.seedFile('00-Inbox/Second note.md', '# Second note\n');
+    const modifiedOnly = app.vault.seedFile('00-Inbox/Modified only.md', '# Modified only\n');
+    app.workspace.lastOpenFiles.push(second.path, first.path, second.path, '00-Inbox/Missing note.md');
+    plugin.savedData = { version: 2, settings: { ...plugin.settings, language: 'en' }, focus: null, scratch: '', composer: { capture: '', scratchTitle: '' } };
+    await plugin.onload();
+    app.workspace.emitLayoutReady();
+    assert.deepEqual(plugin.snapshot().recentOpened.map((note) => note.path), [second.path, first.path]);
+    modifiedOnly.stat.mtime += 1000;
+    app.vault.trigger('modify', modifiedOnly);
+    app.metadataCache.trigger('changed', modifiedOnly);
+    timers.flush();
+    await plugin.writes;
+    assert.deepEqual(plugin.snapshot().recentOpened.map((note) => note.path), [second.path, first.path]);
+    app.workspace.setActiveFile(first);
+    app.workspace.trigger('file-open', first);
+    timers.flush();
+    await plugin.writes;
+    assert.deepEqual(plugin.snapshot().recentOpened.map((note) => note.path), [first.path, second.path]);
+    app.workspace.trigger('file-open', first);
+    app.workspace.trigger('file-open', null);
+    timers.flush();
+    await plugin.writes;
+    assert.deepEqual(plugin.snapshot().recentOpened.map((note) => note.path), [first.path, second.path]);
+  });
+});
+
+test('recently opened notes track renames and deletions and remain bounded after persistence reload', async () => {
+  await withWindow(async (timers) => {
+    const { plugin, app } = createPlugin();
+    plugin.savedData = { version: 3, settings: { ...plugin.settings, language: 'en' }, focus: null, scratch: 'Keep scratch.', composer: { capture: 'Keep capture.', scratchTitle: 'Keep title.' }, recentOpened: [] };
+    await plugin.onload();
+    const notes = Array.from({ length: 55 }, (_, index) => app.vault.seedFile(`00-Inbox/History/Note ${index}.md`, `# Note ${index}\n`));
+    for (const note of notes) app.workspace.trigger('file-open', note);
+    timers.flush();
+    await plugin.writes;
+    assert.equal(plugin.snapshot().recentOpened.length, 50);
+    assert.deepEqual(plugin.snapshot().recentOpened.map((note) => note.path), notes.slice(5).reverse().map((note) => note.path));
+    const newest = notes.at(-1)!;
+    await app.vault.rename(newest, '00-Inbox/History/Renamed note.md');
+    timers.flush();
+    await plugin.writes;
+    assert.equal(plugin.snapshot().recentOpened[0]?.path, newest.path);
+    const historyFolder = app.vault.getAbstractFileByPath('00-Inbox/History') as MockFolder;
+    await app.vault.rename(historyFolder, '00-Inbox/Renamed history');
+    timers.flush();
+    await plugin.writes;
+    assert.ok(plugin.snapshot().recentOpened.every((note) => note.path.startsWith('00-Inbox/Renamed history/')));
+    await app.vault.delete(newest);
+    timers.flush();
+    await plugin.writes;
+    assert.equal(plugin.snapshot().recentOpened.length, 49);
+    const expected = plugin.snapshot().recentOpened.map((note) => note.path);
+    const persisted = structuredClone(plugin.savedData) as { version: number; recentOpened: string[] };
+    assert.equal(persisted.version, 3);
+    assert.deepEqual(persisted.recentOpened, expected);
+    const reloadedApp = harness.createMockApp();
+    for (const file of app.vault.getFiles()) reloadedApp.vault.seedFile(file.path, file.content);
+    const reloaded = new harness.TangrowPlugin(reloadedApp);
+    reloaded.savedData = persisted;
+    await reloaded.onload();
+    reloadedApp.workspace.emitLayoutReady();
+    assert.deepEqual(reloaded.snapshot().recentOpened.map((note) => note.path), expected);
+    assert.equal(reloaded.loadScratch(), 'Keep scratch.');
+    assert.deepEqual(reloaded.loadComposer(), { capture: 'Keep capture.', scratchTitle: 'Keep title.' });
+    const renamedFolder = app.vault.getAbstractFileByPath('00-Inbox/Renamed history') as MockFolder;
+    await app.vault.delete(renamedFolder);
+    timers.flush();
+    await plugin.writes;
+    assert.deepEqual(plugin.snapshot().recentOpened, []);
+  });
+});
+
+interface CaptureContainer { win: { focus: () => void } }
+interface CaptureLeaf {
+  viewType: string;
+  container: CaptureContainer;
+  stateChanges: number;
+  setViewState(state: { type: string }): Promise<void>;
+  getContainer(): CaptureContainer;
+  detach(): void;
+}
+
+function createCaptureWorkspace() {
+  let focusCalls = 0;
+  let detached = 0;
+  let failNextViewState = false;
+  const leaves: CaptureLeaf[] = [];
+  const rootSplit: CaptureContainer = { win: { focus: () => { focusCalls++; } } };
+  const popout: CaptureContainer = { win: { focus: () => { focusCalls++; } } };
+  const calls = { popout: [] as unknown[], tabs: [] as unknown[], moved: [] as unknown[], revealed: [] as CaptureLeaf[] };
+  const createLeaf = (container: CaptureContainer): CaptureLeaf => {
+    const leaf: CaptureLeaf = {
+      viewType: '', container, stateChanges: 0,
+      async setViewState(state): Promise<void> {
+        this.stateChanges++;
+        if (failNextViewState) { failNextViewState = false; throw new Error('Simulated view activation failure'); }
+        this.viewType = state.type;
+      },
+      getContainer(): CaptureContainer { return this.container; },
+      detach(): void { detached++; const index = leaves.indexOf(this); if (index >= 0) leaves.splice(index, 1); }
+    };
+    leaves.push(leaf);
+    return leaf;
+  };
+  const workspace = {
+    rootSplit,
+    getLeavesOfType: (type: string): CaptureLeaf[] => leaves.filter((leaf) => leaf.viewType === type),
+    openPopoutLeaf: (options: unknown): CaptureLeaf => { calls.popout.push(options); return createLeaf(popout); },
+    getLeaf: (mode: unknown): CaptureLeaf => { calls.tabs.push(mode); return createLeaf(rootSplit); },
+    moveLeafToPopout: (leaf: CaptureLeaf, options: unknown): void => { calls.moved.push(options); leaf.container = popout; },
+    revealLeaf: async (leaf: CaptureLeaf): Promise<void> => { calls.revealed.push(leaf); }
+  };
+  return { workspace, leaves, calls, createLeaf, failActivation: () => { failNextViewState = true; }, focusCalls: () => focusCalls, detached: () => detached };
+}
+
+test('concurrent desktop capture-window opens share one activation and later opens reuse its leaf', async () => {
+  const { plugin } = createPlugin();
+  const state = createCaptureWorkspace();
+  const app = { workspace: state.workspace };
+  const previous = harness.Platform.isDesktopApp;
+  harness.Platform.isDesktopApp = true;
+  try {
+    const first = harness.openCaptureWindow(app, plugin);
+    const second = harness.openCaptureWindow(app, plugin);
+    assert.equal(first, second);
+    await Promise.all([first, second]);
+    assert.equal(state.calls.popout.length, 1);
+    assert.equal(state.calls.tabs.length, 0);
+    assert.equal(state.leaves.length, 1);
+    assert.equal(state.leaves[0]?.stateChanges, 1);
+    assert.equal(state.leaves[0]?.viewType, 'tangrow-capture');
+    assert.equal(state.focusCalls(), 1);
+    const options = state.calls.popout[0] as { size: { width: number; height: number } };
+    assert.ok(options.size.width > 0 && options.size.height > 0);
+    await harness.openCaptureWindow(app, plugin);
+    assert.equal(state.calls.popout.length, 1);
+    assert.equal(state.leaves[0]?.stateChanges, 1);
+    assert.equal(state.focusCalls(), 2);
+  } finally { harness.Platform.isDesktopApp = previous; }
+});
+
+test('capture-window opening uses a root tab on mobile and promotes an existing desktop root leaf', async () => {
+  const { plugin } = createPlugin();
+  const previous = harness.Platform.isDesktopApp;
+  try {
+    harness.Platform.isDesktopApp = false;
+    const mobile = createCaptureWorkspace();
+    await harness.openCaptureWindow({ workspace: mobile.workspace }, plugin);
+    assert.deepEqual(mobile.calls.tabs, ['tab']);
+    assert.deepEqual(mobile.calls.popout, []);
+    assert.equal(mobile.leaves[0]?.container, mobile.workspace.rootSplit);
+    harness.Platform.isDesktopApp = true;
+    const desktop = createCaptureWorkspace();
+    const existing = desktop.createLeaf(desktop.workspace.rootSplit);
+    existing.viewType = 'tangrow-capture';
+    await harness.openCaptureWindow({ workspace: desktop.workspace }, plugin);
+    assert.equal(desktop.calls.moved.length, 1);
+    assert.deepEqual(desktop.calls.popout, []);
+    assert.equal(desktop.leaves[0], existing);
+    assert.notEqual(existing.container, desktop.workspace.rootSplit);
+    assert.equal(desktop.focusCalls(), 1);
+  } finally { harness.Platform.isDesktopApp = previous; }
+});
+
+test('failed capture-window activation detaches the new leaf and allows a clean retry', async () => {
+  const { plugin } = createPlugin();
+  const state = createCaptureWorkspace();
+  const app = { workspace: state.workspace };
+  state.failActivation();
+  await assert.rejects(harness.openCaptureWindow(app, plugin), /Simulated view activation failure/);
+  assert.equal(state.detached(), 1);
+  assert.equal(state.leaves.length, 0);
+  await harness.openCaptureWindow(app, plugin);
+  assert.equal(state.leaves.length, 1);
+  assert.equal(state.leaves[0]?.viewType, 'tangrow-capture');
+  assert.equal(state.focusCalls(), 1);
+});
+
+test('capture state-save failures retry only the cleared draft state without duplicating the saved note', async () => {
+  await withWindow(async (timers) => {
+    const { plugin, app } = createPlugin();
+    plugin.settings.language = 'en';
+    plugin.saveComposer({ capture: 'A thought already saved as a note.' });
+    timers.flush();
+    await plugin.writes;
+    assert.equal((plugin.savedData as { composer: ComposerState }).composer.capture, 'A thought already saved as a note.');
+    plugin.saveFailures = 1;
+    const first = plugin.submitCaptureDraft();
+    const concurrent = plugin.submitCaptureDraft();
+    assert.equal(concurrent, first);
+    await Promise.all([first, concurrent]);
+    const records = captureFiles(app);
+    assert.equal(records.length, 1);
+    const savedContent = records[0]!.content;
+    assert.equal(plugin.loadComposer().capture, '');
+    assert.equal((plugin.savedData as { composer: ComposerState }).composer.capture, 'A thought already saved as a note.');
+    assert.equal(harness.notices.at(-1), 'Capture saved, but draft state could not be saved. It will be retried.');
+    timers.flush();
+    await plugin.writes;
+    assert.equal((plugin.savedData as { composer: ComposerState }).composer.capture, '');
+    assert.equal(captureFiles(app).length, 1);
+    assert.equal(records[0]!.content, savedContent);
+    const reloaded = new harness.TangrowPlugin(app);
+    reloaded.savedData = structuredClone(plugin.savedData);
+    await reloaded.onload();
+    assert.equal(reloaded.loadComposer().capture, '');
+    assert.equal(captureFiles(app).length, 1);
+    assert.equal(records[0]!.content, savedContent);
+  });
+});
+
+test('opening capture sources and Bases preserves the capture popout and its shared draft', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    const note = app.vault.seedFile('00-Inbox/Capture source.md', '# Capture source\n\nSaved content.\n');
+    const replacedCaptureFiles: string[] = [];
+    let captureMounted = true;
+    app.workspace.setNavigationLeaf({
+      view: { getViewType: () => 'tangrow-capture' },
+      openFile: async (file) => { captureMounted = false; replacedCaptureFiles.push(file.path); }
+    });
+    plugin.saveComposer({ capture: 'Keep this unfinished thought in the popout.' });
+    await plugin.openNote(note.path, 2);
+    assert.deepEqual(app.workspace.navigationRequests, [false, 'tab']);
+    assert.deepEqual(app.workspace.rootOpenedFiles, [note.path]);
+    assert.equal(captureMounted, true);
+    assert.deepEqual(replacedCaptureFiles, []);
+    assert.equal(plugin.loadComposer().capture, 'Keep this unfinished thought in the popout.');
+    await plugin.openBase('captures');
+    assert.equal(app.workspace.navigationRequests.at(-1), 'tab');
+    assert.equal(app.workspace.rootOpenedFiles.at(-1), `${plugin.settings.supportFolder}/Tangrow Captures.base`);
+    assert.equal(captureMounted, true);
+    assert.deepEqual(replacedCaptureFiles, []);
+    assert.equal(plugin.loadComposer().capture, 'Keep this unfinished thought in the popout.');
+
+    const navigatedFiles: string[] = [];
+    app.workspace.setNavigationLeaf({
+      view: { getViewType: () => 'markdown' },
+      openFile: async (file) => { navigatedFiles.push(file.path); }
+    });
+    const requests = app.workspace.navigationRequests.length;
+    await plugin.openNote(note.path);
+    assert.deepEqual(app.workspace.navigationRequests.slice(requests), [false]);
+    assert.deepEqual(navigatedFiles, [note.path]);
   });
 });

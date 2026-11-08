@@ -323,3 +323,113 @@
   .tangrow-report-panel { padding: 16px; }
   .tangrow-report-chart-axis > span:nth-child(2) { display: none; }
 }
+
+/* Capture calendar and timeline */
+.tangrow-capture-panel,
+.tangrow-capture-window {
+  --tangrow-tint: color-mix(in srgb, var(--interactive-accent) 8%, var(--background-primary));
+  --tangrow-line: var(--background-modifier-border);
+  --tangrow-radius: 10px;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+}
+.tangrow-capture-panel { container-type: inline-size; min-width: 0; }
+.tangrow-capture-panel > .tangrow-section-title:first-child { margin-top: 0; }
+.tangrow-capture-panel .tangrow-composer-footer { flex-wrap: wrap; }
+.tangrow-capture-panel .tangrow-composer-footer .tangrow-muted { min-width: 0; }
+.tangrow-capture-panel .tangrow-button:focus-visible,
+.tangrow-capture-panel .tangrow-capture-day:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; }
+.tangrow-capture-panel .tangrow-destination { margin: 9px 1px 11px; }
+.tangrow-capture-popout { justify-content: center; color: var(--text-muted); font-size: 10px; min-height: 31px; margin-bottom: 20px; }
+.tangrow-capture-popout .tangrow-icon svg { width: 13px; height: 13px; }
+.tangrow-capture-calendar { border: 1px solid var(--tangrow-line); border-radius: 12px; padding: 12px 10px 9px; margin-top: 20px; background: var(--background-primary); }
+.tangrow-capture-calendar-heading { display: grid; grid-template-columns: 28px minmax(0, 1fr) 28px; gap: 8px; align-items: center; margin-bottom: 11px; }
+.tangrow-capture-calendar-heading h3 { margin: 0; text-align: center; color: var(--text-normal); font-size: 12px; font-weight: 600; letter-spacing: 0; }
+.tangrow-capture-icon-button { width: 28px; height: 28px; min-height: 28px; padding: 5px; border: none; background: transparent; justify-content: center; }
+.tangrow-capture-icon-button > .tangrow-capture-button-label { display: none; }
+.tangrow-capture-icon-button .tangrow-icon svg { width: 15px; height: 15px; }
+.tangrow-capture-weekdays,
+.tangrow-capture-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.tangrow-capture-weekdays { padding: 0 0 7px; }
+.tangrow-capture-weekdays > span { text-align: center; color: var(--text-faint); font-size: 9px; font-weight: 500; line-height: 18px; }
+.tangrow-capture-day {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 33px;
+  height: auto;
+  aspect-ratio: 1;
+  padding: 4px 1px;
+  gap: 2px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  box-shadow: none;
+  background: transparent;
+  color: var(--text-normal);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+.tangrow-capture-day:hover { background: var(--background-modifier-hover); border-color: var(--tangrow-line); }
+.tangrow-capture-day.is-other-month { color: var(--text-faint); opacity: 0.6; }
+.tangrow-capture-day.is-today { border-color: color-mix(in srgb, var(--interactive-accent) 55%, transparent); color: var(--text-accent); font-weight: 650; }
+.tangrow-capture-day.is-selected { background: var(--interactive-accent); border-color: var(--interactive-accent); color: var(--text-on-accent); opacity: 1; }
+.tangrow-capture-day.is-selected:hover { background: var(--interactive-accent-hover); }
+.tangrow-capture-day-number { font-variant-numeric: tabular-nums; }
+.tangrow-capture-day-count { display: inline-flex; align-items: center; justify-content: center; min-width: 13px; height: 11px; padding: 0 3px; border-radius: 4px; color: var(--text-accent); background: var(--tangrow-tint); font-size: 7px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.tangrow-capture-day.is-selected .tangrow-capture-day-count { background: color-mix(in srgb, var(--text-on-accent) 20%, transparent); color: var(--text-on-accent); }
+.tangrow-capture-calendar-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 5px; border-top: 1px solid var(--tangrow-line); margin-top: 9px; padding-top: 6px; }
+.tangrow-capture-calendar-footer > .tangrow-muted { margin: 0; font-size: 9px; }
+.tangrow-capture-calendar-actions { display: flex; align-items: center; gap: 9px; margin-left: auto; }
+.tangrow-capture-calendar-actions > .tangrow-button { font-size: 9px; min-height: 23px; padding: 3px; border-radius: 4px; }
+.tangrow-capture-calendar-actions > .tangrow-button[aria-pressed="true"] { background: var(--tangrow-tint); color: var(--text-accent); border: none; }
+.tangrow-capture-timeline-heading { display: flex; align-items: flex-start; justify-content: space-between; flex-direction: column; gap: 5px; margin: 23px 1px 14px; }
+.tangrow-capture-timeline-heading > .tangrow-section-title { margin: 0; }
+.tangrow-capture-timeline-heading > .tangrow-muted { margin: 0; font-size: 10px; }
+.tangrow-capture-timeline { min-width: 0; }
+.tangrow-capture-timeline-day { margin: 0 0 22px; }
+.tangrow-capture-timeline-day > h4 { font-size: 10px; font-weight: 500; color: var(--text-muted); margin: 0 0 9px 2px; line-height: 1.5; }
+.tangrow-capture-entry { position: relative; min-width: 0; border: 1px solid var(--tangrow-line); border-radius: var(--tangrow-radius); background: var(--background-primary); padding: 11px 12px 12px; margin-top: 8px; }
+.tangrow-capture-entry-heading { display: flex; align-items: center; justify-content: space-between; gap: 9px; min-height: 23px; margin-bottom: 6px; }
+.tangrow-capture-entry-heading > time { color: var(--text-faint); font-size: 10px; font-variant-numeric: tabular-nums; }
+.tangrow-capture-open-source { color: var(--text-muted); gap: 3px; font-size: 9px; min-height: 23px; }
+.tangrow-capture-open-source .tangrow-icon svg { width: 12px; height: 12px; }
+.tangrow-capture-entry-title { display: block; color: var(--text-normal); font-size: 11px; font-weight: 550; line-height: 1.6; overflow-wrap: anywhere; }
+.tangrow-capture-snippet { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; overflow-wrap: anywhere; white-space: normal; color: var(--text-muted); font-size: 11px; line-height: 1.8; margin: 7px 0 0; }
+.tangrow-capture-pagination { display: flex; flex-direction: column; align-items: center; gap: 8px; margin: -6px 0 18px; }
+.tangrow-capture-pagination:empty { display: none; }
+.tangrow-capture-pagination > .tangrow-muted { margin: 0; font-size: 10px; }
+.tangrow-capture-pagination > .tangrow-button { justify-content: center; min-height: 32px; }
+.tangrow-capture-window { overflow-y: auto; padding: 24px 20px 32px; background: var(--background-primary); }
+.tangrow-capture-window > .tangrow-capture-panel { width: 100%; max-width: 640px; margin: 0 auto; }
+.tangrow-capture-window .tangrow-capture-panel > .tangrow-section-title:first-child { font-size: 18px; margin-bottom: 8px; letter-spacing: -0.3px; }
+.tangrow-capture-window .tangrow-section-caption { font-size: 12px; margin-bottom: 19px; }
+.tangrow-capture-window .tangrow-composer .tangrow-textarea { min-height: 165px; font-size: 13px; }
+.tangrow-capture-window .tangrow-capture-entry { padding: 13px 15px 15px; }
+.tangrow-capture-window .tangrow-capture-entry-title { font-size: 12px; }
+.tangrow-capture-window .tangrow-capture-snippet { font-size: 12px; -webkit-line-clamp: 5; }
+
+@container (max-width: 260px) {
+  .tangrow-capture-calendar { padding: 10px 7px 7px; }
+  .tangrow-capture-weekdays,
+  .tangrow-capture-days { gap: 2px; }
+  .tangrow-capture-day { min-height: 29px; border-radius: 5px; font-size: 9px; }
+  .tangrow-capture-day-count { height: 10px; min-width: 11px; font-size: 6px; }
+  .tangrow-capture-calendar-footer { align-items: flex-start; flex-direction: column; gap: 3px; }
+  .tangrow-capture-calendar-actions { margin-left: 0; width: 100%; justify-content: space-between; }
+  .tangrow-capture-entry { padding: 9px 10px 10px; }
+}
+
+@container (min-width: 360px) {
+  .tangrow-capture-calendar { padding: 16px; }
+  .tangrow-capture-calendar-heading { margin-bottom: 14px; }
+  .tangrow-capture-calendar-heading h3 { font-size: 14px; }
+  .tangrow-capture-day { max-height: 56px; min-height: 40px; font-size: 12px; }
+  .tangrow-capture-day-count { min-width: 16px; height: 13px; font-size: 8px; }
+  .tangrow-capture-weekdays > span { font-size: 10px; }
+  .tangrow-capture-timeline-heading { flex-direction: row; align-items: center; }
+  .tangrow-capture-timeline-heading > .tangrow-muted { max-width: 65%; text-align: right; }
+}

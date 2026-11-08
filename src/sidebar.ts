@@ -4,6 +4,7 @@ import type { ActionId, BaseId, Locale, NoteKind, NoteSummary, Section, SidebarH
 import { describeError, translate } from './i18n';
 import type { TranslationValues } from './i18n';
 import { safeTitle } from './model';
+import { CapturePanel } from './capture-panel';
 
 export const VIEW_TYPE = 'tangrow-sidebar';
 
@@ -125,12 +126,8 @@ export class TangrowSidebar extends ItemView {
   private navButtons = new Map<Section, HTMLButtonElement>();
   private unsubscribe?: () => void;
   private refreshSection: (state: Snapshot) => void = () => undefined;
-  private captureText = '';
-  private captureRevision = 0;
-  private captureSaving = false;
-  private captureEditor?: HTMLTextAreaElement;
-  private captureSaveButton?: HTMLButtonElement;
-  private captureCount?: HTMLElement;
+  private capturePanel?: CapturePanel;
+  private recentOpenedLimit = 8;
   private scratch = '';
   private scratchRevision = 0;
   private scratchSaving = false;
@@ -167,7 +164,6 @@ export class TangrowSidebar extends ItemView {
     this.isMounted = true;
     this.scratch = this.host.loadScratch();
     const composer = this.host.loadComposer();
-    this.captureText = composer.capture;
     this.scratchTitle = composer.scratchTitle;
     this.renderShell();
     this.unsubscribe = this.host.subscribe(() => this.refresh());
@@ -177,7 +173,7 @@ export class TangrowSidebar extends ItemView {
   refreshLanguage(): void {
     if (!this.isMounted) return;
     const active = this.contentEl.ownerDocument.activeElement;
-    const inputs = [this.captureEditor, this.scratchEditor, this.scratchTitleInput, this.habitInput];
+    const inputs = [this.scratchEditor, this.scratchTitleInput, this.habitInput];
     const focusedInput = inputs.findIndex((input) => input === active);
     const selection = focusedInput < 0 ? null : {
       start: inputs[focusedInput]?.selectionStart ?? 0,
@@ -185,13 +181,33 @@ export class TangrowSidebar extends ItemView {
     };
     const focusedTab = Array.from(this.navButtons).find(([, control]) => control === active)?.[0];
     const scrollTop = this.contentEl.scrollTop;
-    this.preserveFocus(() => this.renderShell());
+    this.preserveFocus(() => {
+      this.refreshShellLabels();
+      if (this.section === 'capture' && this.capturePanel) {
+        this.capturePanel.refresh();
+        this.refresh();
+      } else this.selectSection(this.section);
+    });
     this.contentEl.scrollTop = scrollTop;
-    const replacement = [this.captureEditor, this.scratchEditor, this.scratchTitleInput, this.habitInput][focusedInput];
+    const replacement = [this.scratchEditor, this.scratchTitleInput, this.habitInput][focusedInput];
     if (selection && replacement?.isConnected) {
       replacement.focus({ preventScroll: true });
       replacement.setSelectionRange(selection.start, selection.end);
     } else if (focusedTab) this.navButtons.get(focusedTab)?.focus({ preventScroll: true });
+  }
+
+  private refreshShellLabels(): void {
+    const badge = this.contentEl.querySelector<HTMLElement>('.tangrow-local-badge');
+    if (badge) {
+      badge.textContent = this.ui.t('LOCAL');
+      setTooltip(badge, this.ui.t('Your notes and companion data stay in this vault.'));
+    }
+    this.contentEl.querySelector('.tangrow-nav')?.setAttribute('aria-label', this.ui.t('Companion workspaces'));
+    for (const item of SECTIONS) {
+      const label = this.navButtons.get(item.id)?.querySelector('.tangrow-nav-label');
+      if (label) label.textContent = this.ui.t(item.label);
+    }
+    this.setupBanner.empty();
   }
 
   private renderShell(): void {
@@ -212,7 +228,7 @@ export class TangrowSidebar extends ItemView {
         attr: { type: 'button', role: 'tab', id: `${this.viewId}-tab-${item.id}`, 'aria-controls': `${this.viewId}-pane`, 'aria-selected': 'false' }
       });
       icon(itemButton, item.icon);
-      itemButton.createSpan({ text: this.ui.t(item.label) });
+      itemButton.createSpan({ cls: 'tangrow-nav-label', text: this.ui.t(item.label) });
       itemButton.addEventListener('click', () => this.selectSection(item.id));
       itemButton.addEventListener('keydown', (event) => {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
@@ -232,6 +248,8 @@ export class TangrowSidebar extends ItemView {
 
   async onClose(): Promise<void> {
     this.isMounted = false;
+    this.capturePanel?.destroy();
+    this.capturePanel = undefined;
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     this.host.saveScratch(this.host.loadScratch());
@@ -241,6 +259,8 @@ export class TangrowSidebar extends ItemView {
   }
 
   private selectSection(section: Section): void {
+    this.capturePanel?.destroy();
+    this.capturePanel = undefined;
     this.section = section;
     for (const [id, item] of this.navButtons) {
       item.classList.toggle('is-active', id === section);
@@ -269,7 +289,7 @@ export class TangrowSidebar extends ItemView {
       case 'pins': {
         let signature = '';
         this.refreshSection = (snapshot) => {
-          const next = JSON.stringify([snapshot.active?.path, snapshot.activePinned, snapshot.pins, snapshot.recent]);
+          const next = JSON.stringify([snapshot.active?.path, snapshot.activePinned, snapshot.pins, snapshot.recentOpened, this.recentOpenedLimit]);
           if (next === signature) return;
           signature = next;
           this.preserveFocus(() => this.renderPins(snapshot));
@@ -417,55 +437,8 @@ export class TangrowSidebar extends ItemView {
   }
 
   private mountCapture(): void {
-    this.ui.sectionHeading(this.pane, 'Catch the thought', 'A small note in your existing inbox, ready to organize when you are.');
-    const composer = this.pane.createDiv({ cls: 'tangrow-composer' });
-    const text = composer.createEl('textarea', {
-      cls: 'tangrow-textarea',
-      attr: { placeholder: this.ui.t('An idea, a question, a link...'), 'aria-label': this.ui.t('Quick capture'), rows: '6' }
-    });
-    text.value = this.captureText;
-    this.captureEditor = text;
-    const footer = composer.createDiv({ cls: 'tangrow-composer-footer' });
-    this.captureCount = footer.createSpan({ cls: 'tangrow-muted', text: this.ui.t('Saved as Markdown') });
-    this.captureSaveButton = this.ui.button(footer, 'Save capture', async () => {
-      if (this.captureSaving) return;
-      const source = this.captureText;
-      const captured = source.trim();
-      if (!captured) return;
-      const revision = this.captureRevision;
-      this.captureSaving = true;
-      this.updateCaptureControls();
-      try {
-        await this.host.capture(captured);
-        if (this.isMounted && this.captureRevision === revision && this.host.loadComposer().capture === source) {
-          this.captureText = '';
-          this.captureRevision++;
-          this.host.saveComposer({ capture: '' });
-          if (this.captureEditor?.isConnected) this.captureEditor.value = '';
-        }
-        if (text.isConnected) text.focus();
-      } finally {
-        this.captureSaving = false;
-        this.updateCaptureControls();
-      }
-    }, { icon: 'arrow-up-right', cls: 'mod-cta' });
-    text.addEventListener('input', () => {
-      this.captureText = text.value;
-      this.captureRevision++;
-      this.host.saveComposer({ capture: this.captureText });
-      this.updateCaptureControls();
-    });
-    text.addEventListener('keydown', (event) => {
-      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); this.captureSaveButton?.click(); }
-    });
-    this.updateCaptureControls();
-    this.pane.createEl('p', { text: this.ui.t('Destination: {path}', { path: this.host.settings.inboxFolder }), cls: 'tangrow-destination' });
-    const history = this.pane.createDiv();
-    this.refreshSection = (state) => {
-      history.empty();
-      this.listHeading(history, 'Recent captures', state.counts.captures, 'captures');
-      this.noteList(history, state.captures, 'A place for the next idea', 'Your saved captures will appear here.', 'inbox');
-    };
+    this.capturePanel = new CapturePanel(this.host);
+    this.capturePanel.mount(this.pane);
   }
 
   private renderPins(state: Snapshot): void {
@@ -476,8 +449,12 @@ export class TangrowSidebar extends ItemView {
     });
     this.listHeading(this.pane, 'Your pinned notes', state.pins.length, 'pins');
     this.noteList(this.pane, state.pins, 'Save your bearings', 'Open a note and pin it to make it easy to find again.', 'pin');
-    this.ui.sectionHeading(this.pane, 'Recently edited notes');
-    this.noteList(this.pane, state.recent, 'Return to a recent edit', 'Notes you edit will appear here.', 'history');
+    this.ui.sectionHeading(this.pane, 'Recently opened');
+    this.noteList(this.pane, state.recentOpened.slice(0, this.recentOpenedLimit), 'Return to a recent file', 'Files you open will appear here.', 'history');
+    if (state.recentOpened.length > this.recentOpenedLimit && this.recentOpenedLimit < 50) this.ui.button(this.pane, 'Show more opened files', () => {
+      this.recentOpenedLimit = Math.min(50, this.recentOpenedLimit + 8);
+      this.preserveFocus(() => this.renderPins(this.host.snapshot()));
+    }, { icon: 'chevrons-down', cls: 'tangrow-full-width' });
   }
 
   private mountStudio(): void {
@@ -689,11 +666,6 @@ export class TangrowSidebar extends ItemView {
     const replacement = buttons.find((entry) => action ? entry.dataset.tangrowAction === action : label && entry.getAttribute('aria-label') === label)
       ?? buttons[Math.min(previousIndex, buttons.length - 1)];
     if (replacement && !replacement.disabled) replacement.focus({ preventScroll: true });
-  }
-
-  private updateCaptureControls(): void {
-    if (this.captureSaveButton) this.captureSaveButton.disabled = this.captureSaving || !this.captureText.trim();
-    if (this.captureCount) this.captureCount.textContent = this.captureText.length ? this.ui.t('{count} characters', { count: this.ui.number(this.captureText.length) }) : this.ui.t('Saved as Markdown');
   }
 
   private updateStudioControls(): void {

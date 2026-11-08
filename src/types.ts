@@ -41,6 +41,7 @@ export const DEFAULT_SETTINGS: Settings = {
 };
 export interface ComposerState { capture: string; scratchTitle: string }
 export interface NoteSummary { path: string; name: string; folder: string; modified: number; kind?: string; status?: string }
+export interface CaptureSummary extends NoteSummary { created: number }
 export interface TaskSummary { path: string; line: number; text: string; done: boolean }
 export interface FocusSession {
   id: string;
@@ -56,8 +57,9 @@ export interface Snapshot {
   activePinned: boolean;
   counts: { notes: number; projects: number; captures: number; drafts: number; focusMinutes: number; tasks: number };
   recent: NoteSummary[];
+  recentOpened: NoteSummary[];
   pins: NoteSummary[];
-  captures: NoteSummary[];
+  captures: CaptureSummary[];
   drafts: NoteSummary[];
   tasks: TaskSummary[];
   habits: HabitSummary[];
@@ -77,6 +79,9 @@ export interface SidebarHost {
   openBase(id: BaseId): Promise<void>;
   createNote(kind: NoteKind, title: string, projectFolder?: string): Promise<void>;
   capture(text: string): Promise<void>;
+  submitCaptureDraft(): Promise<void>;
+  openCaptureWindow(): Promise<void>;
+  readCapture(path: string): Promise<string>;
   saveDraft(text: string, title: string): Promise<void>;
   setup(): Promise<void>;
   startFocus(minutes: number): Promise<void>;
@@ -89,6 +94,7 @@ export interface SidebarHost {
   archiveHabit(id: string): Promise<void>;
   loadComposer(): ComposerState;
   saveComposer(patch: Partial<ComposerState>): void;
+  subscribeComposer(listener: () => void): () => void;
   loadScratch(): string;
   saveScratch(value: string): void;
 }

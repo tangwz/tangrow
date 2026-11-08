@@ -5,6 +5,7 @@ import { readSettings } from '../src/model';
 import core from '../src/locales/core.zh-CN.json';
 import sidebar from '../src/locales/sidebar.zh-CN.json';
 import report from '../src/locales/report.zh-CN.json';
+import capture from '../src/locales/capture.zh-CN.json';
 import chinese from '../src/locales/bases.zh-CN.json';
 
 function placeholders(value: string): string[] {
@@ -42,7 +43,7 @@ test('the Bases dictionary retains every interpolation token and supplies Chines
 
 test('all interface dictionaries keep shared terms and interpolation tokens consistent', () => {
   const seen = new Map<string, string>();
-  for (const dictionary of [core, sidebar, chinese, report]) {
+  for (const dictionary of [core, sidebar, chinese, report, capture]) {
     for (const [source, translated] of Object.entries(dictionary)) {
       assert.deepEqual(placeholders(translated), placeholders(source), source);
       if (seen.has(source)) assert.equal(translated, seen.get(source), source);
