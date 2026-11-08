@@ -1,0 +1,10 @@
+{
+  "id": "tangrow",
+  "name": "Tangrow",
+  "version": "0.1.0",
+  "minAppVersion": "1.10.0",
+  "description": "A local companion for capture, pins, writing, focus and habits. Keep your folders; add a sidebar and Bases.",
+  "author": "Terence",
+  "authorUrl": "https://github.com/tangwz",
+  "isDesktopOnly": false
+}

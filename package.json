@@ -1,0 +1,23 @@
+{
+  "name": "tangrow",
+  "version": "0.1.0",
+  "description": "An additive, local-first companion for an existing Obsidian vault.",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "node esbuild.config.mjs --watch",
+    "build": "tsc --noEmit && node esbuild.config.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "install:vault": "node scripts/install.mjs",
+    "package": "node scripts/package.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "esbuild": "0.28.2",
+    "obsidian": "1.14.4",
+    "tsx": "4.23.15",
+    "typescript": "~5.9.3"
+  }
+}
