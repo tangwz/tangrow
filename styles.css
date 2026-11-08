@@ -379,7 +379,7 @@
 .tangrow-capture-day.is-selected { background: var(--interactive-accent); border-color: var(--interactive-accent); color: var(--text-on-accent); opacity: 1; }
 .tangrow-capture-day.is-selected:hover { background: var(--interactive-accent-hover); }
 .tangrow-capture-day-number { font-variant-numeric: tabular-nums; }
-.tangrow-capture-day-count { display: inline-flex; align-items: center; justify-content: center; min-width: 13px; height: 11px; padding: 0 3px; border-radius: 4px; color: var(--text-accent); background: var(--tangrow-tint); font-size: 7px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.tangrow-capture-day-count { display: inline-flex; align-items: center; justify-content: center; min-width: 13px; height: 11px; padding: 0 3px; border-radius: 4px; color: var(--text-accent); background: var(--tangrow-tint); font-size: 8px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .tangrow-capture-day.is-selected .tangrow-capture-day-count { background: color-mix(in srgb, var(--text-on-accent) 20%, transparent); color: var(--text-on-accent); }
 .tangrow-capture-calendar-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 5px; border-top: 1px solid var(--tangrow-line); margin-top: 9px; padding-top: 6px; }
 .tangrow-capture-calendar-footer > .tangrow-muted { margin: 0; font-size: 9px; }
@@ -417,7 +417,7 @@
   .tangrow-capture-weekdays,
   .tangrow-capture-days { gap: 2px; }
   .tangrow-capture-day { min-height: 29px; border-radius: 5px; font-size: 9px; }
-  .tangrow-capture-day-count { height: 10px; min-width: 11px; font-size: 6px; }
+  .tangrow-capture-day-count { height: 11px; min-width: 13px; font-size: 8px; }
   .tangrow-capture-calendar-footer { align-items: flex-start; flex-direction: column; gap: 3px; }
   .tangrow-capture-calendar-actions { margin-left: 0; width: 100%; justify-content: space-between; }
   .tangrow-capture-entry { padding: 9px 10px 10px; }

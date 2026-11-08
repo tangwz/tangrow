@@ -67,7 +67,6 @@ export function aggregateReport(records: readonly ReportRecord[], settings: Sett
     if (hasSource(fields?.source) || hasSource(fields?.tangrow_source)) counts.sourceNotes++;
     if (fields?.tangrow_kind === 'capture') counts.captures++;
     if (fields?.tangrow_kind === 'draft') counts.drafts++;
-    if (fields?.tangrow_pin === true) counts.pins++;
     if (Number.isFinite(record.created) && record.created >= 0 && record.created <= now) {
       const bucket = dayCounts.get(dayKey(record.created));
       if (bucket) bucket.count++;
@@ -82,6 +81,7 @@ export function aggregateReport(records: readonly ReportRecord[], settings: Sett
 
   for (const record of unique) {
     const fields = record.frontmatter;
+    if (fields?.tangrow_pin === true) counts.pins++;
     const minutes = fields?.tangrow_minutes;
     if (fields?.tangrow_kind === 'focus' && typeof minutes === 'number' && Number.isFinite(minutes) && minutes >= 0) {
       const id = typeof fields.tangrow_session_id === 'string' && fields.tangrow_session_id.trim()

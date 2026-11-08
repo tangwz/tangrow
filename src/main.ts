@@ -1,4 +1,4 @@
-import { MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, TFolder, moment, normalizePath, parseYaml, getFrontMatterInfo, stringifyYaml, setTooltip, type WorkspaceLeaf } from 'obsidian';
+import { FileView, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, TFolder, moment, normalizePath, parseYaml, getFrontMatterInfo, stringifyYaml, setTooltip, type WorkspaceLeaf } from 'obsidian';
 import { baseDefinitions, setupReadme, managedFileTranslations } from './bases';
 import { focusMinutes, pauseSession, remainingMs, resumeSession, startSession } from './focus';
 import { dayKey, inFolder, readSession, readSettings, recentDays, safeFolder, safeTitle, streak } from './model';
@@ -16,6 +16,7 @@ import { DEFAULT_SETTINGS, type ComposerState, type Habit, type Locale, type Act
 const dateTime = moment as unknown as (input?: number | string | Date) => { format(pattern: string): string };
 
 interface SavedData { version: number; settings: Settings; focus: FocusSession | null; scratch: string; composer: ComposerState; recentOpened: string[] }
+type FolderSettingKey = keyof Pick<Settings, 'supportFolder' | 'inboxFolder' | 'projectFolder' | 'areaFolder' | 'resourcesFolder' | 'archiveFolder' | 'journalFolder'>;
 
 class PromptModal extends Modal {
   constructor(app: Plugin['app'], private title: string, private placeholder: string, private submit: (value: string) => Promise<void>, private language: Locale) { super(app); }
@@ -257,6 +258,16 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     this.notify();
   }
   async saveSettings(): Promise<void> { await this.persist(); this.notify(); }
+  async updateFolderSetting(key: FolderSettingKey, path: string): Promise<void> {
+    const folder = safeFolder(path);
+    await this.exclusive(async () => {
+      const previous = this.settings[key];
+      this.settings[key] = folder;
+      try { await this.persist(); }
+      catch (error) { this.settings[key] = previous; this.notify(); throw error; }
+      this.notify();
+    });
+  }
   loadScratch(): string { return this.scratch; }
   loadComposer(): ComposerState { return { ...this.composer }; }
   saveComposer(patch: Partial<ComposerState>): void {
@@ -283,8 +294,12 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     this.scratchTimer = window.setTimeout(() => { void this.persist().catch((error) => new Notice(this.error(error))); }, 350);
   }
 
+  private activeFile(): TFile | null {
+    const view = this.app.workspace.getMostRecentLeaf()?.view;
+    return view instanceof FileView ? view.file : null;
+  }
   private activeMarkdown(): TFile | null {
-    const file = this.app.workspace.getActiveFile();
+    const file = this.activeFile();
     return file?.extension === 'md' ? file : null;
   }
   private summary(file: TFile): NoteSummary {
@@ -311,18 +326,30 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     });
   }
   snapshot(): Snapshot {
-    if (this.cachedSnapshot) return { ...this.cachedSnapshot, focus: this.focus, focusRemainingMs: remainingMs(this.focus, Date.now()) };
+    const active = this.activeFile();
+    if (this.cachedSnapshot) return {
+      ...this.cachedSnapshot,
+      active: active ? this.summary(active) : null,
+      activePinned: active ? this.app.metadataCache.getFileCache(active)?.frontmatter?.tangrow_pin === true : false,
+      widePage: active?.extension === 'md' ? this.isWide(active.path) : false,
+      focus: this.focus,
+      focusRemainingMs: remainingMs(this.focus, Date.now())
+    };
     const files = this.app.vault.getMarkdownFiles();
     const notes = files.filter((file) => !inFolder(file.path, this.settings.supportFolder));
     const recent = [...notes].sort((a, b) => b.stat.mtime - a.stat.mtime);
     const taskNotes: TaskSummary[] = [];
     const habitDays = new Map<string, Set<string>>();
+    const focusSessions = new Set<string>();
     let totalMinutes = 0;
     const byKind = (file: TFile, kind: string): boolean => this.app.metadataCache.getFileCache(file)?.frontmatter?.tangrow_kind === kind;
     for (const file of files) {
       const cache = this.app.metadataCache.getFileCache(file);
       const fm = cache?.frontmatter;
-      if (fm?.tangrow_kind === 'focus' && Number.isFinite(fm.tangrow_minutes)) totalMinutes += Math.max(0, Number(fm.tangrow_minutes));
+      if (fm?.tangrow_kind === 'focus' && typeof fm.tangrow_minutes === 'number' && Number.isFinite(fm.tangrow_minutes) && fm.tangrow_minutes >= 0) {
+        const identity = typeof fm.tangrow_session_id === 'string' && fm.tangrow_session_id.trim() ? `session:${fm.tangrow_session_id}` : `path:${file.path}`;
+        if (!focusSessions.has(identity)) { totalMinutes += fm.tangrow_minutes; focusSessions.add(identity); }
+      }
       if (fm?.tangrow_kind === 'habit' && typeof fm.tangrow_habit_id === 'string' && typeof fm.tangrow_day === 'string') {
         const days = habitDays.get(fm.tangrow_habit_id) ?? new Set<string>();
         days.add(fm.tangrow_day);
@@ -334,18 +361,17 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
         if (item.task === ' ' || item.task === '/') taskNotes.push({ path: file.path, line: item.position.start.line, text: this.taskLabels.get(file.path)?.lines.get(item.position.start.line) ?? this.t('{name} · line {line}', { name: file.basename, line: item.position.start.line + 1 }), done: false });
       }
     }
-    const active = this.app.workspace.getActiveFile();
     const supportFiles = [...baseDefinitions(this.settings).map((definition) => definition.filename), 'README.md'];
     this.cachedSnapshot = {
       active: active ? this.summary(active) : null,
       activePinned: active ? this.app.metadataCache.getFileCache(active)?.frontmatter?.tangrow_pin === true : false,
-      counts: { notes: notes.length, projects: notes.filter((file) => inFolder(file.path, this.settings.projectFolder)).length, captures: notes.filter((file) => byKind(file, 'capture')).length, drafts: notes.filter((file) => byKind(file, 'draft')).length, focusMinutes: Math.round(totalMinutes), tasks: taskNotes.length },
+      counts: { notes: notes.length, projects: notes.filter((file) => inFolder(file.path, this.settings.projectFolder)).length, captures: notes.filter((file) => byKind(file, 'capture')).length, drafts: notes.filter((file) => byKind(file, 'draft')).length, focusMinutes: Math.round(totalMinutes * 100) / 100, tasks: taskNotes.length },
       recent: recent.slice(0, 8).map((file) => this.summary(file)),
       recentOpened: this.recentOpened.flatMap((path) => {
         const file = this.app.vault.getAbstractFileByPath(path);
         return file instanceof TFile ? [this.summary(file)] : [];
       }),
-      pins: recent.filter((file) => this.app.metadataCache.getFileCache(file)?.frontmatter?.tangrow_pin === true).map((file) => this.summary(file)),
+      pins: files.filter((file) => this.app.metadataCache.getFileCache(file)?.frontmatter?.tangrow_pin === true).sort((left, right) => right.stat.mtime - left.stat.mtime || left.path.localeCompare(right.path)).map((file) => this.summary(file)),
       captures: sortCaptures(notes.filter((file) => byKind(file, 'capture')).map((file) => ({ ...this.summary(file), created: captureCreated(this.app.metadataCache.getFileCache(file)?.frontmatter?.created, file.stat.ctime, file.stat.mtime) }))),
       drafts: recent.filter((file) => byKind(file, 'draft')).slice(0, 12).map((file) => this.summary(file)),
       tasks: taskNotes,
@@ -494,7 +520,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     modal.open();
   }
   async action(id: ActionId): Promise<void> {
-    const file = this.app.workspace.getActiveFile();
+    const file = this.activeFile();
     const requireFile = (): TFile => { if (!file) throw new Error('Open a file first.'); return file; };
     const requireMarkdown = (): TFile => {
       if (file?.extension !== 'md') throw new Error('Open a Markdown note first.');
@@ -584,7 +610,12 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
         break;
       }
       case 'file-list': await this.app.workspace.ensureSideLeaf('file-explorer', 'left', { active: true }); break;
-      case 'stack-tabs': if (!runNativeCommand(this.app, ['workspace:toggle-stacked-tabs'])) this.instructions('Stack tabs', 'Use the tab group menu > Stack tabs. This option depends on your Obsidian version.'); break;
+      case 'stack-tabs': {
+        const target = this.app.workspace.getMostRecentLeaf(this.app.workspace.rootSplit);
+        if (target) this.app.workspace.setActiveLeaf(target, { focus: false });
+        if (!target || !runNativeCommand(this.app, ['workspace:toggle-stacked-tabs'])) this.instructions('Stack tabs', 'Use the tab group menu > Stack tabs. This option depends on your Obsidian version.');
+        break;
+      }
       case 'hide-panel': this.app.workspace.getLeavesOfType(VIEW_TYPE).forEach((leaf) => leaf.detach()); break;
       case 'random-note': {
         const candidates = this.app.vault.getMarkdownFiles().filter((note) => !inFolder(note.path, this.settings.supportFolder) && !inFolder(note.path, this.settings.archiveFolder));
@@ -729,13 +760,13 @@ class TangrowSettings extends PluginSettingTab {
         catch (error) { new Notice(this.plugin.error(error)); }
         this.display();
       }));
-    const folders: Array<[keyof Pick<Settings, 'supportFolder' | 'inboxFolder' | 'projectFolder' | 'areaFolder' | 'resourcesFolder' | 'archiveFolder' | 'journalFolder'>, string]> = [
+    const folders: Array<[FolderSettingKey, string]> = [
       ['supportFolder', 'Companion folder'], ['inboxFolder', 'Inbox'], ['projectFolder', 'Projects'], ['areaFolder', 'Areas'], ['resourcesFolder', 'Resources'], ['archiveFolder', 'Archive'], ['journalFolder', 'Journal folder']
     ];
     for (const [key, label] of folders) {
       let value = this.plugin.settings[key];
       new Setting(this.containerEl).setName(t(label)).setDesc(t(key === 'supportFolder' ? 'New Bases and focus/habit records only. Changing this path does not move existing files.' : 'Existing vault-relative folder. No files are moved.')).addText((input) => input.setValue(value).onChange((text) => { value = text; })).addButton((button) => button.setButtonText(t('Apply')).onClick(async () => {
-        try { this.plugin.settings[key] = safeFolder(value); await this.plugin.saveSettings(); new Notice(t('Path saved. Existing Bases keep their filters: edit them manually or choose a new companion folder and run setup.')); } catch (error) { new Notice(this.plugin.error(error)); }
+        try { await this.plugin.updateFolderSetting(key, value); new Notice(t('Path saved. Existing Bases keep their filters: edit them manually or choose a new companion folder and run setup.')); } catch (error) { new Notice(this.plugin.error(error)); }
       }));
     }
     let taskOverviewPath = this.plugin.settings.taskOverviewPath;

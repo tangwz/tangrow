@@ -5,8 +5,11 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { baseDefinitions, setupReadme } from '../src/bases';
+import { aggregateReport } from '../src/report-data';
 import type { ActionId, ComposerState, FocusSession, Locale, NoteKind, Settings, Snapshot } from '../src/types';
-import type { MarkdownView as MockMarkdownView, MockApp, Plugin as MockPlugin, TFile as MockFile, TFolder as MockFolder, createMockApp as MockAppFactory } from './obsidian-mock';
+import type { FileView as MockFileView, ItemView as MockItemView, MarkdownView as MockMarkdownView, MockApp, Plugin as MockPlugin, TFile as MockFile, TFolder as MockFolder, createMockApp as MockAppFactory } from './obsidian-mock';
+
+type FolderSettingKey = keyof Pick<Settings, 'supportFolder' | 'inboxFolder' | 'projectFolder' | 'areaFolder' | 'resourcesFolder' | 'archiveFolder' | 'journalFolder'>;
 
 interface TestPlugin extends MockPlugin {
   settings: Settings;
@@ -20,6 +23,7 @@ interface TestPlugin extends MockPlugin {
   snapshot(): Snapshot;
   action(id: ActionId): Promise<void>;
   createNote(kind: NoteKind, title: string, projectFolder?: string): Promise<void>;
+  updateFolderSetting(key: FolderSettingKey, path: string): Promise<void>;
   setLanguage(language: Locale): Promise<void>;
   loadScratch(): string;
   saveScratch(value: string): void;
@@ -44,6 +48,8 @@ interface Harness {
   TFile: typeof MockFile;
   TFolder: typeof MockFolder;
   MarkdownView: typeof MockMarkdownView;
+  FileView: typeof MockFileView;
+  ItemView: typeof MockItemView;
   notices: string[];
   Platform: { isDesktopApp: boolean };
   openCaptureWindow(app: unknown, host: unknown): Promise<void>;
@@ -401,7 +407,9 @@ test('editor actions prefer the active split, then the recent editor, then the f
   await plugin.action('fold');
   assert.deepEqual(right.commands, ['foldAll']);
   assert.deepEqual(left.commands, []);
-  app.workspace.setMostRecentLeaf(null);
+  const fileView = new harness.FileView();
+  fileView.file = note;
+  app.workspace.setMostRecentLeaf({ view: fileView });
   await plugin.action('unfold');
   assert.deepEqual(left.commands, ['unfoldAll']);
   assert.deepEqual(right.commands, ['foldAll']);
@@ -993,4 +1001,163 @@ test('opening capture sources and Bases preserves the capture popout and its sha
     assert.deepEqual(app.workspace.navigationRequests.slice(requests), [false]);
     assert.deepEqual(navigatedFiles, [note.path]);
   });
+});
+
+test('non-file root views never expose or mutate a background Markdown note', async () => {
+  for (const type of ['tangrow-report', 'tangrow-capture', 'graph']) {
+    const { plugin, app } = createPlugin();
+    const note = app.vault.seedFile('00-Inbox/Background note.md', '# Background note\n\nKeep this content.\n');
+    const markdown = new harness.MarkdownView();
+    markdown.file = note;
+    app.workspace.rootLeaves.push({ view: markdown });
+    app.workspace.setActiveView(markdown);
+    app.workspace.setActiveView(null);
+    const current = new harness.ItemView();
+    current.getViewType = () => type;
+    app.workspace.setMostRecentLeaf({ view: current });
+    assert.equal(app.workspace.getActiveFile(), note);
+    assert.equal(plugin.snapshot().active, null, type);
+    assert.equal(plugin.snapshot().activePinned, false, type);
+    const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+    const copied: string[] = [];
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { clipboard: { writeText: async (text: string): Promise<void> => { copied.push(text); } } } });
+    try {
+      for (const action of ['fold', 'unfold', 'cover', 'title-date', 'timestamp', 'toggle-pin', 'page-width'] as const) {
+        await assert.rejects(plugin.action(action), /^Error: Open a Markdown note first\.$/, `${type}: ${action}`);
+      }
+      for (const action of ['copy-link', 'copy-path', 'file-location'] as const) {
+        await assert.rejects(plugin.action(action), /^Error: Open a file first\.$/, `${type}: ${action}`);
+      }
+    } finally {
+      if (navigatorDescriptor) Object.defineProperty(globalThis, 'navigator', navigatorDescriptor);
+      else Reflect.deleteProperty(globalThis, 'navigator');
+    }
+    await plugin.startFocus(25);
+    assert.equal(plugin.focus?.filePath, null, type);
+    assert.equal(note.content, '# Background note\n\nKeep this content.\n');
+    assert.deepEqual(markdown.inserted, []);
+    assert.deepEqual(markdown.commands, []);
+    assert.deepEqual(copied, []);
+    assert.deepEqual(app.vault.processedPaths, []);
+    assert.deepEqual(app.workspace.locatedFiles, []);
+  }
+});
+
+test('focusing the sidebar keeps the most recent real Markdown view as the file context', async () => {
+  const { plugin, app } = createPlugin();
+  const note = app.vault.seedFile('00-Inbox/Current note.md', '# Current note\n');
+  const markdown = new harness.MarkdownView();
+  markdown.file = note;
+  app.workspace.rootLeaves.push({ view: markdown });
+  app.workspace.setActiveView(markdown);
+  app.workspace.setActiveView(null);
+  assert.equal(plugin.snapshot().active?.path, note.path);
+  await plugin.action('timestamp');
+  assert.equal(markdown.inserted.length, 1);
+  await plugin.startFocus(25);
+  assert.equal(plugin.focus?.filePath, note.path);
+});
+
+test('explicitly pinned Markdown files remain available across support and archive folders', () => {
+  const { plugin, app } = createPlugin();
+  const ordinary = app.vault.seedFile('00-Inbox/Ordinary pin.md', '---\ntangrow_pin: true\n---\n\n# Ordinary pin\n');
+  const support = app.vault.seedFile(`${plugin.settings.supportFolder}/README.md`, '---\ntangrow_pin: true\n---\n\n# Support instructions\n');
+  const archived = app.vault.seedFile('90-Archive/Archived pin.md', '---\ntangrow_pin: true\n---\n\n# Archived pin\n');
+  const unpinned = app.vault.seedFile('00-Inbox/Unpinned note.md', '# Not pinned\n');
+  ordinary.stat.mtime = 1;
+  support.stat.mtime = 3;
+  archived.stat.mtime = 2;
+  unpinned.stat.mtime = 4;
+  const before = currentContents(app);
+  assert.deepEqual(plugin.snapshot().pins.map((note) => note.path), [support.path, archived.path, ordinary.path]);
+  assert.deepEqual(currentContents(app), before);
+  assert.deepEqual(app.vault.processedPaths, []);
+});
+
+test('folder setting validation and persistence failures preserve paths, files and existing Base filters', async () => {
+  const { plugin, app } = createPlugin();
+  await plugin.setup();
+  app.vault.seedFile('00-Inbox/Existing note.md', '# Existing note\n\nKeep this location and body.\n');
+  app.vault.seedFolder('20-Project/Alternative root');
+  const originalContents = currentContents(app);
+  const originalEntries = [...app.vault.entries.keys()].sort();
+  const originalCreated = [...app.vault.createdPaths];
+  const originalSettings = structuredClone(plugin.settings);
+  plugin.savedData = { version: 3, settings: structuredClone(plugin.settings), focus: null, scratch: '', composer: { capture: '', scratchTitle: '' }, recentOpened: [] };
+  const originalSaved = structuredClone(plugin.savedData);
+  const saves = plugin.saveCalls;
+  for (const path of ['../outside', '/absolute/folder', '.obsidian/plugins', 'folder/../outside']) {
+    await assert.rejects(plugin.updateFolderSetting('supportFolder', path));
+  }
+  assert.deepEqual(plugin.settings, originalSettings);
+  assert.equal(plugin.saveCalls, saves);
+  plugin.saveFailures = 1;
+  await assert.rejects(plugin.updateFolderSetting('projectFolder', '20-Project/Alternative root'), /Simulated settings write failure/);
+  assert.deepEqual(plugin.settings, originalSettings);
+  assert.deepEqual(plugin.savedData, originalSaved);
+  await plugin.updateFolderSetting('projectFolder', '20-Project/Alternative root');
+  assert.equal(plugin.settings.projectFolder, '20-Project/Alternative root');
+  assert.equal((plugin.savedData as { settings: Settings }).settings.projectFolder, '20-Project/Alternative root');
+  assert.deepEqual(currentContents(app), originalContents);
+  assert.deepEqual([...app.vault.entries.keys()].sort(), originalEntries);
+  assert.deepEqual(app.vault.createdPaths, originalCreated);
+  assert.deepEqual(app.vault.processedPaths, []);
+});
+
+test('stacked-tab commands activate the most recent root leaf before dispatch', async () => {
+  const { plugin, app } = createPlugin();
+  const note = app.vault.seedFile('00-Inbox/Root note.md', '# Root note\n');
+  const markdown = new harness.MarkdownView();
+  markdown.file = note;
+  const rootLeaf = { view: markdown };
+  app.workspace.setMostRecentRootLeaf(rootLeaf);
+  const capture = new harness.ItemView();
+  capture.getViewType = () => 'tangrow-capture';
+  app.workspace.setMostRecentLeaf({ view: capture });
+  let commands = 0;
+  Object.assign(app, {
+    commands: {
+      commands: { 'workspace:toggle-stacked-tabs': {} },
+      executeCommandById: (id: string): boolean => {
+        commands++;
+        assert.equal(id, 'workspace:toggle-stacked-tabs');
+        assert.equal(app.workspace.activationRequests.at(-1)?.leaf, rootLeaf);
+        assert.deepEqual(app.workspace.activationRequests.at(-1)?.options, { focus: false });
+        return true;
+      }
+    }
+  });
+  await plugin.action('stack-tabs');
+  assert.equal(commands, 1);
+  assert.ok(app.workspace.requestedRoots.includes(app.workspace.rootSplit));
+  assert.equal(app.workspace.activationRequests.at(-1)?.leaf, rootLeaf);
+});
+
+test('sidebar focus totals match report validation, stable session deduplication and decimal precision', () => {
+  const { plugin, app } = createPlugin();
+  const fixtures = [
+    { filename: 'Invalid numeric string', id: 'session-b', minutes: '20' },
+    { filename: 'Invalid negative', id: 'session-b', minutes: -1 },
+    { filename: 'Original session', id: 'session-a', minutes: 1.255 },
+    { filename: 'Duplicate session', id: 'session-a', minutes: 50 },
+    { filename: 'Another session', id: 'session-b', minutes: 0.994 },
+    { filename: 'Anonymous session', id: '', minutes: 0.5 },
+    { filename: 'Whitespace identifier', id: '   ', minutes: 0.5 }
+  ];
+  for (const fixture of fixtures) {
+    app.vault.seedFile(`${plugin.settings.supportFolder}/Records/Focus/${fixture.filename}.md`, `---\ntangrow_kind: "focus"\ntangrow_session_id: ${JSON.stringify(fixture.id)}\ntangrow_minutes: ${JSON.stringify(fixture.minutes)}\n---\n\n# Focus record\n`);
+  }
+  const before = currentContents(app);
+  const report = aggregateReport(app.vault.getMarkdownFiles().map((file) => ({
+    path: file.path,
+    name: file.basename,
+    created: file.stat.ctime,
+    modified: file.stat.mtime,
+    frontmatter: app.metadataCache.getFileCache(file).frontmatter
+  })), plugin.settings);
+  assert.equal(report.counts.focusMinutes, 3.25);
+  assert.equal(plugin.snapshot().counts.focusMinutes, report.counts.focusMinutes);
+  assert.equal(plugin.snapshot().counts.focusMinutes, 3.25);
+  assert.deepEqual(currentContents(app), before);
+  assert.deepEqual(app.vault.processedPaths, []);
 });

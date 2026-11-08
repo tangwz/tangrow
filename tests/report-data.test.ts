@@ -27,10 +27,28 @@ test('the report counts note roles without imposing metadata or crossing folder 
   assert.equal(report.counts.areaNotes, 1);
   assert.equal(report.counts.resourceNotes, 1);
   assert.equal(report.counts.sourceNotes, 2);
-  assert.equal(report.counts.pins, 1);
+  assert.equal(report.counts.pins, 2);
   assert.equal(report.counts.captures, 1);
   assert.equal(report.counts.drafts, 1);
   assert.equal(report.recent.some((row) => row.path === `${DEFAULT_SETTINGS.supportFolder}/README.md`), false);
+});
+
+test('explicit pins include support records without inflating note totals or counting duplicate paths', () => {
+  const note = record('00-Inbox/Pinned.md', { tangrow_pin: true });
+  const support = record(`${DEFAULT_SETTINGS.supportFolder}/README.md`, { tangrow_pin: true });
+  const rows = [note, support, note, support];
+  const report = aggregateReport(rows, DEFAULT_SETTINGS, NOW);
+  assert.equal(report.counts.notes, 1);
+  assert.equal(report.counts.pins, 2);
+
+  const unpinnedSupport = [...rows, record(support.path, { tangrow_pin: false })];
+  const afterSupportUnpin = aggregateReport(unpinnedSupport, DEFAULT_SETTINGS, NOW);
+  assert.equal(afterSupportUnpin.counts.notes, 1);
+  assert.equal(afterSupportUnpin.counts.pins, 1);
+
+  const afterBothUnpinned = aggregateReport([...unpinnedSupport, record(note.path, {})], DEFAULT_SETTINGS, NOW);
+  assert.equal(afterBothUnpinned.counts.notes, 1);
+  assert.equal(afterBothUnpinned.counts.pins, 0);
 });
 
 test('task state counts include in-progress work and exclude support or archived tasks', () => {

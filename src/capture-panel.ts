@@ -253,7 +253,8 @@ export class CapturePanel {
     try {
       await this.host.submitCaptureDraft();
       this.syncComposer();
-      if (this.mounted && editor?.isConnected) editor.focus({ preventScroll: true });
+      const active = editor?.ownerDocument.activeElement;
+      if (this.mounted && editor?.isConnected && (active === editor || active === this.saveButton)) editor.focus({ preventScroll: true });
     } finally {
       this.submitting = false;
       if (this.mounted) this.updateComposerControls();
@@ -357,6 +358,7 @@ export class CapturePanel {
       return;
     }
     const visible = groupCapturesByDay(filtered).flatMap((group) => group.captures).slice(0, this.limit);
+    let entryIndex = 0;
     for (const group of groupCapturesByDay(visible)) {
       const day = this.timeline.createEl('section', { cls: 'tangrow-capture-timeline-day' });
       day.createEl('h4', { text: new Date(`${group.date}T12:00:00`).toLocaleDateString(this.host.settings.language, { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' }) });
@@ -368,7 +370,11 @@ export class CapturePanel {
         const open = this.button(heading, 'Open source note', () => this.host.openNote(capture.path), 'arrow-up-right', 'tangrow-text-button tangrow-capture-open-source');
         open.dataset.captureSource = capture.path;
         setTooltip(open, capture.path);
-        article.createEl('strong', { cls: 'tangrow-capture-entry-title', text: capture.name });
+        const entryId = `${this.instanceId}-entry-${entryIndex++}`;
+        const sourceLabel = open.querySelector<HTMLElement>('.tangrow-capture-button-label');
+        sourceLabel?.setAttribute('id', `${entryId}-action`);
+        article.createEl('strong', { cls: 'tangrow-capture-entry-title', text: capture.name, attr: { id: `${entryId}-title` } });
+        if (sourceLabel) open.setAttribute('aria-labelledby', `${entryId}-action ${entryId}-title`);
         const preview = article.createEl('p', { cls: 'tangrow-capture-snippet', text: this.t('Loading preview...') });
         this.loadPreview(capture, preview);
       }

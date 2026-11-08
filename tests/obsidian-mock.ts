@@ -144,8 +144,12 @@ export function createMockApp() {
   const vault = new MockVault();
   let activeFile: TFile | null = null;
   let activeView: MarkdownView | null = null;
-  let mostRecentLeaf: { view: MarkdownView } | null = null;
-  const rootLeaves: { view: MarkdownView }[] = [];
+  let mostRecentLeaf: { view: MockView } | null = null;
+  let mostRecentRootLeaf: { view: MockView } | null = null;
+  const rootLeaves: { view: MockView }[] = [];
+  const rootSplit = { kind: 'root' };
+  const requestedRoots: unknown[] = [];
+  const activationRequests: { leaf: { view: MockView }; options: unknown }[] = [];
   const locatedFiles: string[] = [];
   const workspaceEvents = new MockEvents();
   const cacheEvents = new MockEvents();
@@ -154,12 +158,24 @@ export function createMockApp() {
   const navigationRequests: ('tab' | boolean | undefined)[] = [];
   const rootOpenedFiles: string[] = [];
   let navigationLeaf: MockNavigationLeaf | null = null;
+  const rootFileView = new FileView();
   const rootFileLeaf: MockNavigationLeaf = {
-    view: { getViewType: () => 'empty' },
-    openFile: async (file) => { activeFile = file; rootOpenedFiles.push(file.path); workspaceEvents.trigger('file-open', file); }
+    view: rootFileView,
+    openFile: async (file) => {
+      activeFile = file;
+      activeView = null;
+      rootFileView.file = file;
+      mostRecentLeaf = { view: rootFileView };
+      mostRecentRootLeaf = mostRecentLeaf;
+      rootOpenedFiles.push(file.path);
+      workspaceEvents.trigger('file-open', file);
+    }
   };
   const workspace = {
     rootLeaves,
+    rootSplit,
+    requestedRoots,
+    activationRequests,
     locatedFiles,
     lastOpenFiles,
     navigationRequests,
@@ -167,13 +183,33 @@ export function createMockApp() {
     setNavigationLeaf: (leaf: MockNavigationLeaf | null): void => { navigationLeaf = leaf; },
     getLastOpenFiles: (): string[] => [...lastOpenFiles],
     getActiveFile: (): TFile | null => activeFile,
-    setActiveFile: (file: TFile | null): void => { activeFile = file; },
-    setActiveView: (view: MarkdownView | null): void => { activeView = view; if (view?.file) activeFile = view.file; },
-    setMostRecentLeaf: (leaf: { view: MarkdownView } | null): void => { mostRecentLeaf = leaf; },
+    setActiveFile: (file: TFile | null): void => {
+      activeFile = file;
+      activeView = null;
+      const view = new FileView();
+      view.file = file;
+      mostRecentLeaf = file ? { view } : null;
+      mostRecentRootLeaf = mostRecentLeaf;
+    },
+    setActiveView: (view: MarkdownView | null): void => {
+      activeView = view;
+      if (view?.file) { activeFile = view.file; mostRecentLeaf = { view }; mostRecentRootLeaf = mostRecentLeaf; }
+    },
+    setMostRecentLeaf: (leaf: { view: MockView } | null): void => { mostRecentLeaf = leaf; },
+    setMostRecentRootLeaf: (leaf: { view: MockView } | null): void => { mostRecentRootLeaf = leaf; },
     getActiveViewOfType: (): MarkdownView | null => activeView,
-    getMostRecentLeaf: (): { view: MarkdownView } | null => mostRecentLeaf,
-    iterateAllLeaves: (callback: (leaf: { view: MarkdownView }) => void): void => { rootLeaves.forEach(callback); },
-    iterateRootLeaves: (callback: (leaf: { view: MarkdownView }) => void): void => { rootLeaves.forEach(callback); },
+    getMostRecentLeaf: (root?: unknown): { view: MockView } | null => {
+      requestedRoots.push(root);
+      return root === rootSplit ? mostRecentRootLeaf : mostRecentLeaf;
+    },
+    setActiveLeaf: (leaf: { view: MockView }, options: unknown): void => {
+      activationRequests.push({ leaf, options });
+      mostRecentLeaf = leaf;
+      activeView = leaf.view instanceof MarkdownView ? leaf.view : null;
+      if (leaf.view instanceof FileView) activeFile = leaf.view.file;
+    },
+    iterateAllLeaves: (callback: (leaf: { view: MockView }) => void): void => { rootLeaves.forEach(callback); },
+    iterateRootLeaves: (callback: (leaf: { view: MockView }) => void): void => { rootLeaves.forEach(callback); },
     getLeaf: (newLeaf?: 'tab' | boolean): MockNavigationLeaf => {
       navigationRequests.push(newLeaf);
       return newLeaf === 'tab' || newLeaf === true ? rootFileLeaf : navigationLeaf ?? rootFileLeaf;
@@ -228,7 +264,15 @@ export class Notice {
   constructor(text: string) { notices.push(text); }
 }
 export class Modal {}
-export class ItemView {}
+export class MockView {
+  containerEl = { toggleClass: (): void => {}, removeClass: (): void => {} };
+  getViewType(): string { return 'unknown'; }
+}
+export class ItemView extends MockView {}
+export class FileView extends MockView {
+  file: TFile | null = null;
+  getViewType(): string { return 'file'; }
+}
 export class PluginSettingTab {}
 export class Setting {}
 interface EditorPosition { line: number; ch: number }
@@ -266,12 +310,11 @@ export class MockEditor {
   exec(command: string): void { this.commands.push(command); }
 }
 
-export class MarkdownView {
-  file: TFile | null = null;
+export class MarkdownView extends FileView {
   editor = new MockEditor();
   inserted = this.editor.inserted;
   commands = this.editor.commands;
-  containerEl = { toggleClass: (): void => {}, removeClass: (): void => {} };
+  getViewType(): string { return 'markdown'; }
 }
 export function setIcon(): void {}
 export function normalizePath(path: string): string { return path.replace(/\/+/g, '/').replace(/^\/+|\/+$/g, ''); }
