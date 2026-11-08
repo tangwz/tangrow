@@ -3,7 +3,7 @@ import type { App } from 'obsidian';
 export type Locale = 'zh-CN' | 'en';
 export type Section = 'tools' | 'capture' | 'pins' | 'studio' | 'focus' | 'habits';
 export type NoteKind = 'note' | 'project' | 'draft';
-export type ActionId = 'copy-link' | 'copy-path' | 'file-location' | 'fold' | 'unfold' | 'page-width' | 'all-width' | 'refresh' | 'cover' | 'timestamp' | 'toggle-pin' | 'settings' | 'appearance' | 'file-list' | 'stack-tabs' | 'hide-panel' | 'random-note' | 'daily-note';
+export type ActionId = 'copy-link' | 'copy-path' | 'file-location' | 'fold' | 'unfold' | 'page-width' | 'all-width' | 'refresh' | 'cover' | 'timestamp' | 'toggle-pin' | 'settings' | 'appearance' | 'file-list' | 'stack-tabs' | 'hide-panel' | 'random-note' | 'daily-note' | 'report' | 'title-date' | 'toggle-theme' | 'task-overview';
 export type BaseId = 'notes' | 'recent' | 'projects' | 'areas' | 'resources' | 'inbox' | 'sources' | 'captures' | 'pins' | 'drafts' | 'focus' | 'habits' | 'tasks';
 
 export interface Habit { id: string; name: string }
@@ -17,6 +17,7 @@ export interface Settings {
   archiveFolder: string;
   journalFolder: string;
   journalFormat: string;
+  taskOverviewPath: string;
   focusMinutes: number;
   autoOpen: boolean;
   wideByDefault: boolean;
@@ -32,11 +33,13 @@ export const DEFAULT_SETTINGS: Settings = {
   archiveFolder: '90-Archive',
   journalFolder: '10-Life(Meta)/13-Journal',
   journalFormat: 'YYYY/[Daily]/YYYY-MM-DD',
+  taskOverviewPath: '10-Life(Meta)/12-Tasks.md',
   focusMinutes: 25,
   autoOpen: true,
   wideByDefault: false,
   habits: []
 };
+export interface ComposerState { capture: string; scratchTitle: string }
 export interface NoteSummary { path: string; name: string; folder: string; modified: number; kind?: string; status?: string }
 export interface TaskSummary { path: string; line: number; text: string; done: boolean }
 export interface FocusSession {
@@ -61,6 +64,7 @@ export interface Snapshot {
   focus: FocusSession | null;
   focusRemainingMs: number;
   supportReady: boolean;
+  projectFolders: string[];
   widePage: boolean;
 }
 export interface SidebarHost {
@@ -71,7 +75,7 @@ export interface SidebarHost {
   action(id: ActionId): Promise<void>;
   openNote(path: string, line?: number): Promise<void>;
   openBase(id: BaseId): Promise<void>;
-  createNote(kind: NoteKind, title: string): Promise<void>;
+  createNote(kind: NoteKind, title: string, projectFolder?: string): Promise<void>;
   capture(text: string): Promise<void>;
   saveDraft(text: string, title: string): Promise<void>;
   setup(): Promise<void>;
@@ -83,6 +87,8 @@ export interface SidebarHost {
   addHabit(name: string): Promise<void>;
   checkHabit(id: string): Promise<void>;
   archiveHabit(id: string): Promise<void>;
+  loadComposer(): ComposerState;
+  saveComposer(patch: Partial<ComposerState>): void;
   loadScratch(): string;
   saveScratch(value: string): void;
 }

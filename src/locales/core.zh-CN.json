@@ -78,5 +78,19 @@
   "This habit already exists.": "此打卡目标已存在。",
   "This habit was archived.": "此打卡目标已归档。",
   "Focus duration must be a whole number between 1 and 240 minutes.": "专注时长须为 1–240 之间的整数分钟。",
-  "Unsupported language.": "不支持此语言。"
+  "Unsupported language.": "不支持此语言。",
+  "Open report": "打开报表",
+  "Open a file first.": "请先打开一个文件。",
+  "Choose an existing project subfolder.": "请选择已有的项目子目录。",
+  "Date added to the first heading.": "已为首个标题添加日期。",
+  "This focus record has invalid values. The session was retained.": "专注记录数据无效，当前专注状态已保留。",
+  "This project folder already exists. Choose it from the existing project list.": "此项目目录已存在，请在已有项目列表中选择。",
+  "Set an existing Tasks note path in Tangrow settings.": "请在 Tangrow 设置中指定已有的任务总览笔记路径。",
+  "Task overview note": "任务总览笔记",
+  "Existing Tasks note path. Tangrow opens it without changing its queries.": "填写已有的 Tasks 笔记路径，仅打开原页，不修改查询。",
+  "Task overview path saved.": "任务总览路径已保存。",
+  "An unrelated file occupies this habit record path. Existing content was preserved.": "打卡记录路径已被其他内容占用，原文件已保留。",
+  "This session has already been recorded. Finish it before starting another session.": "此专注已保存，请先结束当前会话，再开始新的专注。",
+  "Use an ISO calendar date.": "请使用 YYYY-MM-DD 格式的日期。",
+  "Close the frontmatter block before adding a heading date.": "请先闭合笔记属性区，再为标题添加日期。"
 }

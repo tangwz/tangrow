@@ -1,10 +1,11 @@
 import core from './locales/core.zh-CN.json';
 import sidebar from './locales/sidebar.zh-CN.json';
 import bases from './locales/bases.zh-CN.json';
+import report from './locales/report.zh-CN.json';
 import type { Locale } from './types';
 
 export type TranslationValues = Record<string, string | number>;
-const chinese: Record<string, string> = { ...core, ...sidebar, ...bases };
+const chinese: Record<string, string> = { ...core, ...sidebar, ...bases, ...report };
 
 export function translate(language: Locale, source: string, values: TranslationValues = {}): string {
   const template = language === 'zh-CN' ? chinese[source] ?? source : source;

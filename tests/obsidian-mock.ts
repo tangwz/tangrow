@@ -64,6 +64,7 @@ export class MockVault {
   getAbstractFileByPath(path: string): TFile | TFolder | null { return this.entries.get(path) ?? null; }
   getMarkdownFiles(): TFile[] { return [...this.entries.values()].filter((file): file is TFile => file instanceof TFile && file.extension === 'md'); }
   getFiles(): TFile[] { return [...this.entries.values()].filter((file): file is TFile => file instanceof TFile); }
+  getAllFolders(): TFolder[] { return [...this.entries.values()].filter((entry): entry is TFolder => entry instanceof TFolder); }
   async createFolder(path: string): Promise<void> {
     if (this.entries.has(path)) throw new Error(`Occupied: ${path}`);
     this.seedFolder(path);
@@ -94,23 +95,40 @@ export class MockVault {
 export function createMockApp() {
   const vault = new MockVault();
   let activeFile: TFile | null = null;
+  let activeView: MarkdownView | null = null;
+  let mostRecentLeaf: { view: MarkdownView } | null = null;
+  const rootLeaves: { view: MarkdownView }[] = [];
+  const locatedFiles: string[] = [];
   const workspace = {
+    rootLeaves,
+    locatedFiles,
     getActiveFile: (): TFile | null => activeFile,
-    iterateAllLeaves: (): void => {},
-    iterateRootLeaves: (): void => {},
+    setActiveFile: (file: TFile | null): void => { activeFile = file; },
+    setActiveView: (view: MarkdownView | null): void => { activeView = view; if (view?.file) activeFile = view.file; },
+    setMostRecentLeaf: (leaf: { view: MarkdownView } | null): void => { mostRecentLeaf = leaf; },
+    getActiveViewOfType: (): MarkdownView | null => activeView,
+    getMostRecentLeaf: (): { view: MarkdownView } | null => mostRecentLeaf,
+    iterateAllLeaves: (callback: (leaf: { view: MarkdownView }) => void): void => { rootLeaves.forEach(callback); },
+    iterateRootLeaves: (callback: (leaf: { view: MarkdownView }) => void): void => { rootLeaves.forEach(callback); },
     getLeaf: () => ({ openFile: async (file: TFile): Promise<void> => { activeFile = file; } }),
-    ensureSideLeaf: async (): Promise<void> => {},
+    ensureSideLeaf: async () => ({ view: { revealInFolder: async (file: TFile): Promise<void> => { locatedFiles.push(file.path); } } }),
     getLeavesOfType: (): never[] => [],
-    on: (): object => ({})
+    on: (): object => ({}),
+    onLayoutReady: (): void => {}
   };
   const metadataCache = {
     getFileCache: (file: TFile) => {
       const frontmatter = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(file.content)?.[1];
-      return { frontmatter: frontmatter ? parseYaml(frontmatter) : undefined, listItems: [] };
+      const listItems = file.content.split(/\r?\n/).flatMap((line, index) => {
+        const task = /^\s*(?:[-*+]|\d+[.)])\s+\[([^\]])\]/.exec(line)?.[1];
+        return task === undefined ? [] : [{ task, position: { start: { line: index } } }];
+      });
+      return { frontmatter: frontmatter ? parseYaml(frontmatter) : undefined, listItems };
     },
     on: (): object => ({})
   };
-  return { vault, workspace, metadataCache };
+  const fileManager = { generateMarkdownLink: (file: TFile): string => `[[${file.path}]]` };
+  return { vault, workspace, metadataCache, fileManager };
 }
 export type MockApp = ReturnType<typeof createMockApp>;
 
@@ -126,6 +144,14 @@ export class Plugin {
     this.savedData = structuredClone(data);
   }
   async loadData(): Promise<unknown> { return this.savedData; }
+  registerView(): void {}
+  addRibbonIcon(): null { return null; }
+  addCommand(): void {}
+  removeCommand(): void {}
+  addSettingTab(): void {}
+  registerEvent(): void {}
+  registerMarkdownPostProcessor(): void {}
+  registerInterval(): void {}
 }
 
 export class Notice {
@@ -135,7 +161,48 @@ export class Modal {}
 export class ItemView {}
 export class PluginSettingTab {}
 export class Setting {}
-export class MarkdownView {}
+interface EditorPosition { line: number; ch: number }
+interface EditorSelection { anchor: EditorPosition; head: EditorPosition }
+
+export class MockEditor {
+  private content = '';
+  inserted: string[] = [];
+  commands: string[] = [];
+  replacements: { text: string; from: EditorPosition; to: EditorPosition }[] = [];
+  private selections: EditorSelection[] = [{ anchor: { line: 0, ch: 0 }, head: { line: 0, ch: 0 } }];
+  getValue(): string { return this.content; }
+  setValue(content: string): void { this.content = content; }
+  listSelections(): EditorSelection[] { return structuredClone(this.selections); }
+  setSelections(selections: EditorSelection[]): void { this.selections = structuredClone(selections); }
+  posToOffset(position: EditorPosition): number {
+    const lines = this.content.split('\n');
+    return lines.slice(0, position.line).reduce((total, line) => total + line.length + 1, 0) + position.ch;
+  }
+  offsetToPos(offset: number): EditorPosition {
+    const prefix = this.content.slice(0, offset).split('\n');
+    return { line: prefix.length - 1, ch: prefix.at(-1)?.length ?? 0 };
+  }
+  replaceRange(text: string, from: EditorPosition, to: EditorPosition = from): void {
+    const start = this.posToOffset(from);
+    const end = this.posToOffset(to);
+    this.replacements.push({ text, from: structuredClone(from), to: structuredClone(to) });
+    this.content = this.content.slice(0, start) + text + this.content.slice(end);
+  }
+  replaceSelection(text: string): void {
+    this.inserted.push(text);
+    const selection = this.selections[0]!;
+    this.replaceRange(text, selection.anchor, selection.head);
+  }
+  exec(command: string): void { this.commands.push(command); }
+}
+
+export class MarkdownView {
+  file: TFile | null = null;
+  editor = new MockEditor();
+  inserted = this.editor.inserted;
+  commands = this.editor.commands;
+  containerEl = { toggleClass: (): void => {}, removeClass: (): void => {} };
+}
 export function setIcon(): void {}
 export function normalizePath(path: string): string { return path.replace(/\/+/g, '/').replace(/^\/+|\/+$/g, ''); }
 export function moment(input?: string | number | Date): { format(pattern: string): string } {

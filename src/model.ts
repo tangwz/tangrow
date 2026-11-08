@@ -56,6 +56,9 @@ export function readSettings(value: unknown): Settings {
     if (typeof raw[key] !== 'string') continue;
     try { result[key] = safeFolder(raw[key]); } catch { /* Keep the safe default for invalid persisted data. */ }
   }
+  if (typeof raw.taskOverviewPath === 'string') {
+    try { result.taskOverviewPath = safeFolder(raw.taskOverviewPath); } catch { /* Keep the existing Tasks note default. */ }
+  }
   if (typeof raw.journalFormat === 'string' && raw.journalFormat.length < 100 && raw.journalFormat.length > 0) result.journalFormat = raw.journalFormat;
   if (Number.isInteger(raw.focusMinutes) && Number(raw.focusMinutes) >= 1 && Number(raw.focusMinutes) <= 240) result.focusMinutes = Number(raw.focusMinutes);
   if (typeof raw.autoOpen === 'boolean') result.autoOpen = raw.autoOpen;
