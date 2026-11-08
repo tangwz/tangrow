@@ -40,6 +40,7 @@ export function parseYaml(content: string): Record<string, unknown> {
 export class MockVault {
   entries = new Map<string, TFile | TFolder>();
   createdPaths: string[] = [];
+  processedPaths: string[] = [];
   failCreates = 0;
 
   seedFolder(path: string): TFolder {
@@ -76,6 +77,17 @@ export class MockVault {
   }
   async cachedRead(file: TFile): Promise<string> { return file.content; }
   async read(file: TFile): Promise<string> { return file.content; }
+  async process(file: TFile, transform: (content: string) => string): Promise<string> {
+    if (this.entries.get(file.path) !== file) throw new Error('The file no longer exists in this vault.');
+    this.processedPaths.push(file.path);
+    const next = transform(file.content);
+    if (next !== file.content) {
+      file.content = next;
+      file.stat.mtime++;
+      file.stat.size = next.length;
+    }
+    return next;
+  }
   on(): object { return {}; }
 }
 

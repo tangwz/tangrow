@@ -4,13 +4,17 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
-import type { FocusSession, Settings } from '../src/types';
+import { baseDefinitions, setupReadme } from '../src/bases';
+import type { FocusSession, Locale, Settings } from '../src/types';
 import type { MockApp, Plugin as MockPlugin, TFile as MockFile, TFolder as MockFolder, createMockApp as MockAppFactory } from './obsidian-mock';
 
 interface TestPlugin extends MockPlugin {
   settings: Settings;
   focus: FocusSession | null;
+  scratch: string;
   setup(): Promise<void>;
+  setLanguage(language: Locale): Promise<void>;
+  loadScratch(): string;
   startFocus(minutes: number): Promise<void>;
   pauseFocus(): Promise<void>;
   resumeFocus(): Promise<void>;
@@ -181,4 +185,105 @@ test('concurrent same-day habit check-ins create a single record', async () => {
   assert.equal(properties?.tangrow_habit_id, id);
   assert.equal(properties?.tangrow_kind, 'habit');
   assert.equal(properties?.tangrow_habit, 'Read a page');
+});
+
+function generatedFiles(settings: Settings): Map<string, string> {
+  return new Map([
+    ...baseDefinitions(settings).map((base) => [`${settings.supportFolder}/${base.filename}`, base.content] as const),
+    [`${settings.supportFolder}/README.md`, setupReadme(settings)]
+  ]);
+}
+
+function currentContents(app: MockApp): Map<string, string> {
+  return new Map(app.vault.getFiles().map((file) => [file.path, file.content]));
+}
+
+test('language switches update exact generated presentation reversibly without changing file paths', async () => {
+  const { plugin, app } = createPlugin();
+  plugin.settings.language = 'en';
+  await plugin.setup();
+  const original = currentContents(app);
+  const paths = [...app.vault.entries.keys()].sort();
+  const created = [...app.vault.createdPaths];
+  await plugin.setLanguage('zh-CN');
+  assert.equal(plugin.settings.language, 'zh-CN');
+  assert.deepEqual(currentContents(app), generatedFiles(plugin.settings));
+  assert.notDeepEqual(currentContents(app), original);
+  assert.equal(app.vault.processedPaths.length, 14);
+  assert.deepEqual([...app.vault.entries.keys()].sort(), paths);
+  assert.deepEqual(app.vault.createdPaths, created);
+  const processed = [...app.vault.processedPaths];
+  await plugin.setLanguage('zh-CN');
+  assert.deepEqual(app.vault.processedPaths, processed);
+  await plugin.setLanguage('en');
+  assert.deepEqual(currentContents(app), original);
+  assert.deepEqual([...app.vault.entries.keys()].sort(), paths);
+  assert.deepEqual(app.vault.createdPaths, created);
+});
+
+test('language switches never process customized Bases, customized support instructions or user notes', async () => {
+  const { plugin, app } = createPlugin();
+  plugin.settings.language = 'en';
+  const customBasePath = `${plugin.settings.supportFolder}/Tangrow Notes.base`;
+  const customReadmePath = `${plugin.settings.supportFolder}/README.md`;
+  const customBase = app.vault.seedFile(customBasePath, 'views:\n  - type: table\n    name: My handwritten view\n');
+  const customReadme = app.vault.seedFile(customReadmePath, '# My companion instructions\n\nKeep my text exactly.\n');
+  const note = app.vault.seedFile('20-Project/Existing project/User note.md', '# My own note\n\nKeep its wording and location.\n');
+  await plugin.setup();
+  const customContents = new Map([customBase, customReadme, note].map((file) => [file.path, file.content]));
+  const customTimes = new Map([customBase, customReadme, note].map((file) => [file.path, file.stat.mtime]));
+  const originalPaths = [...app.vault.entries.keys()].sort();
+  await plugin.setLanguage('zh-CN');
+  const expected = generatedFiles(plugin.settings);
+  for (const file of app.vault.getFiles()) {
+    assert.equal(file.content, customContents.get(file.path) ?? expected.get(file.path), file.path);
+  }
+  await plugin.setLanguage('en');
+  for (const file of [customBase, customReadme, note]) {
+    assert.equal(file.content, customContents.get(file.path), file.path);
+    assert.equal(file.stat.mtime, customTimes.get(file.path), file.path);
+    assert.ok(!app.vault.processedPaths.includes(file.path), file.path);
+  }
+  assert.equal(app.vault.processedPaths.length, 24);
+  assert.deepEqual([...app.vault.entries.keys()].sort(), originalPaths);
+});
+
+test('failed language saves restore the locale before any generated file is processed', async () => {
+  const { plugin, app } = createPlugin();
+  plugin.settings.language = 'en';
+  await plugin.setup();
+  const original = currentContents(app);
+  const modified = new Map(app.vault.getFiles().map((file) => [file.path, file.stat.mtime]));
+  plugin.saveFailures = 1;
+  await assert.rejects(plugin.setLanguage('zh-CN'), /Simulated settings write failure/);
+  assert.equal(plugin.settings.language, 'en');
+  assert.deepEqual(currentContents(app), original);
+  assert.deepEqual(app.vault.processedPaths, []);
+  assert.deepEqual(new Map(app.vault.getFiles().map((file) => [file.path, file.stat.mtime])), modified);
+  await plugin.setLanguage('zh-CN');
+  assert.deepEqual(currentContents(app), generatedFiles(plugin.settings));
+});
+
+test('language switches retain scratch text and a paused focus session in memory and persisted data', async () => {
+  await withClock(async (advance) => {
+    const { plugin } = createPlugin();
+    plugin.settings.language = 'en';
+    plugin.scratch = 'An unfinished thought with {literal} text.\nA second paragraph.';
+    const scratch = plugin.loadScratch();
+    await plugin.startFocus(25);
+    advance(4);
+    await plugin.pauseFocus();
+    const paused = readFocus(plugin);
+    assert.equal(paused?.remainingMs, 21 * 60_000);
+    for (const language of ['zh-CN', 'en'] as const) {
+      advance(2);
+      await plugin.setLanguage(language);
+      assert.equal(plugin.loadScratch(), scratch);
+      assert.deepEqual(plugin.focus, paused);
+      const saved = plugin.savedData as { settings: Settings; focus: FocusSession; scratch: string };
+      assert.equal(saved.settings.language, language);
+      assert.equal(saved.scratch, scratch);
+      assert.deepEqual(saved.focus, paused);
+    }
+  });
 });

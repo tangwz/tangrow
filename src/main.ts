@@ -1,35 +1,36 @@
-import { MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, TFolder, moment, normalizePath, parseYaml, getFrontMatterInfo, stringifyYaml, type WorkspaceLeaf } from 'obsidian';
-import { baseDefinitions, setupReadme } from './bases';
+import { MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, TFolder, moment, normalizePath, parseYaml, getFrontMatterInfo, stringifyYaml, setTooltip, type WorkspaceLeaf } from 'obsidian';
+import { baseDefinitions, setupReadme, managedFileTranslations } from './bases';
 import { focusMinutes, pauseSession, remainingMs, resumeSession, startSession } from './focus';
 import { dayKey, inFolder, readSession, readSettings, recentDays, safeFolder, safeTitle, streak } from './model';
 import { openNativeSettings, revealInFileList, runNativeCommand } from './compat';
 import { TangrowSidebar, VIEW_TYPE } from './sidebar';
-import { DEFAULT_SETTINGS, type ActionId, type BaseId, type FocusSession, type NoteKind, type NoteSummary, type Settings, type SidebarHost, type Snapshot, type TaskSummary } from './types';
+import { matchesGeneratedContent } from './managed-files';
+import { translate, describeError, type TranslationValues } from './i18n';
+import { DEFAULT_SETTINGS, type Locale, type ActionId, type BaseId, type FocusSession, type NoteKind, type NoteSummary, type Settings, type SidebarHost, type Snapshot, type TaskSummary } from './types';
 
 const dateTime = moment as unknown as (input?: number | string | Date) => { format(pattern: string): string };
 
 interface SavedData { version: number; settings: Settings; focus: FocusSession | null; scratch: string }
 
 class PromptModal extends Modal {
-  constructor(app: Plugin['app'], private title: string, private placeholder: string, private submit: (value: string) => Promise<void>) { super(app); }
+  constructor(app: Plugin['app'], private title: string, private placeholder: string, private submit: (value: string) => Promise<void>, private language: Locale) { super(app); }
   onOpen(): void {
-    this.setTitle(this.title);
+    this.setTitle(translate(this.language, this.title));
     let value = '';
     new Setting(this.contentEl).addText((input) => {
-      input.setPlaceholder(this.placeholder).onChange((text) => { value = text; });
+      input.setPlaceholder(translate(this.language, this.placeholder)).onChange((text) => { value = text; });
       input.inputEl.style.width = '100%';
       input.inputEl.addEventListener('keydown', (event) => { if (event.key === 'Enter') void save(); });
       window.setTimeout(() => input.inputEl.focus(), 0);
     });
     const save = async (): Promise<void> => {
-      try { await this.submit(value); this.close(); } catch (error) { new Notice(message(error)); }
+      try { await this.submit(value); this.close(); } catch (error) { new Notice(describeError(this.language, error)); }
     };
-    new Setting(this.contentEl).addButton((button) => button.setButtonText('Save').setCta().onClick(save));
+    new Setting(this.contentEl).addButton((button) => button.setButtonText(translate(this.language, 'Save')).setCta().onClick(save));
   }
   onClose(): void { this.contentEl.empty(); }
 }
 
-function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function uid(): string { return crypto.randomUUID(); }
 
 export default class TangrowPlugin extends Plugin implements SidebarHost {
@@ -48,6 +49,8 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   private taskLabels = new Map<string, { mtime: number; lines: Map<number, string> }>();
   private taskReads = new Set<string>();
   private alive = true;
+  private commandsRegistered = false;
+  private ribbon: HTMLElement | null = null;
 
   async onload(): Promise<void> {
     const stored = await this.loadData() as Partial<SavedData> | null;
@@ -55,15 +58,12 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     this.focus = readSession(stored?.focus);
     this.scratch = typeof stored?.scratch === 'string' ? stored.scratch : '';
     this.registerView(VIEW_TYPE, (leaf: WorkspaceLeaf) => new TangrowSidebar(leaf, this));
-    this.addRibbonIcon('sprout', 'Open Tangrow', () => { void this.openSidebar().catch((error) => new Notice(message(error))); });
-    this.addCommand({ id: 'open-companion', name: 'Open companion', callback: () => { void this.openSidebar().catch((error) => new Notice(message(error))); } });
-    this.addCommand({ id: 'setup-bases', name: 'Set up companion Bases', callback: () => { void this.setup().catch((error) => new Notice(message(error))); } });
-    this.addCommand({ id: 'quick-capture', name: 'Quick capture', callback: () => new PromptModal(this.app, 'Capture a thought', 'A thought worth keeping', (text) => this.capture(text)).open() });
-    this.addCommand({ id: 'pin-note', name: 'Pin or unpin current note', checkCallback: (checking) => {
-      if (!this.activeMarkdown()) return false;
-      if (!checking) void this.action('toggle-pin').catch((error) => new Notice(message(error)));
-      return true;
-    } });
+    if (!stored?.settings?.language && this.settings.language === 'zh-CN') {
+      await this.localizeManagedFiles('en');
+      await this.persist();
+    }
+    this.ribbon = this.addRibbonIcon('sprout', this.t('Open Tangrow'), () => { void this.openSidebar().catch((error) => new Notice(this.error(error))); });
+    this.registerCommands();
     this.addSettingTab(new TangrowSettings(this));
     const refresh = (): void => this.scheduleRefresh();
     this.registerEvent(this.app.workspace.on('file-open', refresh));
@@ -84,19 +84,19 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       if (!element.querySelector('h1')) return;
       const image = this.app.metadataCache.getFirstLinkpathDest(cover, file.path);
       if (!image || !['png', 'jpg', 'jpeg', 'webp', 'gif', 'avif'].includes(image.extension.toLowerCase())) return;
-      const banner = element.createEl('img', { cls: 'tangrow-note-cover', attr: { src: this.app.vault.getResourcePath(image), alt: 'Note cover' } });
+      const banner = element.createEl('img', { cls: 'tangrow-note-cover', attr: { src: this.app.vault.getResourcePath(image), alt: this.t('Note cover') } });
       element.prepend(banner);
     });
     this.registerInterval(window.setInterval(() => {
       if (this.cachedDay !== dayKey()) { this.cachedDay = dayKey(); this.notify(); }
       if (this.focus?.endsAt !== null && this.focus && remainingMs(this.focus, Date.now()) <= 0 && !this.finishing) {
-        void this.finishFocus().catch((error) => new Notice(`Could not save focus session: ${message(error)}`));
+        void this.finishFocus().catch((error) => new Notice(this.t('Could not save focus session: {error}', { error: this.error(error) })));
       }
     }, 1000));
     this.app.workspace.onLayoutReady(() => {
       if (!this.alive) return;
       this.applyWidths();
-      if (this.settings.autoOpen) void this.openSidebar().catch((error) => new Notice(message(error)));
+      if (this.settings.autoOpen) void this.openSidebar().catch((error) => new Notice(this.error(error)));
     });
   }
 
@@ -108,6 +108,58 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     void this.persist().catch((error) => console.error('Tangrow save failed', error));
     this.app.workspace.iterateAllLeaves((leaf) => leaf.view.containerEl.removeClass('tangrow-wide'));
     this.listeners.clear();
+  }
+
+  t(source: string, values?: TranslationValues): string { return translate(this.settings.language, source, values); }
+  error(error: unknown): string { return describeError(this.settings.language, error); }
+
+  private registerCommands(): void {
+    if (this.commandsRegistered) {
+      for (const id of ['open-companion', 'setup-bases', 'quick-capture', 'pin-note']) this.removeCommand(id);
+    }
+    this.addCommand({ id: 'open-companion', name: this.t('Open companion'), callback: () => { void this.openSidebar().catch((error) => new Notice(this.error(error))); } });
+    this.addCommand({ id: 'setup-bases', name: this.t('Set up companion Bases'), callback: () => { void this.setup().catch((error) => new Notice(this.error(error))); } });
+    this.addCommand({ id: 'quick-capture', name: this.t('Quick capture'), callback: () => new PromptModal(this.app, 'Capture a thought', 'A thought worth keeping', (text) => this.capture(text), this.settings.language).open() });
+    this.addCommand({ id: 'pin-note', name: this.t('Pin or unpin current note'), checkCallback: (checking) => {
+      if (!this.activeMarkdown()) return false;
+      if (!checking) void this.action('toggle-pin').catch((error) => new Notice(this.error(error)));
+      return true;
+    } });
+    this.commandsRegistered = true;
+  }
+
+  private async localizeManagedFiles(previousLanguage: Locale): Promise<number> {
+    let updated = 0;
+    for (const change of managedFileTranslations(this.settings, previousLanguage)) {
+      const file = this.app.vault.getAbstractFileByPath(`${this.settings.supportFolder}/${change.filename}`);
+      if (!(file instanceof TFile) || change.previous === change.next) continue;
+      if (!matchesGeneratedContent(change.filename, await this.app.vault.cachedRead(file), change.previous, parseYaml)) continue;
+      await this.app.vault.process(file, (content) => {
+        if (!matchesGeneratedContent(change.filename, content, change.previous, parseYaml)) return content;
+        updated++;
+        return change.next;
+      });
+    }
+    return updated;
+  }
+
+  async setLanguage(language: Locale): Promise<void> {
+    if (language !== 'zh-CN' && language !== 'en') throw new Error('Unsupported language.');
+    await this.exclusive(async () => {
+      const previous = this.settings.language;
+      if (previous === language) return;
+      this.settings.language = language;
+      try { await this.persist(); } catch (error) { this.settings.language = previous; throw error; }
+      try { await this.localizeManagedFiles(previous); }
+      finally {
+        if (this.commandsRegistered) this.registerCommands();
+        if (this.ribbon) setTooltip(this.ribbon, this.t('Open Tangrow'));
+        for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
+          if (leaf.view instanceof TangrowSidebar) leaf.view.refreshLanguage();
+        }
+        this.notify();
+      }
+    });
   }
 
   async openSidebar(): Promise<void> { await this.app.workspace.ensureSideLeaf(VIEW_TYPE, 'right', { active: false }); }
@@ -146,7 +198,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     this.scratch = value;
     if (!this.alive) { void this.persist().catch((error) => console.error('Tangrow save failed', error)); return; }
     window.clearTimeout(this.scratchTimer);
-    this.scratchTimer = window.setTimeout(() => { void this.persist().catch((error) => new Notice(message(error))); }, 350);
+    this.scratchTimer = window.setTimeout(() => { void this.persist().catch((error) => new Notice(this.error(error))); }, 350);
   }
 
   private activeMarkdown(): TFile | null {
@@ -197,7 +249,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       if (inFolder(file.path, this.settings.supportFolder) || inFolder(file.path, this.settings.archiveFolder)) continue;
       if (cache?.listItems?.some((item) => item.task === ' ')) this.indexTaskLabels(file);
       for (const item of cache?.listItems ?? []) {
-        if (item.task !== undefined && item.task === ' ') taskNotes.push({ path: file.path, line: item.position.start.line, text: this.taskLabels.get(file.path)?.lines.get(item.position.start.line) ?? `${file.basename} · line ${item.position.start.line + 1}`, done: false });
+        if (item.task !== undefined && item.task === ' ') taskNotes.push({ path: file.path, line: item.position.start.line, text: this.taskLabels.get(file.path)?.lines.get(item.position.start.line) ?? this.t('{name} · line {line}', { name: file.basename, line: item.position.start.line + 1 }), done: false });
       }
     }
     const active = this.activeMarkdown();
@@ -228,7 +280,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     for (const segment of path.split('/')) {
       current = current ? `${current}/${segment}` : segment;
       const found = this.app.vault.getAbstractFileByPath(current);
-      if (found && !(found instanceof TFolder)) throw new Error(`A file already exists at ${current}.`);
+      if (found && !(found instanceof TFolder)) throw new Error(this.t('A file already exists at {path}.', { path: current }));
       if (!found) await this.app.vault.createFolder(current);
     }
   }
@@ -255,7 +307,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       const readmePath = `${this.settings.supportFolder}/README.md`;
       if (!this.app.vault.getAbstractFileByPath(readmePath)) await this.app.vault.create(readmePath, setupReadme(this.settings));
       this.notify();
-      new Notice(`Tangrow: created ${created} Bases. Existing files were preserved.`);
+      new Notice(this.t('Tangrow: created {count} Bases. Existing files were preserved.', { count: created }));
     });
   }
   async openBase(id: BaseId): Promise<void> {
@@ -279,14 +331,14 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   }
   async capture(text: string): Promise<void> {
     if (!text.trim()) throw new Error('Write something before saving.');
-    const title = `Capture ${dateTime().format('YYYY-MM-DD HHmmss')}`;
+    const title = this.t('Capture {date}', { date: dateTime().format('YYYY-MM-DD HHmmss') });
     await this.exclusive(() => this.createUnique(this.settings.inboxFolder, title, text, { tangrow_kind: 'capture', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') }));
     this.notify();
-    new Notice('Captured in your inbox.');
+    new Notice(this.t('Captured in your inbox.'));
   }
   async saveDraft(text: string, title: string): Promise<void> {
     if (!text.trim()) throw new Error('Write a draft before saving.');
-    const file = await this.exclusive(() => this.createUnique(this.settings.inboxFolder, title || `Draft ${dateTime().format('YYYY-MM-DD HHmmss')}`, text, { tangrow_kind: 'draft', tangrow_status: 'draft', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') }));
+    const file = await this.exclusive(() => this.createUnique(this.settings.inboxFolder, title || this.t('Draft {date}', { date: dateTime().format('YYYY-MM-DD HHmmss') }), text, { tangrow_kind: 'draft', tangrow_status: 'draft', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') }));
     await this.openNote(file.path);
   }
 
@@ -307,9 +359,9 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   }
   private instructions(title: string, text: string): void {
     const modal = new Modal(this.app);
-    modal.setTitle(title);
-    modal.contentEl.createEl('p', { text });
-    new Setting(modal.contentEl).addButton((button) => button.setButtonText('Done').onClick(() => modal.close()));
+    modal.setTitle(this.t(title));
+    modal.contentEl.createEl('p', { text: this.t(text) });
+    new Setting(modal.contentEl).addButton((button) => button.setButtonText(this.t('Done')).onClick(() => modal.close()));
     modal.open();
   }
   async action(id: ActionId): Promise<void> {
@@ -319,10 +371,10 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       case 'copy-link': {
         const note = requireFile();
         await navigator.clipboard.writeText(this.app.fileManager.generateMarkdownLink(note, ''));
-        new Notice('Internal link copied.'); break;
+        new Notice(this.t('Internal link copied.')); break;
       }
-      case 'copy-path': await navigator.clipboard.writeText(requireFile().path); new Notice('Vault path copied.'); break;
-      case 'file-location': if (!await revealInFileList(this.app, requireFile())) this.instructions('Find this file', `Open the file explorer and locate: ${requireFile().path}`); break;
+      case 'copy-path': await navigator.clipboard.writeText(requireFile().path); new Notice(this.t('Vault path copied.')); break;
+      case 'file-location': if (!await revealInFileList(this.app, requireFile())) this.instructions('Find this file', this.t('Open the file explorer and locate: {path}', { path: requireFile().path })); break;
       case 'fold': case 'unfold': {
         const view = this.editor();
         if (!view) throw new Error('Open a note in the editor first.');
@@ -334,7 +386,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
         this.notify(); break;
       }
       case 'all-width': this.settings.wideByDefault = !this.settings.wideByDefault; this.widePages.clear(); await this.saveSettings(); break;
-      case 'refresh': this.taskLabels.clear(); this.notify(); new Notice('Tangrow index refreshed.'); break;
+      case 'refresh': this.taskLabels.clear(); this.notify(); new Notice(this.t('Tangrow index refreshed.')); break;
       case 'cover': {
         const note = requireFile();
         new PromptModal(this.app, 'Set a local note cover', 'Vault image path, or empty to remove', async (value) => {
@@ -345,8 +397,8 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
             if (image) fm.tangrow_cover = image.path;
             else delete fm.tangrow_cover;
           });
-          new Notice('Cover saved. It appears above a heading in reading view.');
-        }).open(); break;
+          new Notice(this.t('Cover saved. It appears above a heading in reading view.'));
+        }, this.settings.language).open(); break;
       }
       case 'timestamp': {
         const editor = this.editor()?.editor;
@@ -365,7 +417,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       case 'random-note': {
         const candidates = this.app.vault.getMarkdownFiles().filter((note) => !inFolder(note.path, this.settings.supportFolder) && !inFolder(note.path, this.settings.archiveFolder));
         const note = candidates[Math.floor(Math.random() * candidates.length)];
-        if (note) await this.openNote(note.path); else new Notice('There are no notes to revisit yet.'); break;
+        if (note) await this.openNote(note.path); else new Notice(this.t('There are no notes to revisit yet.')); break;
       }
       case 'daily-note': {
         const formatted = dateTime().format(this.settings.journalFormat);
@@ -419,12 +471,12 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
           if (fields?.tangrow_kind !== 'focus' || fields.tangrow_session_id !== session.id) throw new Error('An unrelated file occupies this focus record path. The session was retained.');
         } else {
           const fields = { tangrow_kind: 'focus', tangrow_session_id: session.id, tangrow_day: dayKey(session.startedAt), tangrow_minutes: elapsed, tangrow_source: session.filePath ? `[[${session.filePath.replace(/\.md$/, '')}]]` : null, created: new Date(session.startedAt).toISOString(), finished: new Date().toISOString() };
-          await this.app.vault.create(path, `---\n${stringifyYaml(fields)}---\n\n# Focus session\n\n${elapsed} active minutes.\n`);
+          await this.app.vault.create(path, `---\n${stringifyYaml(fields)}---\n\n# ${this.t('Focus session')}\n\n${this.t('{minutes} active minutes.', { minutes: elapsed })}\n`);
         }
         this.focus = null;
         try { await this.persist(); } catch (error) { this.focus = session; throw error; }
         this.notify();
-        new Notice(`Focus saved: ${elapsed} minutes.`);
+        new Notice(this.t('Focus saved: {minutes} minutes.', { minutes: elapsed }));
       });
     } finally { this.finishing = false; }
   }
@@ -446,9 +498,9 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       const folder = `${this.settings.supportFolder}/Records/Habits`;
       await this.ensureFolder(folder);
       const path = `${folder}/${dayKey()}-${habit.id}.md`;
-      if (this.app.vault.getAbstractFileByPath(path)) { new Notice('Already checked in today.'); return; }
+      if (this.app.vault.getAbstractFileByPath(path)) { new Notice(this.t('Already checked in today.')); return; }
       const fields = { tangrow_kind: 'habit', tangrow_day: dayKey(), tangrow_habit_id: habit.id, tangrow_habit: habit.name, created: new Date().toISOString() };
-      await this.app.vault.create(path, `---\n${stringifyYaml(fields)}---\n\n# Habit check-in\n\n${habit.name}\n`);
+      await this.app.vault.create(path, `---\n${stringifyYaml(fields)}---\n\n# ${this.t('Habit check-in')}\n\n${habit.name}\n`);
       this.notify();
     });
   }
@@ -461,28 +513,38 @@ class TangrowSettings extends PluginSettingTab {
   constructor(private plugin: TangrowPlugin) { super(plugin.app, plugin); }
   display(): void {
     this.containerEl.empty();
+    const t = (source: string): string => this.plugin.t(source);
     this.containerEl.createEl('h2', { text: 'Tangrow' });
-    this.containerEl.createEl('p', { text: 'Your folders stay in place. These paths tell the companion where to read and where to add new files.' });
+    this.containerEl.createEl('p', { text: t('Your folders stay in place. These paths tell the companion where to read and where to add new files.') });
+    new Setting(this.containerEl).setName(t('Interface language')).setDesc(t('Chinese is the default. Change the language without renaming notes or database files.')).addDropdown((dropdown) => dropdown
+      .addOption('zh-CN', t('Simplified Chinese'))
+      .addOption('en', 'English')
+      .setValue(this.plugin.settings.language)
+      .onChange(async (value) => {
+        try { await this.plugin.setLanguage(value as Locale); }
+        catch (error) { new Notice(this.plugin.error(error)); }
+        this.display();
+      }));
     const folders: Array<[keyof Pick<Settings, 'supportFolder' | 'inboxFolder' | 'projectFolder' | 'areaFolder' | 'resourcesFolder' | 'archiveFolder' | 'journalFolder'>, string]> = [
       ['supportFolder', 'Companion folder'], ['inboxFolder', 'Inbox'], ['projectFolder', 'Projects'], ['areaFolder', 'Areas'], ['resourcesFolder', 'Resources'], ['archiveFolder', 'Archive'], ['journalFolder', 'Journal folder']
     ];
     for (const [key, label] of folders) {
       let value = this.plugin.settings[key];
-      new Setting(this.containerEl).setName(label).setDesc(key === 'supportFolder' ? 'New Bases and focus/habit records only. Changing this path does not move existing files.' : 'Existing vault-relative folder. No files are moved.').addText((input) => input.setValue(value).onChange((text) => { value = text; })).addButton((button) => button.setButtonText('Apply').onClick(async () => {
-        try { this.plugin.settings[key] = safeFolder(value); await this.plugin.saveSettings(); new Notice('Path saved. Existing Bases keep their filters: edit them manually or choose a new companion folder and run setup.'); } catch (error) { new Notice(message(error)); }
+      new Setting(this.containerEl).setName(t(label)).setDesc(t(key === 'supportFolder' ? 'New Bases and focus/habit records only. Changing this path does not move existing files.' : 'Existing vault-relative folder. No files are moved.')).addText((input) => input.setValue(value).onChange((text) => { value = text; })).addButton((button) => button.setButtonText(t('Apply')).onClick(async () => {
+        try { this.plugin.settings[key] = safeFolder(value); await this.plugin.saveSettings(); new Notice(t('Path saved. Existing Bases keep their filters: edit them manually or choose a new companion folder and run setup.')); } catch (error) { new Notice(this.plugin.error(error)); }
       }));
     }
     let journalFormat = this.plugin.settings.journalFormat;
-    new Setting(this.containerEl).setName('Journal date format').setDesc('Moment format, including literal folder names in brackets.').addText((text) => text.setValue(journalFormat).onChange((value) => { journalFormat = value; })).addButton((button) => button.setButtonText('Apply').onClick(async () => {
-      if (!journalFormat.trim() || journalFormat.length >= 100) { new Notice('Use a date format of 1-99 characters.'); return; }
+    new Setting(this.containerEl).setName(t('Journal date format')).setDesc(t('Moment format, including literal folder names in brackets.')).addText((text) => text.setValue(journalFormat).onChange((value) => { journalFormat = value; })).addButton((button) => button.setButtonText(t('Apply')).onClick(async () => {
+      if (!journalFormat.trim() || journalFormat.length >= 100) { new Notice(t('Use a date format of 1-99 characters.')); return; }
       this.plugin.settings.journalFormat = journalFormat; await this.plugin.saveSettings();
     }));
-    new Setting(this.containerEl).setName('Open companion on startup').addToggle((toggle) => toggle.setValue(this.plugin.settings.autoOpen).onChange(async (value) => { this.plugin.settings.autoOpen = value; await this.plugin.saveSettings(); }));
-    new Setting(this.containerEl).setName('Default focus duration').setDesc('Minutes, from 1 to 240.').addText((input) => input.setValue(String(this.plugin.settings.focusMinutes)).onChange(async (value) => {
+    new Setting(this.containerEl).setName(t('Open companion on startup')).addToggle((toggle) => toggle.setValue(this.plugin.settings.autoOpen).onChange(async (value) => { this.plugin.settings.autoOpen = value; await this.plugin.saveSettings(); }));
+    new Setting(this.containerEl).setName(t('Default focus duration')).setDesc(t('Minutes, from 1 to 240.')).addText((input) => input.setValue(String(this.plugin.settings.focusMinutes)).onChange(async (value) => {
       const minutes = Number(value);
       if (!Number.isInteger(minutes) || minutes < 1 || minutes > 240) return;
       this.plugin.settings.focusMinutes = minutes; await this.plugin.saveSettings();
     }));
-    new Setting(this.containerEl).setName('Set up companion Bases').setDesc('Create missing files only. Existing Bases and notes are never overwritten.').addButton((button) => button.setButtonText('Set up Bases').onClick(async () => { try { await this.plugin.setup(); } catch (error) { new Notice(message(error)); } }));
+    new Setting(this.containerEl).setName(t('Set up companion Bases')).setDesc(t('Create missing files only. Existing Bases and notes are never overwritten.')).addButton((button) => button.setButtonText(t('Set up Bases')).onClick(async () => { try { await this.plugin.setup(); } catch (error) { new Notice(this.plugin.error(error)); } }));
   }
 }

@@ -50,6 +50,7 @@ export function streak(days: ReadonlySet<string>, time = Date.now()): number {
 export function readSettings(value: unknown): Settings {
   const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const result = { ...DEFAULT_SETTINGS, habits: [] } as Settings;
+  if (raw.language === 'en' || raw.language === 'zh-CN') result.language = raw.language;
   const folders = ['supportFolder', 'inboxFolder', 'projectFolder', 'areaFolder', 'resourcesFolder', 'archiveFolder', 'journalFolder'] as const;
   for (const key of folders) {
     if (typeof raw[key] !== 'string') continue;

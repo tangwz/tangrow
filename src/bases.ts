@@ -1,4 +1,5 @@
-import type { BaseId, Settings } from './types';
+import { translate } from './i18n';
+import type { BaseId, Locale, Settings } from './types';
 
 export interface BaseDefinition {
   id: BaseId;
@@ -41,11 +42,11 @@ function inFolder(folder: string): string {
   return `file.inFolder(${quote(folder)})`;
 }
 
-function renderBase(spec: BaseSpec): string {
+function renderBase(spec: BaseSpec, language: Locale): string {
   const columns = spec.columns ?? DEFAULT_COLUMNS;
   const properties = columns.flatMap((column) => [
     `  ${quote(column)}:`,
-    `    displayName: ${quote(PROPERTY_LABELS[column] ?? column)}`
+    `    displayName: ${quote(translate(language, PROPERTY_LABELS[column] ?? column))}`
   ]);
   return [
     'filters:',
@@ -55,7 +56,7 @@ function renderBase(spec: BaseSpec): string {
     ...properties,
     'views:',
     '  - type: table',
-    `    name: ${quote(spec.name)}`,
+    `    name: ${quote(translate(language, spec.name))}`,
     '    order:',
     ...columns.map((column) => `      - ${quote(column)}`),
     ''
@@ -141,43 +142,63 @@ export function baseDefinitions(settings: Settings): BaseDefinition[] {
   ];
   return specs.map((spec) => ({
     id: spec.id,
-    name: spec.name,
+    name: translate(settings.language, spec.name),
     filename: `Tangrow ${spec.name}.base`,
-    description: spec.description,
-    content: renderBase(spec)
+    description: translate(settings.language, spec.description),
+    content: renderBase(spec, settings.language)
   }));
 }
 
 export function setupReadme(settings: Settings): string {
   const definitions = baseDefinitions(settings);
+  const t = (source: string, values: Record<string, string> = {}): string => translate(settings.language, source, values);
   return [
     '# Tangrow',
     '',
-    'An additive companion for your existing Obsidian vault. Your notes keep their original locations.',
+    t('An additive companion for your existing Obsidian vault. Your notes keep their original locations.'),
     '',
-    '## Databases',
+    t('## Databases'),
     '',
     ...definitions.flatMap((definition) => [
       `- [[${definition.filename}|${definition.name}]]: ${definition.description}`
     ]),
     '',
-    '## Storage',
+    t('## Storage'),
     '',
-    `- New notes, captures and drafts use the configured inbox: ${settings.inboxFolder}.`,
-    `- Project notes use the existing project directory: ${settings.projectFolder}.`,
-    `- Bases and generated focus/habit records live beneath: ${settings.supportFolder}.`,
-    '- Pins and structured records use tangrow_ properties; existing type/status/source fields are preserved.',
-    '- The Tasks plugin and body checkboxes remain independent. The Task notes base indexes whole notes, not individual checkboxes.',
-    '- Focus records count elapsed timer time, not keyboard activity. Paused time is excluded.',
+    t('- New notes, captures and drafts use the configured inbox: {folder}.', { folder: settings.inboxFolder }),
+    t('- Project notes use the existing project directory: {folder}.', { folder: settings.projectFolder }),
+    t('- Bases and generated focus/habit records live beneath: {folder}.', { folder: settings.supportFolder }),
+    t('- Pins and structured records use tangrow_ properties; existing type/status/source fields are preserved.'),
+    t('- The Tasks plugin and body checkboxes remain independent. The Task notes base indexes whole notes, not individual checkboxes.'),
+    t('- Focus records count elapsed timer time, not keyboard activity. Paused time is excluded.'),
     '',
-    '## Setup and removal',
+    t('## Setup and removal'),
     '',
-    'Setup only creates missing Tangrow files. Existing files and customized Bases are never overwritten.',
-    'Disable Tangrow to remove its sidebar. Existing notes and these plain-text files remain readable without the plugin.',
+    t('Setup only creates missing Tangrow files. Existing files and customized Bases are never overwritten.'),
+    t('Disable Tangrow to remove its sidebar. Existing notes and these plain-text files remain readable without the plugin.'),
     '',
-    '## Working locally',
+    t('## Working locally'),
     '',
-    'Tangrow has no login, analytics, remote requests, or bundled third-party artwork. Obsidian Sync or your configured vault sync may still synchronize vault files.',
+    t('Tangrow has no login, analytics, remote requests, or bundled third-party artwork. Obsidian Sync or your configured vault sync may still synchronize vault files.'),
     ''
   ].join('\n');
+}
+
+export interface ManagedFileTranslation {
+  filename: string;
+  previous: string;
+  next: string;
+}
+
+export function managedFileTranslations(settings: Settings, previousLanguage: Locale): ManagedFileTranslation[] {
+  const previousSettings = { ...settings, language: previousLanguage };
+  const previousBases = new Map(baseDefinitions(previousSettings).map((definition) => [definition.filename, definition.content]));
+  return [
+    ...baseDefinitions(settings).map((definition) => ({
+      filename: definition.filename,
+      previous: previousBases.get(definition.filename)!,
+      next: definition.content
+    })),
+    { filename: 'README.md', previous: setupReadme(previousSettings), next: setupReadme(settings) }
+  ];
 }

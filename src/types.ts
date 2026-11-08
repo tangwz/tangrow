@@ -1,5 +1,6 @@
 import type { App } from 'obsidian';
 
+export type Locale = 'zh-CN' | 'en';
 export type Section = 'tools' | 'capture' | 'pins' | 'studio' | 'focus' | 'habits';
 export type NoteKind = 'note' | 'project' | 'draft';
 export type ActionId = 'copy-link' | 'copy-path' | 'file-location' | 'fold' | 'unfold' | 'page-width' | 'all-width' | 'refresh' | 'cover' | 'timestamp' | 'toggle-pin' | 'settings' | 'appearance' | 'file-list' | 'stack-tabs' | 'hide-panel' | 'random-note' | 'daily-note';
@@ -7,6 +8,7 @@ export type BaseId = 'notes' | 'recent' | 'projects' | 'areas' | 'resources' | '
 
 export interface Habit { id: string; name: string }
 export interface Settings {
+  language: Locale;
   supportFolder: string;
   inboxFolder: string;
   projectFolder: string;
@@ -21,6 +23,7 @@ export interface Settings {
   habits: Habit[];
 }
 export const DEFAULT_SETTINGS: Settings = {
+  language: 'zh-CN',
   supportFolder: '10-Life(Meta)/Tangrow',
   inboxFolder: '00-Inbox',
   projectFolder: '20-Project',
