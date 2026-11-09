@@ -7,6 +7,7 @@ import { TangrowSidebar, VIEW_TYPE } from './sidebar';
 import { TangrowReport, REPORT_VIEW_TYPE } from './report';
 import { TangrowCapture, CAPTURE_VIEW_TYPE, openCaptureWindow as revealCaptureWindow } from './capture-window';
 import { captureCreated, sortCaptures } from './capture-data';
+import { captureIsProcessed, processCapturedNote } from './capture-processing';
 import { findSubmittedNote, readDraftSubmissions, type DraftSubmission, type DraftSubmissions, type SubmissionKind } from './draft-submissions';
 import { normalizeRecentOpened, recordRecentOpened, renameRecentOpened, removeRecentOpened } from './recent-opened';
 import { stampHeadingDate } from './note-tools';
@@ -18,7 +19,7 @@ import { ReportSource } from './report-source';
 import { aggregateReport } from './report-data';
 import type { ReportPreferences, ReportRange, ReportSnapshot } from './report-contract';
 import { translate, describeError, type TranslationValues } from './i18n';
-import { DEFAULT_SETTINGS, type ComposerState, type Habit, type Locale, type ActionId, type BaseId, type FocusSession, type NoteKind, type NoteSummary, type Settings, type SidebarHost, type Snapshot, type TaskSummary, type WritingDraft } from './types';
+import { DEFAULT_SETTINGS, type CaptureRequest, type ComposerState, type Habit, type Locale, type ActionId, type BaseId, type FocusSession, type NoteKind, type NoteSummary, type Settings, type SidebarHost, type Snapshot, type TaskSummary, type WritingDraft } from './types';
 
 const dateTime = moment as unknown as (input?: number | string | Date) => { format(pattern: string): string };
 
@@ -562,7 +563,11 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
         return file instanceof TFile ? [this.summary(file)] : [];
       }),
       pins: files.filter((file) => this.app.metadataCache.getFileCache(file)?.frontmatter?.tangrow_pin === true).sort((left, right) => right.stat.mtime - left.stat.mtime || left.path.localeCompare(right.path)).map((file) => this.summary(file)),
-      captures: sortCaptures(notes.filter((file) => byKind(file, 'capture')).map((file) => ({ ...this.summary(file), created: captureCreated(this.app.metadataCache.getFileCache(file)?.frontmatter?.created, file.stat.ctime, file.stat.mtime) }))),
+      captures: sortCaptures(notes.filter((file) => byKind(file, 'capture')).map((file) => {
+        const fields = this.app.metadataCache.getFileCache(file)?.frontmatter ?? {};
+        return { ...this.summary(file), created: captureCreated(fields.created, file.stat.ctime, file.stat.mtime),
+          processed: captureIsProcessed(fields), processing: Boolean(fields.tangrow_capture_processing) };
+      })),
       drafts: recent.filter((file) => byKind(file, 'draft')).slice(0, 12).map((file) => this.summary(file)),
       tasks: taskNotes,
       habits: this.settings.habits.map((habit) => {
@@ -727,6 +732,16 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile) || file.extension !== 'md' || this.app.metadataCache.getFileCache(file)?.frontmatter?.tangrow_kind !== 'capture') throw new Error('This capture no longer exists.');
     return this.app.vault.cachedRead(file);
+  }
+  async processCapture(path: string, request: CaptureRequest): Promise<string | null> {
+    try {
+      const result = await this.exclusive(() => processCapturedNote(this.app, this.settings, path, request));
+      new Notice(this.t(request.action === 'pending' ? 'Capture moved back to pending.' : 'Capture processed.'));
+      return result;
+    } finally {
+      this.reportSource.invalidate();
+      this.notify();
+    }
   }
   async saveDraft(text: string, title: string, submission?: DraftSubmission): Promise<void> {
     if (!text.trim()) throw new Error('Write a draft before saving.');

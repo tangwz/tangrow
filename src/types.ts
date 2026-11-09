@@ -46,7 +46,14 @@ export const DEFAULT_SETTINGS: Settings = {
 export interface ComposerState { capture: string; scratchTitle: string }
 export interface WritingDraft { text: string; title: string; revision: number; editingView?: string }
 export interface NoteSummary { path: string; name: string; folder: string; modified: number; kind?: string; status?: string }
-export interface CaptureSummary extends NoteSummary { created: number }
+export interface CaptureSummary extends NoteSummary { created: number; processed?: boolean; processing?: boolean }
+export type CaptureRequest =
+  | { action: 'note'; title: string; projectPath?: string }
+  | { action: 'task'; title: string }
+  | { action: 'project'; projectPath: string }
+  | { action: 'done' }
+  | { action: 'pending' }
+  | { action: 'resume' };
 export interface TaskSummary { path: string; line: number; text: string; done: boolean }
 export interface FocusSession {
   id: string;
@@ -89,6 +96,7 @@ export interface SidebarHost {
   submitCaptureDraft(): Promise<void>;
   openCaptureWindow(): Promise<void>;
   readCapture(path: string): Promise<string>;
+  processCapture(path: string, request: CaptureRequest): Promise<string | null>;
   saveDraft(text: string, title: string): Promise<void>;
   loadWritingDraft(): WritingDraft;
   updateWritingDraft(patch: Partial<Pick<WritingDraft, 'text' | 'title'>>, expectedRevision: number, viewId?: string): boolean;

@@ -235,7 +235,15 @@ export function createMockApp() {
   };
   const fileManager = {
     generateMarkdownLink: (file: TFile): string => `[[${file.path}]]`,
-    renameFile: (file: TFile | TFolder, path: string): Promise<void> => vault.rename(file, path)
+    renameFile: (file: TFile | TFolder, path: string): Promise<void> => vault.rename(file, path),
+    processFrontMatter: async (file: TFile, update: (fields: Record<string, unknown>) => void): Promise<void> => {
+      await vault.process(file, (content) => {
+        const info = getFrontMatterInfo(content);
+        const fields = info.exists ? parseYaml(info.frontmatter) : {};
+        update(fields);
+        return `---\n${stringifyYaml(fields)}---\n${info.exists ? content.slice(info.contentStart) : content}`;
+      });
+    }
   };
   return { vault, workspace, metadataCache, fileManager };
 }

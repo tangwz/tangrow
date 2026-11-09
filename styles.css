@@ -655,6 +655,12 @@
 .tangrow-capture-open-source { color: var(--text-muted); gap: 3px; font-size: 9px; min-height: 23px; }
 .tangrow-capture-open-source .tangrow-icon svg { width: 12px; height: 12px; }
 .tangrow-capture-entry-title { display: block; color: var(--text-normal); font-size: 11px; font-weight: 550; line-height: 1.6; overflow-wrap: anywhere; }
+.tangrow-capture-filter { width: 100%; margin-bottom: 8px; }
+.tangrow-capture-entry-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.tangrow-capture-process-form { display: grid; gap: 8px; }
+.tangrow-capture-process-form label { display: block; margin-bottom: 4px; }
+.tangrow-capture-process-form :is(input, select) { width: 100%; }
+.tangrow-capture-process-form [hidden] { display: none !important; }
 .tangrow-capture-snippet { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; overflow-wrap: anywhere; white-space: normal; color: var(--text-muted); font-size: 11px; line-height: 1.8; margin: 7px 0 0; }
 .tangrow-capture-pagination { display: flex; flex-direction: column; align-items: center; gap: 8px; margin: -6px 0 18px; }
 .tangrow-capture-pagination:empty { display: none; }

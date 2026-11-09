@@ -1,6 +1,7 @@
 import { Notice, setIcon, setTooltip } from 'obsidian';
 import { captureCalendar, captureDay, groupCapturesByDay, shiftCaptureMonth } from './capture-data';
 import { capturePreview } from './capture-preview';
+import { CaptureProcessingModal } from './capture-processing-modal';
 import { describeError, translate } from './i18n';
 import type { TranslationValues } from './i18n';
 import type { CaptureSummary, SidebarHost } from './types';
@@ -25,6 +26,8 @@ export class CapturePanel {
   private calendarGrid?: HTMLElement;
   private timelineTitle?: HTMLElement;
   private timelineCount?: HTMLElement;
+  private statusFilter?: HTMLSelectElement;
+  private captureFilter: 'pending' | 'processed' | 'all' = 'pending';
   private timeline?: HTMLElement;
   private footer?: HTMLElement;
   private allDaysButton?: HTMLButtonElement;
@@ -105,6 +108,14 @@ export class CapturePanel {
 
     const timelineHeader = this.root.createDiv({ cls: 'tangrow-capture-timeline-heading' });
     this.timelineTitle = this.label(timelineHeader, 'h3', 'Capture timeline', 'tangrow-section-title');
+    this.statusFilter = this.root.createEl('select', { cls: 'tangrow-capture-filter' });
+    for (const value of ['pending', 'processed', 'all']) this.statusFilter.createEl('option', { value });
+    this.statusFilter.value = this.captureFilter;
+    this.statusFilter.addEventListener('change', () => {
+      this.captureFilter = this.statusFilter!.value as typeof this.captureFilter;
+      this.limit = PAGE_SIZE;
+      this.refresh();
+    });
     this.timelineCount = timelineHeader.createSpan({ cls: 'tangrow-muted', attr: { 'aria-live': 'polite' } });
     this.timeline = this.root.createDiv({ cls: 'tangrow-capture-timeline' });
     this.footer = this.root.createDiv({ cls: 'tangrow-capture-pagination' });
@@ -129,6 +140,9 @@ export class CapturePanel {
       for (const { element, source, values } of this.labels) element.textContent = this.t(source, values);
       this.root.setAttribute('aria-label', this.t('Quick capture'));
       this.editor?.setAttribute('placeholder', this.t('An idea, a question, a link...'));
+      this.statusFilter?.setAttribute('aria-label', this.t('Capture status'));
+      const labels = { pending: 'Pending captures', processed: 'Processed captures', all: 'All captures' };
+      for (const option of Array.from(this.statusFilter?.options ?? [])) option.textContent = this.t(labels[option.value as keyof typeof labels]);
       this.editor?.setAttribute('aria-label', this.t('Quick capture'));
       this.calendarGrid?.setAttribute('aria-label', this.t('Capture days'));
       this.timeline?.setAttribute('aria-labelledby', `${this.instanceId}-timeline`);
@@ -138,9 +152,9 @@ export class CapturePanel {
     if (this.destination) this.destination.textContent = this.t('Destination: {path}', { path: this.host.settings.inboxFolder });
     this.syncComposer();
     const captures = this.host.snapshot().captures;
-    const fingerprint = captures.map((capture) => [capture.path, capture.created, capture.modified, capture.name]);
+    const fingerprint = captures.map((capture) => [capture.path, capture.created, capture.modified, capture.name, capture.processed, capture.processing]);
     const calendarSignature = JSON.stringify([this.language, this.year, this.monthIndex, this.selectedDay, this.focusedDay, captureDay(Date.now()), fingerprint]);
-    const timelineSignature = JSON.stringify([this.language, this.selectedDay, this.limit, fingerprint]);
+    const timelineSignature = JSON.stringify([this.language, this.selectedDay, this.captureFilter, this.limit, fingerprint]);
     if (calendarSignature !== this.calendarSignature) {
       this.calendarSignature = calendarSignature;
       this.renderCalendar(captures);
@@ -166,6 +180,7 @@ export class CapturePanel {
     this.root?.remove();
     this.root = undefined;
     this.editor = undefined;
+    this.statusFilter = undefined;
     this.labels = [];
     this.buttonLabels.clear();
   }
@@ -327,17 +342,20 @@ export class CapturePanel {
 
   private renderTimeline(captures: CaptureSummary[]): void {
     if (!this.timeline || !this.timelineCount || !this.footer) return;
-    const filtered = this.selectedDay ? captures.filter((capture) => captureDay(capture.created) === this.selectedDay) : captures;
+    const filtered = captures.filter((capture) => (!this.selectedDay || captureDay(capture.created) === this.selectedDay)
+      && (this.captureFilter === 'all' || Boolean(capture.processed) === (this.captureFilter === 'processed')));
     const formattedDay = this.selectedDay ? new Date(`${this.selectedDay}T12:00:00`).toLocaleDateString(this.host.settings.language, { year: 'numeric', month: 'long', day: 'numeric' }) : '';
-    this.timelineCount.textContent = this.selectedDay ? this.t('{date}: {count} captures', { date: formattedDay, count: this.number(filtered.length) }) : this.t('All captures · {count}', { count: this.number(filtered.length) });
+    const countLabel = this.captureFilter === 'pending' ? 'Pending captures · {count}' : this.captureFilter === 'processed' ? 'Processed captures · {count}' : 'All captures · {count}';
+    this.timelineCount.textContent = this.selectedDay ? this.t('{date}: {count} captures', { date: formattedDay, count: this.number(filtered.length) }) : this.t(countLabel, { count: this.number(filtered.length) });
     const active = this.timeline.ownerDocument.activeElement as HTMLElement | null;
     const activePath = this.timeline.contains(active) ? active?.dataset.captureSource : undefined;
     this.timeline.empty();
     this.footer.empty();
     if (!filtered.length) {
       const empty = this.timeline.createDiv({ cls: 'tangrow-empty' });
-      empty.createEl('strong', { text: this.t(this.selectedDay ? 'No captures on this day' : 'Your first thought starts here') });
-      empty.createEl('p', { cls: 'tangrow-muted', text: this.t(this.selectedDay ? 'Choose another day, or save a new thought above.' : 'Saved captures will appear by their creation date.') });
+      const hasCaptures = captures.length > 0;
+      empty.createEl('strong', { text: this.t(hasCaptures ? 'No captures match this filter' : this.selectedDay ? 'No captures on this day' : 'Your first thought starts here') });
+      empty.createEl('p', { cls: 'tangrow-muted', text: this.t(hasCaptures ? 'Choose another status or date to browse your captures.' : this.selectedDay ? 'Choose another day, or save a new thought above.' : 'Saved captures will appear by their creation date.') });
       return;
     }
     const visible = groupCapturesByDay(filtered).flatMap((group) => group.captures).slice(0, this.limit);
@@ -360,6 +378,15 @@ export class CapturePanel {
         if (sourceLabel) open.setAttribute('aria-labelledby', `${entryId}-action ${entryId}-title`);
         const preview = article.createEl('p', { cls: 'tangrow-capture-snippet', text: this.t('Loading preview...') });
         this.loadPreview(capture, preview);
+        const actions = article.createDiv({ cls: 'tangrow-capture-entry-actions' });
+        if (capture.processed) {
+          actions.createSpan({ cls: 'tangrow-muted', text: this.t('Processed') });
+          const pending = this.button(actions, 'Move back to pending', async () => { await this.host.processCapture(capture.path, { action: 'pending' }); }, 'undo-2', 'tangrow-text-button');
+          setTooltip(pending, this.t('Saved results are kept.'));
+        } else this.button(actions, capture.processing ? 'Continue processing' : 'Process capture', async () => {
+          if (capture.processing) await this.host.processCapture(capture.path, { action: 'resume' });
+          else new CaptureProcessingModal(this.host, capture).open();
+        }, 'check-check', 'tangrow-text-button');
       }
     }
     this.footer.createSpan({ cls: 'tangrow-muted', text: this.t('Showing {shown} of {total} captures', { shown: this.number(visible.length), total: this.number(filtered.length) }) });
