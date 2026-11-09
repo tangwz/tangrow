@@ -3,10 +3,13 @@ import sidebar from './locales/sidebar.zh-CN.json';
 import bases from './locales/bases.zh-CN.json';
 import report from './locales/report.zh-CN.json';
 import capture from './locales/capture.zh-CN.json';
+import expanded from './locales/report-expanded.zh-CN.json';
+import reportSettings from './locales/report-settings.zh-CN.json';
+import activity from './locales/activity.zh-CN.json';
 import type { Locale } from './types';
 
 export type TranslationValues = Record<string, string | number>;
-const chinese: Record<string, string> = { ...core, ...sidebar, ...bases, ...report, ...capture };
+const chinese: Record<string, string> = { ...core, ...sidebar, ...bases, ...report, ...capture, ...expanded, ...reportSettings, ...activity };
 
 export function translate(language: Locale, source: string, values: TranslationValues = {}): string {
   const template = language === 'zh-CN' ? chinese[source] ?? source : source;

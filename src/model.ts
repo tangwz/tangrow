@@ -49,7 +49,7 @@ export function streak(days: ReadonlySet<string>, time = Date.now()): number {
 
 export function readSettings(value: unknown): Settings {
   const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
-  const result = { ...DEFAULT_SETTINGS, habits: [] } as Settings;
+  const result = { ...DEFAULT_SETTINGS, habits: [], reportExcludedFolders: [] } as Settings;
   if (raw.language === 'en' || raw.language === 'zh-CN') result.language = raw.language;
   const folders = ['supportFolder', 'inboxFolder', 'projectFolder', 'areaFolder', 'resourcesFolder', 'archiveFolder', 'journalFolder'] as const;
   for (const key of folders) {
@@ -63,6 +63,17 @@ export function readSettings(value: unknown): Settings {
   if (Number.isInteger(raw.focusMinutes) && Number(raw.focusMinutes) >= 1 && Number(raw.focusMinutes) <= 240) result.focusMinutes = Number(raw.focusMinutes);
   if (typeof raw.autoOpen === 'boolean') result.autoOpen = raw.autoOpen;
   if (typeof raw.wideByDefault === 'boolean') result.wideByDefault = raw.wideByDefault;
+  if (typeof raw.trackEditingActivity === 'boolean') result.trackEditingActivity = raw.trackEditingActivity;
+  if (Number.isInteger(raw.activityGoalMinutes) && Number(raw.activityGoalMinutes) >= 1 && Number(raw.activityGoalMinutes) <= 1440) result.activityGoalMinutes = Number(raw.activityGoalMinutes);
+  if (Array.isArray(raw.reportExcludedFolders)) {
+    for (const folder of raw.reportExcludedFolders) {
+      if (typeof folder !== 'string') continue;
+      try {
+        const path = safeFolder(folder);
+        if (!result.reportExcludedFolders.includes(path) && result.reportExcludedFolders.length < 100) result.reportExcludedFolders.push(path);
+      } catch { /* Ignore invalid analysis exclusions without changing vault folders. */ }
+    }
+  }
   if (Array.isArray(raw.habits)) {
     const ids = new Set<string>();
     result.habits = raw.habits.filter((habit): habit is { id: string; name: string } => {

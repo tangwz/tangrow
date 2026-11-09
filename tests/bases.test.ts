@@ -6,6 +6,7 @@ import chinese from '../src/locales/bases.zh-CN.json';
 import { DEFAULT_SETTINGS, type Settings } from '../src/types';
 
 const EN_SETTINGS: Settings = { ...DEFAULT_SETTINGS, language: 'en' };
+const LEGACY_EN_SETTINGS: Settings = { ...EN_SETTINGS, supportFolder: '10-Life(Meta)/Tangrow' };
 
 function filters(content: string): string[] {
   return content.split('\n')
@@ -76,8 +77,8 @@ const LEGACY_ENGLISH_HASHES: Record<string, string> = {
 
 test('English managed output remains byte-for-byte compatible with the initial release', () => {
   const files = [
-    ...baseDefinitions(EN_SETTINGS).map((base) => ({ filename: base.filename, content: base.content })),
-    { filename: 'README.md', content: setupReadme(EN_SETTINGS) }
+    ...baseDefinitions(LEGACY_EN_SETTINGS).map((base) => ({ filename: base.filename, content: base.content })),
+    { filename: 'README.md', content: setupReadme(LEGACY_EN_SETTINGS) }
   ];
   assert.deepEqual(files.map((file) => file.filename).sort(), Object.keys(LEGACY_ENGLISH_HASHES).sort());
   for (const file of files) {
@@ -115,9 +116,9 @@ test('Chinese README keeps stable file links with localized aliases and original
 });
 
 test('translation migration plans are reversible and change only generated presentation', () => {
-  const settings: Settings = { ...EN_SETTINGS, language: 'zh-CN' };
+  const settings: Settings = { ...LEGACY_EN_SETTINGS, language: 'zh-CN' };
   const forward = managedFileTranslations(settings, 'en');
-  const reverse = new Map(managedFileTranslations(EN_SETTINGS, 'zh-CN').map((file) => [file.filename, file]));
+  const reverse = new Map(managedFileTranslations(LEGACY_EN_SETTINGS, 'zh-CN').map((file) => [file.filename, file]));
   assert.equal(forward.length, 14);
   assert.equal(new Set(forward.map((file) => file.filename)).size, 14);
   for (const file of forward) {

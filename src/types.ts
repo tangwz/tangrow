@@ -1,4 +1,5 @@
 import type { App } from 'obsidian';
+import type { ReportPreferences, ReportRange, ReportSnapshot } from './report-contract';
 
 export type Locale = 'zh-CN' | 'en';
 export type Section = 'tools' | 'capture' | 'pins' | 'studio' | 'focus' | 'habits';
@@ -7,7 +8,7 @@ export type ActionId = 'copy-link' | 'copy-path' | 'file-location' | 'fold' | 'u
 export type BaseId = 'notes' | 'recent' | 'projects' | 'areas' | 'resources' | 'inbox' | 'sources' | 'captures' | 'pins' | 'drafts' | 'focus' | 'habits' | 'tasks';
 
 export interface Habit { id: string; name: string }
-export interface Settings {
+export interface Settings extends ReportPreferences {
   language: Locale;
   supportFolder: string;
   inboxFolder: string;
@@ -25,7 +26,7 @@ export interface Settings {
 }
 export const DEFAULT_SETTINGS: Settings = {
   language: 'zh-CN',
-  supportFolder: '10-Life(Meta)/Tangrow',
+  supportFolder: '99-Tangrow',
   inboxFolder: '00-Inbox',
   projectFolder: '20-Project',
   areaFolder: '30-Area',
@@ -37,9 +38,13 @@ export const DEFAULT_SETTINGS: Settings = {
   focusMinutes: 25,
   autoOpen: true,
   wideByDefault: false,
-  habits: []
+  habits: [],
+  reportExcludedFolders: [],
+  trackEditingActivity: true,
+  activityGoalMinutes: 60
 };
 export interface ComposerState { capture: string; scratchTitle: string }
+export interface WritingDraft { text: string; title: string; revision: number; editingView?: string }
 export interface NoteSummary { path: string; name: string; folder: string; modified: number; kind?: string; status?: string }
 export interface CaptureSummary extends NoteSummary { created: number }
 export interface TaskSummary { path: string; line: number; text: string; done: boolean }
@@ -73,6 +78,8 @@ export interface SidebarHost {
   app: App;
   settings: Settings;
   snapshot(): Snapshot;
+  loadReport(range: ReportRange): Promise<ReportSnapshot>;
+  updateReportSettings(patch: Partial<ReportPreferences>): Promise<void>;
   subscribe(listener: () => void): () => void;
   action(id: ActionId): Promise<void>;
   openNote(path: string, line?: number): Promise<void>;
@@ -83,6 +90,11 @@ export interface SidebarHost {
   openCaptureWindow(): Promise<void>;
   readCapture(path: string): Promise<string>;
   saveDraft(text: string, title: string): Promise<void>;
+  loadWritingDraft(): WritingDraft;
+  updateWritingDraft(patch: Partial<Pick<WritingDraft, 'text' | 'title'>>, expectedRevision: number, viewId?: string): boolean;
+  beginWritingDraftComposition(viewId: string, expectedRevision: number): boolean;
+  endWritingDraftComposition(viewId: string): void;
+  submitWritingDraft(expectedRevision: number): Promise<void>;
   setup(): Promise<void>;
   startFocus(minutes: number): Promise<void>;
   pauseFocus(): Promise<void>;

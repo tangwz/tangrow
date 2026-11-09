@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { baseDefinitions, setupReadme } from '../src/bases';
 import { aggregateReport } from '../src/report-data';
-import type { ActionId, ComposerState, FocusSession, Locale, NoteKind, Settings, Snapshot } from '../src/types';
+import type { ActionId, ComposerState, FocusSession, Locale, NoteKind, Settings, Snapshot, WritingDraft } from '../src/types';
 import type { FileView as MockFileView, ItemView as MockItemView, MarkdownView as MockMarkdownView, MockApp, Plugin as MockPlugin, TFile as MockFile, TFolder as MockFolder, createMockApp as MockAppFactory } from './obsidian-mock';
 
 type FolderSettingKey = keyof Pick<Settings, 'supportFolder' | 'inboxFolder' | 'projectFolder' | 'areaFolder' | 'resourcesFolder' | 'archiveFolder' | 'journalFolder'>;
@@ -17,6 +17,7 @@ interface TestPlugin extends MockPlugin {
   scratch: string;
   writes: Promise<unknown>;
   onload(): Promise<void>;
+  onunload(): void;
   setup(): Promise<void>;
   openNote(path: string, line?: number): Promise<void>;
   openBase(id: 'captures'): Promise<void>;
@@ -27,6 +28,11 @@ interface TestPlugin extends MockPlugin {
   setLanguage(language: Locale): Promise<void>;
   loadScratch(): string;
   saveScratch(value: string): void;
+  loadWritingDraft(): WritingDraft;
+  updateWritingDraft(patch: Partial<Pick<WritingDraft, 'text' | 'title'>>, expectedRevision: number, viewId?: string): boolean;
+  beginWritingDraftComposition(viewId: string, expectedRevision: number): boolean;
+  endWritingDraftComposition(viewId: string): void;
+  submitWritingDraft(expectedRevision: number): Promise<void>;
   loadComposer(): ComposerState;
   saveComposer(patch: Partial<ComposerState>): void;
   subscribe(listener: () => void): () => void;
@@ -44,6 +50,7 @@ interface TestPlugin extends MockPlugin {
 }
 interface Harness {
   TangrowPlugin: new (app: MockApp) => TestPlugin;
+  TangrowSidebar: new (leaf: unknown, host: TestPlugin) => TestSidebar;
   createMockApp: typeof MockAppFactory;
   TFile: typeof MockFile;
   TFolder: typeof MockFolder;
@@ -55,11 +62,41 @@ interface Harness {
   openCaptureWindow(app: unknown, host: unknown): Promise<void>;
 }
 
+interface DraftControl {
+  value: string;
+  isConnected: boolean;
+  readOnly: boolean;
+  ownerDocument: { activeElement: DraftControl | null };
+  selectionStart: number;
+  selectionEnd: number;
+  selectionDirection: 'none';
+  scrollTop: number;
+  setSelectionRange(start: number, end: number): void;
+}
+
+interface TestSidebar {
+  viewId: string;
+  scratch: string;
+  scratchTitle: string;
+  scratchRevision: number;
+  scratchEditor?: DraftControl;
+  scratchTitleInput?: DraftControl;
+  contentEl: { empty(): void };
+  onOpen(): Promise<void>;
+  onClose(): Promise<void>;
+  renderShell(): void;
+  refresh(): void;
+  registerInterval(): void;
+  clearStudioControls(): void;
+  refreshLanguage(): void;
+  flushWritingDraft(): void;
+}
+
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const bundled = await build({
   absWorkingDir: repository,
   stdin: {
-    contents: "export { default as TangrowPlugin } from './src/main'; export { openCaptureWindow } from './src/capture-window'; export * from './tests/obsidian-mock';",
+    contents: "export { default as TangrowPlugin } from './src/main'; export { TangrowSidebar } from './src/sidebar'; export { openCaptureWindow } from './src/capture-window'; export * from './tests/obsidian-mock';",
     resolveDir: repository,
     sourcefile: 'integration-entry.ts',
     loader: 'ts'
@@ -98,6 +135,84 @@ async function withClock(run: (advance: (minutes: number) => void) => Promise<vo
   try { await run((minutes) => { now += minutes * 60_000; }); }
   finally { Date.now = originalNow; }
 }
+
+function mockFrontmatterWrites(app: MockApp): void {
+  Object.assign(app.fileManager, {
+    processFrontMatter: async (file: MockFile, update: (fields: Record<string, unknown>) => void): Promise<void> => {
+      await app.vault.process(file, (content) => {
+        const fields = { ...app.metadataCache.getFileCache(file).frontmatter };
+        update(fields);
+        const body = content.replace(/^---\n[\s\S]*?\n---(?:\n|$)/, '');
+        const frontmatter = Object.entries(fields).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join('\n');
+        return `---\n${frontmatter}\n---\n${body}`;
+      });
+    }
+  });
+}
+
+test('pinning records the action time and repinning replaces it without changing other note data', async () => {
+  await withClock(async (advance) => {
+    const { plugin, app } = createPlugin();
+    const body = '\n# Original heading\n\nOriginal body with [[Internal link]].\n';
+    const properties = { title: 'Original title', tags: ['reading', 'reference'], source: 'https://example.com/article' };
+    const frontmatter = Object.entries(properties).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join('\n');
+    const note = app.vault.seedFile('00-Inbox/Pinned note.md', `---\n${frontmatter}\n---\n${body}`);
+    const originalPath = note.path;
+    const originalCreated = note.stat.ctime;
+    app.workspace.setActiveFile(note);
+    mockFrontmatterWrites(app);
+
+    const firstPinnedAt = new Date(Date.now()).toISOString();
+    await plugin.action('toggle-pin');
+    assert.deepEqual(app.metadataCache.getFileCache(note).frontmatter, { ...properties, tangrow_pin: true, tangrow_pinned_at: firstPinnedAt });
+    assert.equal(plugin.snapshot().activePinned, true);
+
+    advance(60);
+    await plugin.action('toggle-pin');
+    assert.deepEqual(app.metadataCache.getFileCache(note).frontmatter, properties);
+    assert.equal(plugin.snapshot().activePinned, false);
+
+    advance(60);
+    const secondPinnedAt = new Date(Date.now()).toISOString();
+    await plugin.action('toggle-pin');
+    assert.notEqual(secondPinnedAt, firstPinnedAt);
+    assert.deepEqual(app.metadataCache.getFileCache(note).frontmatter, { ...properties, tangrow_pin: true, tangrow_pinned_at: secondPinnedAt });
+    assert.equal(note.content.replace(/^---\n[\s\S]*?\n---\n/, ''), body);
+    assert.equal(note.path, originalPath);
+    assert.equal(note.stat.ctime, originalCreated);
+    assert.deepEqual(app.vault.createdPaths, []);
+  });
+});
+
+test('reading reports leaves legacy pins untouched and unpinning removes stale pin dates', async () => {
+  await withClock(async () => {
+    const { plugin, app } = createPlugin();
+    const legacy = app.vault.seedFile('00-Inbox/Legacy pin.md', '---\ntangrow_pin: true\ntitle: "Legacy title"\n---\n\n# Legacy pin\n');
+    const dated = app.vault.seedFile('00-Inbox/Dated pin.md', '---\ntangrow_pin: true\ntangrow_pinned_at: "invalid legacy date"\nsource: "https://example.com"\n---\n\n# Dated pin\n');
+    const before = currentContents(app);
+    const report = aggregateReport(app.vault.getMarkdownFiles().map((file) => ({
+      path: file.path,
+      name: file.basename,
+      created: file.stat.ctime,
+      modified: file.stat.mtime,
+      frontmatter: app.metadataCache.getFileCache(file).frontmatter
+    })), plugin.settings);
+    assert.equal(report.counts.pins, 2);
+    assert.deepEqual(currentContents(app), before);
+    assert.deepEqual(app.vault.processedPaths, []);
+
+    mockFrontmatterWrites(app);
+    app.workspace.setActiveFile(legacy);
+    await plugin.action('toggle-pin');
+    assert.deepEqual(app.metadataCache.getFileCache(legacy).frontmatter, { title: 'Legacy title' });
+    assert.equal(legacy.content.endsWith('\n\n# Legacy pin\n'), true);
+
+    app.workspace.setActiveFile(dated);
+    await plugin.action('toggle-pin');
+    assert.deepEqual(app.metadataCache.getFileCache(dated).frontmatter, { source: 'https://example.com' });
+    assert.equal(dated.content.endsWith('\n\n# Dated pin\n'), true);
+  });
+});
 
 test('setup creates only missing companion files and is repeatable', async () => {
   const { plugin, app } = createPlugin();
@@ -670,6 +785,250 @@ test('shared composers notify each subscriber synchronously without refreshing v
   });
 });
 
+function draftFiles(app: MockApp): MockFile[] {
+  return app.vault.getMarkdownFiles().filter((file) => app.metadataCache.getFileCache(file).frontmatter?.tangrow_kind === 'draft');
+}
+
+test('writing draft updates reject stale body and title changes without rescanning the vault', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    plugin.snapshot();
+    const scans = app.vault.getMarkdownFilesCalls;
+    const first = plugin.loadWritingDraft();
+    const stale = plugin.loadWritingDraft();
+    const changes: WritingDraft[] = [];
+    const stop = plugin.subscribeComposer(() => changes.push(plugin.loadWritingDraft()));
+    assert.equal(plugin.updateWritingDraft({ text: 'The latest body.', title: 'The latest title' }, first.revision), true);
+    const latest = plugin.loadWritingDraft();
+    assert.equal(plugin.updateWritingDraft({ text: 'A stale body.' }, stale.revision), false);
+    assert.equal(plugin.updateWritingDraft({ title: 'A stale title' }, stale.revision), false);
+    await assert.rejects(plugin.submitWritingDraft(stale.revision), /changed in another view/);
+    assert.deepEqual(plugin.loadWritingDraft(), latest);
+    assert.deepEqual(changes, [latest]);
+    assert.equal(plugin.updateWritingDraft({ ...latest }, latest.revision), true);
+    assert.equal(changes.length, 1);
+    assert.equal(app.vault.getMarkdownFilesCalls, scans);
+    assert.equal(app.vault.createdPaths.length, 0);
+    stop();
+  });
+});
+
+test('open Studio instances share body and title changes and closing one removes its subscription', async () => {
+  await withWindow(async () => {
+    const { plugin } = createPlugin();
+    const createView = (): TestSidebar => {
+      const view = new harness.TangrowSidebar({}, plugin);
+      view.renderShell = () => undefined;
+      view.refresh = () => undefined;
+      view.registerInterval = () => undefined;
+      view.contentEl = { empty: () => undefined };
+      return view;
+    };
+    const first = createView();
+    const second = createView();
+    await first.onOpen();
+    await second.onOpen();
+    const control: DraftControl = {
+      value: '', isConnected: true, readOnly: false, ownerDocument: { activeElement: null }, selectionStart: 40, selectionEnd: 40,
+      selectionDirection: 'none', scrollTop: 12,
+      setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; }
+    };
+    control.ownerDocument.activeElement = control;
+    second.scratchEditor = control;
+    plugin.updateWritingDraft({ text: 'Shared body.', title: 'Shared title' }, first.scratchRevision);
+    assert.equal(first.scratch, 'Shared body.');
+    assert.equal(second.scratch, 'Shared body.');
+    assert.equal(first.scratchTitle, 'Shared title');
+    assert.equal(second.scratchTitle, 'Shared title');
+    assert.equal(control.value, 'Shared body.');
+    assert.equal(control.selectionStart, control.value.length);
+    assert.equal(control.scrollTop, 12);
+    plugin.saveScratch('A body from another entry point.');
+    plugin.saveComposer({ scratchTitle: 'A title from another entry point' });
+    assert.equal(first.scratch, plugin.loadScratch());
+    assert.equal(second.scratchRevision, plugin.loadWritingDraft().revision);
+    assert.equal(second.scratchTitle, plugin.loadComposer().scratchTitle);
+    await first.onClose();
+    const closedText = first.scratch;
+    plugin.updateWritingDraft({ text: 'Only the open instance follows this.' }, second.scratchRevision);
+    assert.equal(first.scratch, closedText);
+    assert.equal(second.scratch, plugin.loadScratch());
+    await second.onClose();
+  });
+});
+
+test('IME composition protects pending input from remote updates and cleanup releases the editor lease', async () => {
+  await withWindow(async () => {
+    for (const close of [false, true]) {
+      const { plugin } = createPlugin();
+      plugin.updateWritingDraft({ text: 'The current shared body.', title: 'The shared title' }, plugin.loadWritingDraft().revision);
+      const createView = (): TestSidebar => {
+        const view = new harness.TangrowSidebar({}, plugin);
+        view.renderShell = () => undefined;
+        view.refresh = () => undefined;
+        view.registerInterval = () => undefined;
+        view.contentEl = { empty: () => undefined };
+        return view;
+      };
+      const createControl = (): DraftControl => ({
+        value: plugin.loadScratch(), isConnected: true, readOnly: false, ownerDocument: { activeElement: null },
+        selectionStart: 0, selectionEnd: 0, selectionDirection: 'none', scrollTop: 0,
+        setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; }
+      });
+      const first = createView();
+      const second = createView();
+      await first.onOpen();
+      await second.onOpen();
+      const firstControl = createControl();
+      const secondControl = createControl();
+      first.scratchEditor = firstControl;
+      second.scratchEditor = secondControl;
+      assert.equal(plugin.beginWritingDraftComposition(first.viewId, first.scratchRevision), true);
+      assert.equal(firstControl.readOnly, false);
+      assert.equal(secondControl.readOnly, true);
+      firstControl.value = 'The uncommitted composition text.';
+      assert.equal(plugin.beginWritingDraftComposition(second.viewId, second.scratchRevision), false);
+      assert.equal(plugin.updateWritingDraft({ text: 'A conflicting remote edit.' }, second.scratchRevision, second.viewId), false);
+      plugin.saveScratch('A conflicting legacy body edit.');
+      plugin.saveComposer({ capture: 'An independent capture update.', scratchTitle: 'A conflicting legacy title edit' });
+      assert.equal(plugin.loadScratch(), 'The current shared body.');
+      assert.equal(plugin.loadComposer().scratchTitle, 'The shared title');
+      assert.equal(plugin.loadComposer().capture, 'An independent capture update.');
+      assert.equal(firstControl.value, 'The uncommitted composition text.');
+      assert.equal(secondControl.value, 'The current shared body.');
+      await assert.rejects(plugin.submitWritingDraft(plugin.loadWritingDraft().revision), /Finish typing/);
+      plugin.endWritingDraftComposition(second.viewId);
+      assert.equal(plugin.loadWritingDraft().editingView, first.viewId);
+      if (close) await first.onClose();
+      else first.clearStudioControls();
+      assert.equal(plugin.loadWritingDraft().editingView, undefined);
+      assert.equal(plugin.loadScratch(), 'The uncommitted composition text.');
+      assert.equal(secondControl.value, 'The uncommitted composition text.');
+      assert.equal(secondControl.readOnly, false);
+      assert.equal(plugin.updateWritingDraft({ text: 'Editing can continue in the other view.' }, second.scratchRevision, second.viewId), true);
+      if (!close) await first.onClose();
+      await second.onClose();
+    }
+  });
+});
+
+test('finishing IME composition publishes the final body and releases other Studio instances', async () => {
+  await withWindow(async () => {
+    const { plugin } = createPlugin();
+    const initial = plugin.loadWritingDraft();
+    assert.equal(plugin.beginWritingDraftComposition('first-view', initial.revision), true);
+    assert.equal(plugin.updateWritingDraft({ text: 'A composition in progress.' }, initial.revision, 'first-view'), true);
+    const composing = plugin.loadWritingDraft();
+    assert.equal(plugin.updateWritingDraft({ text: 'The finalized composition.' }, composing.revision, 'first-view'), true);
+    plugin.endWritingDraftComposition('first-view');
+    const finished = plugin.loadWritingDraft();
+    assert.equal(finished.text, 'The finalized composition.');
+    assert.equal(finished.editingView, undefined);
+    assert.equal(plugin.updateWritingDraft({ title: 'A title from the other view' }, finished.revision, 'second-view'), true);
+  });
+});
+
+test('concurrent writing draft submissions save one note and clear both fields in one shared update', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    plugin.updateWritingDraft({ text: 'Save this writing once.', title: 'One shared draft' }, plugin.loadWritingDraft().revision);
+    const draft = plugin.loadWritingDraft();
+    const changes: WritingDraft[] = [];
+    plugin.subscribeComposer(() => changes.push(plugin.loadWritingDraft()));
+    const first = plugin.submitWritingDraft(draft.revision);
+    const second = plugin.submitWritingDraft(draft.revision);
+    assert.equal(second, first);
+    await Promise.all([first, second]);
+    assert.equal(draftFiles(app).length, 1);
+    assert.ok(draftFiles(app)[0]!.content.includes(draft.text));
+    assert.deepEqual(changes, [{ text: '', title: '', revision: draft.revision + 1 }]);
+  });
+});
+
+test('writing edits and edits reverted to the same text survive an earlier submission completing', async () => {
+  await withWindow(async () => {
+    for (const revert of [false, true]) {
+      const { plugin, app } = createPlugin();
+      plugin.updateWritingDraft({ text: 'The body being saved.', title: 'The title being saved' }, plugin.loadWritingDraft().revision);
+      const submitted = plugin.loadWritingDraft();
+      const entered = deferred();
+      const release = deferred();
+      const originalCreate = app.vault.create.bind(app.vault);
+      app.vault.create = async (path, content) => {
+        entered.resolve();
+        await release.promise;
+        return originalCreate(path, content);
+      };
+      const saving = plugin.submitWritingDraft(submitted.revision);
+      await entered.promise;
+      plugin.updateWritingDraft({ text: 'New input from another window.', title: 'A newer title' }, submitted.revision);
+      if (revert) plugin.updateWritingDraft({ text: submitted.text, title: submitted.title }, plugin.loadWritingDraft().revision);
+      const latest = plugin.loadWritingDraft();
+      release.resolve();
+      await saving;
+      assert.deepEqual(plugin.loadWritingDraft(), latest);
+      assert.equal(draftFiles(app).length, 1);
+      assert.ok(draftFiles(app)[0]!.content.includes(submitted.text));
+      assert.equal((plugin.savedData as { scratch: string }).scratch, latest.text);
+    }
+  });
+});
+
+test('failed writing submissions retain the draft for retry while navigation failures cannot duplicate it', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    plugin.updateWritingDraft({ text: 'Keep this text if writing fails.', title: 'A retryable draft' }, plugin.loadWritingDraft().revision);
+    const draft = plugin.loadWritingDraft();
+    app.vault.failCreates = 1;
+    await assert.rejects(plugin.submitWritingDraft(draft.revision), /Simulated vault write failure/);
+    assert.deepEqual(plugin.loadWritingDraft(), draft);
+    assert.equal(draftFiles(app).length, 0);
+    app.workspace.setNavigationLeaf({ view: { getViewType: () => 'markdown' }, openFile: async () => { throw new Error('Simulated navigation failure'); } });
+    await plugin.submitWritingDraft(draft.revision);
+    assert.equal(draftFiles(app).length, 1);
+    assert.equal(plugin.loadWritingDraft().text, '');
+    assert.equal(plugin.loadWritingDraft().title, '');
+    await assert.rejects(plugin.submitWritingDraft(plugin.loadWritingDraft().revision), /Write a draft before saving/);
+    assert.equal(draftFiles(app).length, 1);
+    assert.ok(harness.notices.some((notice) => notice.includes('Simulated navigation failure')));
+  });
+});
+
+test('writing draft cleanup retries persistence without creating another saved note', async () => {
+  await withWindow(async (timers) => {
+    const { plugin, app } = createPlugin();
+    plugin.updateWritingDraft({ text: 'A saved body.', title: 'A saved title' }, plugin.loadWritingDraft().revision);
+    plugin.saveFailures = 1;
+    await plugin.submitWritingDraft(plugin.loadWritingDraft().revision);
+    assert.equal(draftFiles(app).length, 1);
+    assert.equal(plugin.loadWritingDraft().text, '');
+    timers.flush();
+    await plugin.writes;
+    assert.equal((plugin.savedData as { scratch: string }).scratch, '');
+    assert.equal(draftFiles(app).length, 1);
+  });
+});
+
+test('language changes and reload keep the existing writing persistence format without revision fields', async () => {
+  await withWindow(async () => {
+    const { plugin } = createPlugin();
+    plugin.updateWritingDraft({ text: 'The unfinished body.', title: 'The unfinished title' }, plugin.loadWritingDraft().revision);
+    const draft = plugin.loadWritingDraft();
+    await plugin.setLanguage('en');
+    await plugin.setLanguage('zh-CN');
+    assert.deepEqual(plugin.loadWritingDraft(), draft);
+    const saved = plugin.savedData as { scratch: string; composer: ComposerState; revision?: number; writingDraft?: unknown };
+    assert.equal(saved.scratch, draft.text);
+    assert.equal(saved.composer.scratchTitle, draft.title);
+    assert.equal(saved.revision, undefined);
+    assert.equal(saved.writingDraft, undefined);
+    const { plugin: reloaded } = createPlugin();
+    reloaded.savedData = structuredClone(saved);
+    await reloaded.onload();
+    assert.deepEqual(reloaded.loadWritingDraft(), { text: draft.text, title: draft.title, revision: 0 });
+  });
+});
+
 test('concurrent submissions of the same shared capture create one record and clear every client view', async () => {
   await withWindow(async () => {
     const { plugin, app } = createPlugin();
@@ -809,7 +1168,7 @@ test('recently opened notes track renames and deletions and remain bounded after
     assert.equal(plugin.snapshot().recentOpened.length, 49);
     const expected = plugin.snapshot().recentOpened.map((note) => note.path);
     const persisted = structuredClone(plugin.savedData) as { version: number; recentOpened: string[] };
-    assert.equal(persisted.version, 3);
+    assert.equal(persisted.version, 4);
     assert.deepEqual(persisted.recentOpened, expected);
     const reloadedApp = harness.createMockApp();
     for (const file of app.vault.getFiles()) reloadedApp.vault.seedFile(file.path, file.content);
@@ -1160,4 +1519,116 @@ test('sidebar focus totals match report validation, stable session deduplication
   assert.equal(plugin.snapshot().counts.focusMinutes, 3.25);
   assert.deepEqual(currentContents(app), before);
   assert.deepEqual(app.vault.processedPaths, []);
+});
+
+test('Studio language refresh keeps the composing inputs and editing lease without rebuilding or refocusing', async () => {
+  await withWindow(async () => {
+    const { plugin } = createPlugin();
+    plugin.updateWritingDraft({ text: 'The shared body before composition.', title: 'The shared title' }, plugin.loadWritingDraft().revision);
+    const view = new harness.TangrowSidebar({}, plugin);
+    view.renderShell = () => undefined;
+    view.refresh = () => undefined;
+    view.registerInterval = () => undefined;
+    view.contentEl = { empty: () => undefined };
+    await view.onOpen();
+    let focused = 0;
+    let selected = 0;
+    let selectedSection = 0;
+    let clearedControls = 0;
+    const document = { activeElement: null as DraftControl | null };
+    const createControl = (value: string) => {
+      const attributes: Record<string, string> = { 'aria-label': 'Writing scratchpad' };
+      return {
+        value, isConnected: true, readOnly: false, ownerDocument: document, selectionStart: 5, selectionEnd: 5,
+        selectionDirection: 'none' as const, scrollTop: 12, dataset: {}, placeholder: '',
+        focus: (): void => { focused++; },
+        getAttribute: (key: string): string | null => attributes[key] ?? null,
+        setAttribute: (key: string, text: string): void => { attributes[key] = text; },
+        setSelectionRange: (): void => { selected++; }
+      };
+    };
+    const text = createControl(plugin.loadScratch());
+    const title = createControl(plugin.loadComposer().scratchTitle);
+    view.scratchEditor = text;
+    view.scratchTitleInput = title;
+    document.activeElement = text;
+    assert.equal(plugin.beginWritingDraftComposition(view.viewId, view.scratchRevision), true);
+    text.value = 'The pending IME text still inside this input.';
+    const heading = { textContent: '' };
+    const caption = { textContent: '' };
+    const originalClear = view.clearStudioControls.bind(view);
+    const content = {
+      ownerDocument: document, scrollTop: 31,
+      empty: (): void => { throw new Error('The Studio shell must not be rebuilt during composition.'); },
+      querySelector: (): null => null
+    };
+    Object.assign(view, {
+      section: 'studio', scratchComposingControl: text, contentEl: content,
+      pane: { contains: (control: unknown) => control === text || control === title, querySelectorAll: () => [] },
+      setupBanner: { empty: () => undefined }, studioHeading: heading, studioCaption: caption,
+      selectSection: (): void => { selectedSection++; throw new Error('Studio section selection would discard composing controls.'); },
+      clearStudioControls: (): void => { clearedControls++; throw new Error('Studio controls must remain mounted during composition.'); }
+    });
+    plugin.settings.language = 'en';
+    view.refreshLanguage();
+    assert.equal(view.scratchEditor, text);
+    assert.equal(view.scratchTitleInput, title);
+    assert.equal(text.value, 'The pending IME text still inside this input.');
+    assert.equal(title.value, 'The shared title');
+    assert.equal(plugin.loadWritingDraft().editingView, view.viewId);
+    assert.equal(plugin.loadWritingDraft().text, 'The shared body before composition.');
+    assert.equal(heading.textContent, 'A quiet writing corner');
+    assert.equal(text.placeholder, 'Start with a sentence...');
+    assert.equal(title.placeholder, 'Working title');
+    assert.equal(content.scrollTop, 31);
+    assert.equal(selectedSection, 0);
+    assert.equal(clearedControls, 0);
+    assert.equal(focused, 0);
+    assert.equal(selected, 0);
+    view.clearStudioControls = originalClear;
+    content.empty = () => undefined;
+    await view.onClose();
+    assert.equal(plugin.loadWritingDraft().text, 'The pending IME text still inside this input.');
+    assert.equal(plugin.loadWritingDraft().editingView, undefined);
+  });
+});
+
+test('plugin unload flushes unpublished IME input and title before releasing persistence ownership', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    await plugin.onload();
+    plugin.updateWritingDraft({ text: 'The body before composition.', title: 'The title before composition' }, plugin.loadWritingDraft().revision);
+    const view = new harness.TangrowSidebar({}, plugin);
+    view.renderShell = () => undefined;
+    view.refresh = () => undefined;
+    view.registerInterval = () => undefined;
+    view.contentEl = { empty: () => undefined };
+    await view.onOpen();
+    const control = (value: string): DraftControl => ({
+      value, isConnected: true, readOnly: false, ownerDocument: { activeElement: null }, selectionStart: 0, selectionEnd: 0,
+      selectionDirection: 'none', scrollTop: 0, setSelectionRange: () => undefined
+    });
+    const text = control(plugin.loadScratch());
+    const title = control(plugin.loadComposer().scratchTitle);
+    view.scratchEditor = text;
+    view.scratchTitleInput = title;
+    assert.equal(plugin.beginWritingDraftComposition(view.viewId, view.scratchRevision), true);
+    text.value = 'The latest IME body not yet published by an input event.';
+    title.value = 'The latest unpublished title';
+    const previousLeaves = app.workspace.getLeavesOfType;
+    Object.assign(app.workspace, { getLeavesOfType: (type: string) => type === 'tangrow-sidebar' ? [{ view, detach: () => { void view.onClose(); } }] : [] });
+    try {
+      plugin.onunload();
+      await plugin.writes;
+    } finally { app.workspace.getLeavesOfType = previousLeaves; }
+    const saved = plugin.savedData as { scratch: string; composer: ComposerState };
+    assert.equal(saved.scratch, text.value);
+    assert.equal(saved.composer.scratchTitle, title.value);
+    assert.equal(plugin.loadWritingDraft().editingView, undefined);
+    const reloaded = new harness.TangrowPlugin(app);
+    reloaded.savedData = structuredClone(saved);
+    await reloaded.onload();
+    assert.equal(reloaded.loadWritingDraft().text, text.value);
+    assert.equal(reloaded.loadWritingDraft().title, title.value);
+  });
 });

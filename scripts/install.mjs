@@ -60,9 +60,9 @@ const plugins = path.join(config, 'plugins');
 const destination = path.join(plugins, 'tangrow');
 await inspect(plugins, 'directory');
 await inspect(destination, 'directory');
-const files = ['manifest.json', 'main.js', 'styles.css'];
+const files = ['manifest.json', 'main.js', 'styles.css', 'LICENSE', 'THIRD_PARTY_NOTICES.md'];
 for (const name of files) {
-  if (!(await inspect(path.join(root, name), 'file'))) throw new Error(`Build output missing: ${name}. Run npm run build first.`);
+  if (!(await inspect(path.join(root, name), 'file'))) throw new Error(`Installation file missing: ${name}. Build the plugin and ensure its license notices are present.`);
   await inspect(path.join(destination, name), 'file');
 }
 const manifest = JSON.parse(await readFile(path.join(root, 'manifest.json'), 'utf8'));

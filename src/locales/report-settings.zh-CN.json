@@ -1,0 +1,6 @@
+{
+  "Use an activity goal from 1 to 1440 whole minutes.": "活跃目标须为 1–1440 之间的整数分钟。",
+  "Use at most 100 relative folder exclusions.": "最多可指定 100 个库内相对排除目录。",
+  "Report preferences saved. Existing notes and Bases were preserved.": "报表设置已保存，原笔记和数据库保持不变。",
+  "Choose whether editing activity is enabled.": "请选择是否启用本地编辑活跃统计。"
+}
