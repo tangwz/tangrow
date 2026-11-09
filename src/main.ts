@@ -7,6 +7,7 @@ import { TangrowSidebar, VIEW_TYPE } from './sidebar';
 import { TangrowReport, REPORT_VIEW_TYPE } from './report';
 import { TangrowCapture, CAPTURE_VIEW_TYPE, openCaptureWindow as revealCaptureWindow } from './capture-window';
 import { captureCreated, sortCaptures } from './capture-data';
+import { findSubmittedNote, readDraftSubmissions, type DraftSubmission, type DraftSubmissions, type SubmissionKind } from './draft-submissions';
 import { normalizeRecentOpened, recordRecentOpened, renameRecentOpened, removeRecentOpened } from './recent-opened';
 import { stampHeadingDate } from './note-tools';
 import { matchesGeneratedContent } from './managed-files';
@@ -21,7 +22,7 @@ import { DEFAULT_SETTINGS, type ComposerState, type Habit, type Locale, type Act
 
 const dateTime = moment as unknown as (input?: number | string | Date) => { format(pattern: string): string };
 
-interface SavedData { version: number; settings: Settings; focus: FocusSession | null; scratch: string; composer: ComposerState; recentOpened: string[]; activity: EditingActivityState }
+interface SavedData { version: number; settings: Settings; focus: FocusSession | null; scratch: string; composer: ComposerState; submissions: DraftSubmissions; recentOpened: string[]; activity: EditingActivityState }
 interface PersistenceCoordinator { owner?: symbol; tail: Promise<void> }
 const PERSISTENCE_COORDINATOR = Symbol.for('tangrow.persistence-coordinator');
 type FolderSettingKey = keyof Pick<Settings, 'supportFolder' | 'inboxFolder' | 'projectFolder' | 'areaFolder' | 'resourcesFolder' | 'archiveFolder' | 'journalFolder'>;
@@ -58,6 +59,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   private composerListeners = new Set<() => void>();
   private captureRevision = 0;
   private captureSubmissions = new Map<number, Promise<void>>();
+  private submissions: DraftSubmissions = { capture: null, writing: null };
   private recentOpened: string[] = [];
   private listeners = new Set<() => void>();
   private writes: Promise<void> = Promise.resolve();
@@ -101,9 +103,13 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       capture: typeof stored?.composer?.capture === 'string' ? stored.composer.capture : '',
       scratchTitle: typeof stored?.composer?.scratchTitle === 'string' ? stored.composer.scratchTitle : ''
     };
+    this.submissions = readDraftSubmissions(stored?.submissions);
     const hasHistory = stored !== null && Object.hasOwn(stored, 'recentOpened');
     this.recentOpened = normalizeRecentOpened(hasHistory ? stored.recentOpened : this.app.workspace.getLastOpenFiles(), (path) => this.app.vault.getAbstractFileByPath(path) instanceof TFile);
     this.dataLoaded = true;
+    try { await this.recoverSubmittedDrafts(); }
+    catch (error) { new Notice(this.error(error)); }
+    if (!this.alive) return;
     if (this.focus) {
       const session = this.focus;
       try {
@@ -123,7 +129,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       await this.localizeManagedFiles('en');
       await this.persist();
     }
-    if (stored?.version !== 4 || !hasHistory || JSON.stringify(stored.recentOpened) !== JSON.stringify(this.recentOpened)) {
+    if (stored?.version !== 5 || !hasHistory || JSON.stringify(stored.recentOpened) !== JSON.stringify(this.recentOpened)) {
       try { await this.persist(); } catch (error) { new Notice(this.error(error)); }
     }
     if (!this.alive) return;
@@ -301,7 +307,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     return app[PERSISTENCE_COORDINATOR] ??= { tail: Promise.resolve() };
   }
   private persistenceSnapshot(): SavedData {
-    return structuredClone({ version: 4, settings: this.settings, focus: this.focus, scratch: this.scratch, composer: this.composer, recentOpened: this.recentOpened, activity: this.editingActivity });
+    return structuredClone({ version: 5, settings: this.settings, focus: this.focus, scratch: this.scratch, composer: this.composer, submissions: this.submissions, recentOpened: this.recentOpened, activity: this.editingActivity });
   }
   private persist(finalFlush = false): Promise<void> {
     if (!this.alive && !finalFlush) return Promise.resolve();
@@ -444,6 +450,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     if (text === this.scratch && title === this.composer.scratchTitle) return true;
     this.scratch = text;
     this.composer.scratchTitle = title;
+    this.submissions.writing = null;
     this.scratchRevision++;
     this.scheduleComposerSave();
     for (const listener of this.composerListeners) listener();
@@ -454,11 +461,13 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     let changed = false;
     if (typeof patch.capture === 'string' && patch.capture !== this.composer.capture) {
       this.composer.capture = patch.capture;
+      this.submissions.capture = null;
       this.captureRevision++;
       changed = true;
     }
     if (this.scratchEditingView === undefined && typeof patch.scratchTitle === 'string' && patch.scratchTitle !== this.composer.scratchTitle) {
       this.composer.scratchTitle = patch.scratchTitle;
+      this.submissions.writing = null;
       this.scratchRevision++;
       changed = true;
     }
@@ -588,6 +597,51 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     while (this.app.vault.getAbstractFileByPath(path)) path = `${folder}/${title} (${suffix++}).md`;
     return this.app.vault.create(path, `---\n${stringifyYaml(fields)}---\n\n# ${title}\n\n${body.trim()}\n`);
   }
+  private async recoverSubmittedDrafts(): Promise<void> {
+    let recovered = false;
+    for (const key of ['capture', 'writing'] as const) {
+      const submission = this.submissions[key];
+      if (!submission) continue;
+      const file = await findSubmittedNote(this.app, submission, key === 'capture' ? 'capture' : 'draft');
+      if (!this.alive) return;
+      if (!file || this.submissions[key] !== submission) continue;
+      this.submissions[key] = null;
+      if (key === 'capture') { this.composer.capture = ''; this.captureRevision++; }
+      else { this.scratch = ''; this.composer.scratchTitle = ''; this.scratchRevision++; }
+      recovered = true;
+    }
+    if (recovered) {
+      try { await this.persist(); }
+      catch (error) { this.scheduleComposerSave(); throw error; }
+    }
+  }
+  private async createSubmittedNote(submission: DraftSubmission, kind: SubmissionKind, title: string, body: string, fields: Record<string, unknown>): Promise<TFile> {
+    if (submission.path !== null) {
+      const saved = await findSubmittedNote(this.app, submission, kind);
+      if (saved) return saved;
+    } else {
+      const folder = safeFolder(this.settings.inboxFolder);
+      title = safeTitle(title);
+      let path = `${folder}/${title}.md`;
+      let suffix = 2;
+      while (this.app.vault.getAbstractFileByPath(path)) path = `${folder}/${title} (${suffix++}).md`;
+      submission.path = path;
+    }
+    // Persist the receipt before creating Markdown. A failed barrier must not write a note.
+    await this.persist();
+    if (!this.alive || this.persistenceCoordinator().owner !== this.persistenceOwner) throw new Error('Tangrow could not complete this action.');
+    const path = submission.path;
+    await this.ensureFolder(path.slice(0, path.lastIndexOf('/')));
+    const heading = path.slice(path.lastIndexOf('/') + 1, -3);
+    const content = `---\n${stringifyYaml({ ...fields, tangrow_submission_id: submission.id })}---\n\n# ${heading}\n\n${body.trim()}\n`;
+    try { return await this.app.vault.create(path, content); }
+    catch (error) {
+      // A create can report failure after writing; retry only if no matching receipt exists.
+      const saved = await findSubmittedNote(this.app, submission, kind, false);
+      if (saved) return saved;
+      throw error;
+    }
+  }
   async setup(): Promise<void> {
     await this.exclusive(async () => {
       validateFolderSettings(this.settings);
@@ -639,10 +693,13 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     });
     await this.openNote(file.path);
   }
-  async capture(text: string): Promise<void> {
+  async capture(text: string, submission?: DraftSubmission): Promise<void> {
     if (!text.trim()) throw new Error('Write something before saving.');
     const title = this.t('Capture {date}', { date: dateTime().format('YYYY-MM-DD HHmmss') });
-    await this.exclusive(() => this.createUnique(this.settings.inboxFolder, title, text, { tangrow_kind: 'capture', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') }));
+    await this.exclusive(() => {
+      const fields = { tangrow_kind: 'capture', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') };
+      return submission ? this.createSubmittedNote(submission, 'capture', title, text, fields) : this.createUnique(this.settings.inboxFolder, title, text, fields);
+    });
     if (!this.alive) return;
     this.notify();
     new Notice(this.t('Captured in your inbox.'));
@@ -653,7 +710,8 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     const revision = this.captureRevision;
     const pending = this.captureSubmissions.get(revision);
     if (pending) return pending;
-    const submission = this.capture(source).then(async () => {
+    const receipt = this.submissions.capture ??= { id: uid(), path: null };
+    const submission = this.capture(source, receipt).then(async () => {
       if (!this.alive) return;
       if (this.captureRevision === revision && this.composer.capture === source) this.saveComposer({ capture: '' });
       try { await this.persist(); }
@@ -670,7 +728,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     if (!(file instanceof TFile) || file.extension !== 'md' || this.app.metadataCache.getFileCache(file)?.frontmatter?.tangrow_kind !== 'capture') throw new Error('This capture no longer exists.');
     return this.app.vault.cachedRead(file);
   }
-  async saveDraft(text: string, title: string): Promise<void> {
+  async saveDraft(text: string, title: string, submission?: DraftSubmission): Promise<void> {
     if (!text.trim()) throw new Error('Write a draft before saving.');
     const revision = this.scratchRevision;
     const origin = this.app.workspace.getMostRecentLeaf();
@@ -678,7 +736,11 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     const originFile = view instanceof FileView ? view.file : null;
     const document = view?.containerEl.ownerDocument;
     const active = document?.activeElement;
-    const file = await this.exclusive(() => this.createUnique(this.settings.inboxFolder, title || this.t('Draft {date}', { date: dateTime().format('YYYY-MM-DD HHmmss') }), text, { tangrow_kind: 'draft', tangrow_status: 'draft', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') }));
+    const file = await this.exclusive(() => {
+      const name = title || this.t('Draft {date}', { date: dateTime().format('YYYY-MM-DD HHmmss') });
+      const fields = { tangrow_kind: 'draft', tangrow_status: 'draft', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') };
+      return submission ? this.createSubmittedNote(submission, 'draft', name, text, fields) : this.createUnique(this.settings.inboxFolder, name, text, fields);
+    });
     if (!this.alive) return;
     // Saving must not navigate away from a newer edit, window, note, or focused control.
     if (this.scratchRevision !== revision || this.app.workspace.getMostRecentLeaf() !== origin
@@ -694,7 +756,8 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     if (!draft.text.trim()) return Promise.reject(new Error('Write a draft before saving.'));
     const pending = this.scratchSubmissions.get(draft.revision);
     if (pending) return pending;
-    const submission = this.saveDraft(draft.text, draft.title).then(async () => {
+    const receipt = this.submissions.writing ??= { id: uid(), path: null };
+    const submission = this.saveDraft(draft.text, draft.title, receipt).then(async () => {
       if (!this.alive) return;
       this.updateWritingDraft({ text: '', title: '' }, draft.revision);
       try { await this.persist(); }

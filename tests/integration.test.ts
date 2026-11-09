@@ -998,7 +998,12 @@ test('writing draft cleanup retries persistence without creating another saved n
   await withWindow(async (timers) => {
     const { plugin, app } = createPlugin();
     plugin.updateWritingDraft({ text: 'A saved body.', title: 'A saved title' }, plugin.loadWritingDraft().revision);
-    plugin.saveFailures = 1;
+    const create = app.vault.create.bind(app.vault);
+    app.vault.create = async (path, content) => {
+      const file = await create(path, content);
+      plugin.saveFailures = 1;
+      return file;
+    };
     await plugin.submitWritingDraft(plugin.loadWritingDraft().revision);
     assert.equal(draftFiles(app).length, 1);
     assert.equal(plugin.loadWritingDraft().text, '');
@@ -1168,7 +1173,7 @@ test('recently opened notes track renames and deletions and remain bounded after
     assert.equal(plugin.snapshot().recentOpened.length, 49);
     const expected = plugin.snapshot().recentOpened.map((note) => note.path);
     const persisted = structuredClone(plugin.savedData) as { version: number; recentOpened: string[] };
-    assert.equal(persisted.version, 4);
+    assert.equal(persisted.version, 5);
     assert.deepEqual(persisted.recentOpened, expected);
     const reloadedApp = harness.createMockApp();
     for (const file of app.vault.getFiles()) reloadedApp.vault.seedFile(file.path, file.content);
@@ -1301,7 +1306,12 @@ test('capture state-save failures retry only the cleared draft state without dup
     timers.flush();
     await plugin.writes;
     assert.equal((plugin.savedData as { composer: ComposerState }).composer.capture, 'A thought already saved as a note.');
-    plugin.saveFailures = 1;
+    const create = app.vault.create.bind(app.vault);
+    app.vault.create = async (path, content) => {
+      const file = await create(path, content);
+      plugin.saveFailures = 1;
+      return file;
+    };
     const first = plugin.submitCaptureDraft();
     const concurrent = plugin.submitCaptureDraft();
     assert.equal(concurrent, first);

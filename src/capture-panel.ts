@@ -1,33 +1,16 @@
-import { Notice, getFrontMatterInfo, setIcon, setTooltip } from 'obsidian';
+import { Notice, setIcon, setTooltip } from 'obsidian';
 import { captureCalendar, captureDay, groupCapturesByDay, shiftCaptureMonth } from './capture-data';
+import { capturePreview } from './capture-preview';
 import { describeError, translate } from './i18n';
 import type { TranslationValues } from './i18n';
 import type { CaptureSummary, SidebarHost } from './types';
 
 const PAGE_SIZE = 12;
-const PREVIEW_LENGTH = 240;
 const PREVIEW_CONCURRENCY = 3;
 const PREVIEW_CACHE_SIZE = 200;
 
 interface CapturePanelOptions { allowPopout?: boolean }
 interface PreviewJob { key: string; path: string; targets: Set<HTMLElement> }
-
-function snippet(content: string): string {
-  const info = getFrontMatterInfo(content);
-  const body = info.exists ? content.slice(info.contentStart) : content;
-  const plain = body
-    .replace(/^\s*#\s+[^\n]*(?:\r?\n|$)/, '')
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/!?\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_match, path: string, alias: string | undefined) => alias ?? path)
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-    .replace(/^\s*```[^\n]*$/gm, '')
-    .replace(/^\s*(?:#{1,6}\s+|>\s*|[-*+]\s+)/gm, '')
-    .replace(/[*_`~]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  const characters = Array.from(plain);
-  return characters.length > PREVIEW_LENGTH ? `${characters.slice(0, PREVIEW_LENGTH).join('')}…` : plain;
-}
 
 export class CapturePanel {
   private readonly instanceId = `tangrow-capture-${crypto.randomUUID()}`;
@@ -415,7 +398,7 @@ export class CapturePanel {
       if (!job.targets.size) { this.previewJobs.delete(job.key); continue; }
       this.activeReads++;
       void this.host.readCapture(job.path).then((content) => {
-        const value = snippet(content);
+        const value = capturePreview(content);
         this.previewCache.set(job.key, value);
         for (const target of job.targets) if (this.mounted && this.root?.contains(target)) target.textContent = value || this.t('No text preview');
       }).catch(() => {

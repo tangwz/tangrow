@@ -183,7 +183,7 @@ test('separate module reloads wait for in-flight writes and the queued final dra
       const app = firstModule.createMockApp();
       const first = new firstModule.TangrowPlugin(app);
       let sharedData: unknown = {
-        version: 4, settings: { ...first.settings, language: 'en' }, focus: null,
+        version: 5, settings: { ...first.settings, language: 'en' }, focus: null,
         scratch: 'The persisted starting body.', composer: { capture: 'Keep the capture.', scratchTitle: 'The persisted starting title' }, recentOpened: []
       };
       const started = deferred();
@@ -283,7 +283,7 @@ test('queued draft writes use rolled-back settings when a preceding settings tra
       const originalPaths = [...app.vault.entries.keys()].sort();
       const plugin = new harness.TangrowPlugin(app);
       let sharedData: unknown = {
-        version: 4, settings: { ...plugin.settings, language: 'en' }, focus: null,
+        version: 5, settings: { ...plugin.settings, language: 'en' }, focus: null,
         scratch: 'The starting draft body.', composer: { capture: 'Keep this capture.', scratchTitle: 'The starting title' }, recentOpened: []
       };
       plugin.loadData = async () => structuredClone(sharedData);
@@ -354,7 +354,7 @@ test('queued draft writes use rolled-back settings when a preceding settings tra
 
 function storedDraft(plugin: TestPlugin, text: string, title: string): unknown {
   return {
-    version: 4, settings: { ...plugin.settings, language: 'en' }, focus: null,
+    version: 5, settings: { ...plugin.settings, language: 'en' }, focus: null,
     scratch: text, composer: { capture: 'Keep the stored capture.', scratchTitle: title }, recentOpened: []
   };
 }
