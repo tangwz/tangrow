@@ -92,5 +92,22 @@
   "An unrelated file occupies this habit record path. Existing content was preserved.": "打卡记录路径已被其他内容占用，原文件已保留。",
   "This session has already been recorded. Finish it before starting another session.": "此专注已保存，请先结束当前会话，再开始新的专注。",
   "Use an ISO calendar date.": "请使用 YYYY-MM-DD 格式的日期。",
-  "Close the frontmatter block before adding a heading date.": "请先闭合笔记属性区，再为标题添加日期。"
+  "Close the frontmatter block before adding a heading date.": "请先闭合笔记属性区，再为标题添加日期。",
+  "The writing draft changed in another view. Review the latest text before saving.": "写作草稿已在其他视图中更新，请核对最新内容后再保存。",
+  "Draft saved, but scratchpad state could not be saved. It will be retried.": "草稿笔记已保存，但写作区状态暂未保存，将自动重试。",
+  "Draft saved, but it could not be opened: {error}": "草稿已保存，但无法打开：{error}",
+  "Finish typing before saving this draft.": "请先完成当前文字输入，再保存草稿。",
+  "The companion folder conflicts with a content folder. Update the folder settings before creating companion files.": "辅助目录与内容目录冲突，请先修改目录设置，再创建辅助文件。",
+  "The companion folder {support} must not equal or contain the content folder {content}.": "辅助目录 {support} 不得与内容目录 {content} 相同，也不能包含该内容目录。",
+  "The companion folder must not equal or contain a content folder.": "辅助目录不得与内容目录相同，也不能包含内容目录。",
+  "Move companion folder to 99-Tangrow": "将辅助目录迁移到 99-Tangrow",
+  "Move companion folder": "迁移辅助目录",
+  "Move to 99-Tangrow": "迁移到 99-Tangrow",
+  "Move the current companion folder to 99-Tangrow at the vault root. Existing destinations are never merged; customized files are preserved.": "将当前辅助目录迁移到笔记库根目录的 99-Tangrow。目标已存在时停止，自定义文件保持原样。",
+  "The companion folder now uses {folder}.": "辅助目录现已使用 {folder}。",
+  "{count} customized companion files were preserved. Review their folder filters manually.": "已保留 {count} 个自定义辅助文件，请手动核对其中的目录筛选条件。",
+  "The new companion folder must not contain or be inside the current companion folder.": "新辅助目录不得包含当前辅助目录，也不能位于当前辅助目录内部。",
+  "The new companion folder already exists. No files were moved.": "新辅助目录已存在，未移动任何文件。",
+  "The current companion path is not a folder.": "当前辅助路径不是文件夹。",
+  "The companion folder migration failed and could not be fully rolled back. Check the folder paths before retrying.": "辅助目录迁移失败，且未能完全恢复。请核对目录位置后再重试。"
 }

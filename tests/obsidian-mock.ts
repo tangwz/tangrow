@@ -233,7 +233,10 @@ export function createMockApp() {
     on: cacheEvents.on,
     trigger: cacheEvents.trigger
   };
-  const fileManager = { generateMarkdownLink: (file: TFile): string => `[[${file.path}]]` };
+  const fileManager = {
+    generateMarkdownLink: (file: TFile): string => `[[${file.path}]]`,
+    renameFile: (file: TFile | TFolder, path: string): Promise<void> => vault.rename(file, path)
+  };
   return { vault, workspace, metadataCache, fileManager };
 }
 export type MockApp = ReturnType<typeof createMockApp>;

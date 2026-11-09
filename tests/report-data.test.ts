@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readSettings } from '../src/model';
 import { aggregateReport, type ReportRecord } from '../src/report-data';
 import { DEFAULT_SETTINGS } from '../src/types';
 
@@ -61,6 +62,27 @@ test('task state counts include in-progress work and exclude support or archived
   assert.equal(report.counts.openTasks, 2);
   assert.equal(report.counts.completedTasks, 2);
   assert.equal(report.counts.cancelledTasks, 1);
+});
+
+test('persisted support folders that equal or contain projects do not hide user notes or tasks', () => {
+  const rows = [
+    record('Content/Projects/Alpha.md', {}, [' ', '/', 'x', '-']),
+    record('Content/Projects/Beta.md'),
+    record('Content/Other/Readme.md', {}, [' ']),
+    record('90-Archive/Old.md', {}, [' '])
+  ];
+  for (const supportFolder of ['Content/Projects', 'Content']) {
+    const settings = readSettings({ ...DEFAULT_SETTINGS, supportFolder, projectFolder: 'Content/Projects' });
+    const report = aggregateReport(rows, settings, NOW);
+    assert.equal(report.counts.notes, 4);
+    assert.equal(report.counts.projectNotes, 2);
+    assert.equal(report.counts.openTasks, 3);
+    assert.equal(report.counts.completedTasks, 1);
+    assert.equal(report.counts.cancelledTasks, 1);
+    assert.deepEqual(new Set(report.recent.map((row) => row.path)), new Set(rows.map((row) => row.path)));
+    assert.equal(report.days.reduce((sum, day) => sum + day.count, 0), 4);
+    assert.equal(settings.supportFolder, supportFolder);
+  }
 });
 
 test('focus and habit records are validated and counted once by stable identity', () => {

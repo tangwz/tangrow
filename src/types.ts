@@ -25,7 +25,7 @@ export interface Settings {
 }
 export const DEFAULT_SETTINGS: Settings = {
   language: 'zh-CN',
-  supportFolder: '10-Life(Meta)/Tangrow',
+  supportFolder: '99-Tangrow',
   inboxFolder: '00-Inbox',
   projectFolder: '20-Project',
   areaFolder: '30-Area',
@@ -40,6 +40,7 @@ export const DEFAULT_SETTINGS: Settings = {
   habits: []
 };
 export interface ComposerState { capture: string; scratchTitle: string }
+export interface WritingDraft { text: string; title: string; revision: number; editingView?: string }
 export interface NoteSummary { path: string; name: string; folder: string; modified: number; kind?: string; status?: string }
 export interface CaptureSummary extends NoteSummary { created: number }
 export interface TaskSummary { path: string; line: number; text: string; done: boolean }
@@ -83,6 +84,11 @@ export interface SidebarHost {
   openCaptureWindow(): Promise<void>;
   readCapture(path: string): Promise<string>;
   saveDraft(text: string, title: string): Promise<void>;
+  loadWritingDraft(): WritingDraft;
+  updateWritingDraft(patch: Partial<Pick<WritingDraft, 'text' | 'title'>>, expectedRevision: number, viewId?: string): boolean;
+  beginWritingDraftComposition(viewId: string, expectedRevision: number): boolean;
+  endWritingDraftComposition(viewId: string): void;
+  submitWritingDraft(expectedRevision: number): Promise<void>;
   setup(): Promise<void>;
   startFocus(minutes: number): Promise<void>;
   pauseFocus(): Promise<void>;

@@ -1,6 +1,6 @@
 {
   "name": "tangrow",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "An additive, local-first companion for an existing Obsidian vault.",
   "private": true,
   "type": "module",

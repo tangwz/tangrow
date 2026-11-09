@@ -1,3 +1,4 @@
+import { hasValidSupportFolder } from './folders';
 import { dayKey, inFolder, recentDays } from './model';
 import type { Settings } from './types';
 
@@ -37,7 +38,8 @@ function hasSource(value: unknown): boolean {
 export function aggregateReport(records: readonly ReportRecord[], settings: Settings, now = Date.now()): ReportData {
   if (!Number.isFinite(now) || now < 0) throw new RangeError('Report time must be a finite non-negative timestamp.');
   const unique = [...new Map(records.map((record) => [record.path, record])).values()];
-  const notes = unique.filter((record) => !inFolder(record.path, settings.supportFolder));
+  const excludeSupport = hasValidSupportFolder(settings);
+  const notes = unique.filter((record) => !excludeSupport || !inFolder(record.path, settings.supportFolder));
   const days = recentDays(30, now).map((day) => ({ day, count: 0 }));
   const dayCounts = new Map(days.map((entry) => [entry.day, entry]));
   const today = dayKey(now);

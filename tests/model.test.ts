@@ -16,12 +16,18 @@ test('note titles cannot escape their destination or break internal links', () =
 
 test('settings migration ignores malformed data and does not reuse mutable defaults', () => {
   const settings = readSettings({ supportFolder: '../escape', focusMinutes: 0, habits: [{ id: 'one', name: 'Read' }, { id: 'one', name: 'Duplicate' }, { id: '../bad', name: 'Bad' }] });
-  assert.equal(settings.supportFolder, '10-Life(Meta)/Tangrow');
+  assert.equal(settings.supportFolder, '99-Tangrow');
   assert.equal(settings.focusMinutes, 25);
   assert.equal(settings.habits.length, 1);
   settings.habits.push({ id: 'two', name: 'Write' });
   assert.equal(readSettings(null).habits.length, 0);
   assert.equal(readSession({ id: '../bad' }), null);
+});
+
+test('new installations use a root companion folder while stored paths remain explicit', () => {
+  assert.equal(readSettings(null).supportFolder, '99-Tangrow');
+  assert.equal(readSettings({ supportFolder: '10-Life(Meta)/Tangrow' }).supportFolder, '10-Life(Meta)/Tangrow');
+  assert.equal(readSettings({ supportFolder: 'Custom/Companion' }).supportFolder, 'Custom/Companion');
 });
 
 test('calendar days and streaks cross month boundaries and tolerate today pending', () => {

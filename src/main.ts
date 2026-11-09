@@ -10,8 +10,10 @@ import { captureCreated, sortCaptures } from './capture-data';
 import { normalizeRecentOpened, recordRecentOpened, renameRecentOpened, removeRecentOpened } from './recent-opened';
 import { stampHeadingDate } from './note-tools';
 import { matchesGeneratedContent } from './managed-files';
+import { hasValidSupportFolder, SupportFolderConflictError, validateFolderSettings } from './folders';
+import { moveSupportFolder } from './support-migration';
 import { translate, describeError, type TranslationValues } from './i18n';
-import { DEFAULT_SETTINGS, type ComposerState, type Habit, type Locale, type ActionId, type BaseId, type FocusSession, type NoteKind, type NoteSummary, type Settings, type SidebarHost, type Snapshot, type TaskSummary } from './types';
+import { DEFAULT_SETTINGS, type ComposerState, type Habit, type Locale, type ActionId, type BaseId, type FocusSession, type NoteKind, type NoteSummary, type Settings, type SidebarHost, type Snapshot, type TaskSummary, type WritingDraft } from './types';
 
 const dateTime = moment as unknown as (input?: number | string | Date) => { format(pattern: string): string };
 
@@ -43,6 +45,9 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   settings: Settings = readSettings(DEFAULT_SETTINGS);
   private focus: FocusSession | null = null;
   private scratch = '';
+  private scratchRevision = 0;
+  private scratchSubmissions = new Map<number, Promise<void>>();
+  private scratchEditingView: string | undefined;
   private composer: ComposerState = { capture: '', scratchTitle: '' };
   private composerListeners = new Set<() => void>();
   private captureRevision = 0;
@@ -66,6 +71,9 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   async onload(): Promise<void> {
     const stored = (await this.loadData() ?? null) as Partial<SavedData> | null;
     this.settings = readSettings(stored?.settings);
+    if (!hasValidSupportFolder(this.settings)) {
+      new Notice(this.t('The companion folder conflicts with a content folder. Update the folder settings before creating companion files.'));
+    }
     this.focus = readSession(stored?.focus);
     this.scratch = typeof stored?.scratch === 'string' ? stored.scratch : '';
     this.composer = {
@@ -128,7 +136,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     });
     this.registerInterval(window.setInterval(() => {
       if (this.cachedDay !== dayKey()) { this.cachedDay = dayKey(); this.notify(); }
-      if (this.focus?.endsAt !== null && this.focus && remainingMs(this.focus, Date.now()) <= 0 && !this.finishing) {
+      if (this.focus?.endsAt !== null && this.focus && remainingMs(this.focus, Date.now()) <= 0 && !this.finishing && hasValidSupportFolder(this.settings)) {
         void this.finishFocus().catch((error) => new Notice(this.t('Could not save focus session: {error}', { error: this.error(error) })));
       }
     }, 1000));
@@ -153,15 +161,19 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   }
 
   t(source: string, values?: TranslationValues): string { return translate(this.settings.language, source, values); }
-  error(error: unknown): string { return describeError(this.settings.language, error); }
+  error(error: unknown): string {
+    if (error instanceof SupportFolderConflictError) return this.t('The companion folder {support} must not equal or contain the content folder {content}.', { support: error.supportFolder, content: error.contentFolder });
+    return describeError(this.settings.language, error);
+  }
 
   private registerCommands(): void {
     if (this.commandsRegistered) {
-      for (const id of ['open-companion', 'open-report', 'open-capture-window', 'setup-bases', 'quick-capture', 'pin-note']) this.removeCommand(id);
+      for (const id of ['open-companion', 'open-report', 'open-capture-window', 'setup-bases', 'migrate-companion-folder', 'quick-capture', 'pin-note']) this.removeCommand(id);
     }
     this.addCommand({ id: 'open-companion', name: this.t('Open companion'), callback: () => { void this.openSidebar().catch((error) => new Notice(this.error(error))); } });
     this.addCommand({ id: 'open-report', name: this.t('Open report'), callback: () => { void this.openReport().catch((error) => new Notice(this.error(error))); } });
     this.addCommand({ id: 'setup-bases', name: this.t('Set up companion Bases'), callback: () => { void this.setup().catch((error) => new Notice(this.error(error))); } });
+    this.addCommand({ id: 'migrate-companion-folder', name: this.t('Move companion folder to 99-Tangrow'), callback: () => { void this.migrateCompanionFolder().catch((error) => new Notice(this.error(error))); } });
     const captureWindow = (): void => { void this.openCaptureWindow().catch((error) => new Notice(this.error(error))); };
     this.addCommand({ id: 'quick-capture', name: this.t('Quick capture'), callback: captureWindow });
     this.addCommand({ id: 'open-capture-window', name: this.t('Open capture window'), callback: captureWindow });
@@ -174,6 +186,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   }
 
   private async localizeManagedFiles(previousLanguage: Locale): Promise<number> {
+    if (!hasValidSupportFolder(this.settings)) return 0;
     let updated = 0;
     for (const change of managedFileTranslations(this.settings, previousLanguage)) {
       const file = this.app.vault.getAbstractFileByPath(`${this.settings.supportFolder}/${change.filename}`);
@@ -261,6 +274,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   async updateFolderSetting(key: FolderSettingKey, path: string): Promise<void> {
     const folder = safeFolder(path);
     await this.exclusive(async () => {
+      validateFolderSettings({ ...this.settings, [key]: folder });
       const previous = this.settings[key];
       this.settings[key] = folder;
       try { await this.persist(); }
@@ -268,8 +282,49 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       this.notify();
     });
   }
+  async migrateCompanionFolder(): Promise<void> {
+    await this.exclusive(async () => {
+      const previousFolder = this.settings.supportFolder;
+      const sourcePath = this.focus?.filePath;
+      try {
+        const result = await moveSupportFolder(this.app, this.settings, DEFAULT_SETTINGS.supportFolder, () => {
+          if (this.focus && sourcePath?.startsWith(`${previousFolder}/`)) this.focus = { ...this.focus, filePath: this.settings.supportFolder + sourcePath.slice(previousFolder.length) };
+          return this.persist();
+        });
+        new Notice(this.t('The companion folder now uses {folder}.', { folder: this.settings.supportFolder }));
+        if (result.preservedFiles.length) new Notice(this.t('{count} customized companion files were preserved. Review their folder filters manually.', { count: result.preservedFiles.length }));
+      } finally { this.notify(); }
+    });
+  }
   loadScratch(): string { return this.scratch; }
   loadComposer(): ComposerState { return { ...this.composer }; }
+  loadWritingDraft(): WritingDraft {
+    return { text: this.scratch, title: this.composer.scratchTitle, revision: this.scratchRevision, ...(this.scratchEditingView ? { editingView: this.scratchEditingView } : {}) };
+  }
+  beginWritingDraftComposition(viewId: string, expectedRevision: number): boolean {
+    if (!viewId || expectedRevision !== this.scratchRevision || (this.scratchEditingView !== undefined && this.scratchEditingView !== viewId)) return false;
+    if (this.scratchEditingView === viewId) return true;
+    this.scratchEditingView = viewId;
+    for (const listener of this.composerListeners) listener();
+    return true;
+  }
+  endWritingDraftComposition(viewId: string): void {
+    if (this.scratchEditingView !== viewId) return;
+    this.scratchEditingView = undefined;
+    for (const listener of this.composerListeners) listener();
+  }
+  updateWritingDraft(patch: Partial<Pick<WritingDraft, 'text' | 'title'>>, expectedRevision: number, viewId?: string): boolean {
+    if (expectedRevision !== this.scratchRevision || (this.scratchEditingView !== undefined && this.scratchEditingView !== viewId)) return false;
+    const text = patch.text ?? this.scratch;
+    const title = patch.title ?? this.composer.scratchTitle;
+    if (text === this.scratch && title === this.composer.scratchTitle) return true;
+    this.scratch = text;
+    this.composer.scratchTitle = title;
+    this.scratchRevision++;
+    this.scheduleComposerSave();
+    for (const listener of this.composerListeners) listener();
+    return true;
+  }
   saveComposer(patch: Partial<ComposerState>): void {
     let changed = false;
     if (typeof patch.capture === 'string' && patch.capture !== this.composer.capture) {
@@ -277,16 +332,16 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       this.captureRevision++;
       changed = true;
     }
-    if (typeof patch.scratchTitle === 'string' && patch.scratchTitle !== this.composer.scratchTitle) {
+    if (this.scratchEditingView === undefined && typeof patch.scratchTitle === 'string' && patch.scratchTitle !== this.composer.scratchTitle) {
       this.composer.scratchTitle = patch.scratchTitle;
+      this.scratchRevision++;
       changed = true;
     }
     this.scheduleComposerSave();
     if (changed) for (const listener of this.composerListeners) listener();
   }
   saveScratch(value: string): void {
-    this.scratch = value;
-    this.scheduleComposerSave();
+    this.updateWritingDraft({ text: value }, this.scratchRevision);
   }
   private scheduleComposerSave(): void {
     if (!this.alive) { void this.persist().catch((error) => console.error('Tangrow save failed', error)); return; }
@@ -336,7 +391,8 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       focusRemainingMs: remainingMs(this.focus, Date.now())
     };
     const files = this.app.vault.getMarkdownFiles();
-    const notes = files.filter((file) => !inFolder(file.path, this.settings.supportFolder));
+    const excludeSupport = hasValidSupportFolder(this.settings);
+    const notes = files.filter((file) => !excludeSupport || !inFolder(file.path, this.settings.supportFolder));
     const recent = [...notes].sort((a, b) => b.stat.mtime - a.stat.mtime);
     const taskNotes: TaskSummary[] = [];
     const habitDays = new Map<string, Set<string>>();
@@ -355,7 +411,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
         days.add(fm.tangrow_day);
         habitDays.set(fm.tangrow_habit_id, days);
       }
-      if (inFolder(file.path, this.settings.supportFolder) || inFolder(file.path, this.settings.archiveFolder)) continue;
+      if ((excludeSupport && inFolder(file.path, this.settings.supportFolder)) || inFolder(file.path, this.settings.archiveFolder)) continue;
       if (cache?.listItems?.some((item) => item.task === ' ' || item.task === '/')) this.indexTaskLabels(file);
       for (const item of cache?.listItems ?? []) {
         if (item.task === ' ' || item.task === '/') taskNotes.push({ path: file.path, line: item.position.start.line, text: this.taskLabels.get(file.path)?.lines.get(item.position.start.line) ?? this.t('{name} · line {line}', { name: file.basename, line: item.position.start.line + 1 }), done: false });
@@ -381,7 +437,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       }),
       focus: this.focus,
       focusRemainingMs: remainingMs(this.focus, Date.now()),
-      supportReady: supportFiles.every((filename) => this.app.vault.getAbstractFileByPath(`${this.settings.supportFolder}/${filename}`) instanceof TFile),
+      supportReady: excludeSupport && supportFiles.every((filename) => this.app.vault.getAbstractFileByPath(`${this.settings.supportFolder}/${filename}`) instanceof TFile),
       projectFolders: this.app.vault.getAllFolders().filter((folder) => inFolder(folder.path, this.settings.projectFolder)).map((folder) => folder.path).sort((left, right) => left.localeCompare(right)),
       widePage: active?.extension === 'md' ? this.isWide(active.path) : false
     };
@@ -409,6 +465,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   }
   async setup(): Promise<void> {
     await this.exclusive(async () => {
+      validateFolderSettings(this.settings);
       await this.ensureFolder(this.settings.supportFolder);
       const definitions = baseDefinitions(this.settings);
       let created = 0;
@@ -489,7 +546,26 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   async saveDraft(text: string, title: string): Promise<void> {
     if (!text.trim()) throw new Error('Write a draft before saving.');
     const file = await this.exclusive(() => this.createUnique(this.settings.inboxFolder, title || this.t('Draft {date}', { date: dateTime().format('YYYY-MM-DD HHmmss') }), text, { tangrow_kind: 'draft', tangrow_status: 'draft', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') }));
-    await this.openNote(file.path);
+    try { await this.openNote(file.path); }
+    catch (error) { new Notice(this.t('Draft saved, but it could not be opened: {error}', { error: this.error(error) })); }
+  }
+  submitWritingDraft(expectedRevision: number): Promise<void> {
+    const draft = this.loadWritingDraft();
+    if (draft.editingView !== undefined) return Promise.reject(new Error('Finish typing before saving this draft.'));
+    if (draft.revision !== expectedRevision) return Promise.reject(new Error('The writing draft changed in another view. Review the latest text before saving.'));
+    if (!draft.text.trim()) return Promise.reject(new Error('Write a draft before saving.'));
+    const pending = this.scratchSubmissions.get(draft.revision);
+    if (pending) return pending;
+    const submission = this.saveDraft(draft.text, draft.title).then(async () => {
+      this.updateWritingDraft({ text: '', title: '' }, draft.revision);
+      try { await this.persist(); }
+      catch {
+        new Notice(this.t('Draft saved, but scratchpad state could not be saved. It will be retried.'));
+        this.scheduleComposerSave();
+      }
+    }).finally(() => { this.scratchSubmissions.delete(draft.revision); });
+    this.scratchSubmissions.set(draft.revision, submission);
+    return submission;
   }
 
   private isWide(path: string): boolean { return this.settings.wideByDefault !== this.widePages.has(path); }
@@ -618,7 +694,8 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       }
       case 'hide-panel': this.app.workspace.getLeavesOfType(VIEW_TYPE).forEach((leaf) => leaf.detach()); break;
       case 'random-note': {
-        const candidates = this.app.vault.getMarkdownFiles().filter((note) => !inFolder(note.path, this.settings.supportFolder) && !inFolder(note.path, this.settings.archiveFolder));
+        const excludeSupport = hasValidSupportFolder(this.settings);
+        const candidates = this.app.vault.getMarkdownFiles().filter((note) => (!excludeSupport || !inFolder(note.path, this.settings.supportFolder)) && !inFolder(note.path, this.settings.archiveFolder));
         const note = candidates[Math.floor(Math.random() * candidates.length)];
         if (note) await this.openNote(note.path); else new Notice(this.t('There are no notes to revisit yet.')); break;
       }
@@ -644,6 +721,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
 
   async startFocus(minutes: number): Promise<void> {
     await this.exclusive(async () => {
+      validateFolderSettings(this.settings);
       if (this.focus) throw new Error('Finish or discard the current session first.');
       await this.replaceFocus(startSession(minutes, Date.now(), uid(), this.activeMarkdown()?.path ?? null));
     });
@@ -659,6 +737,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     });
   }
   private async recordedFocusMinutes(session: FocusSession): Promise<number | null> {
+    validateFolderSettings(this.settings);
     const path = `${this.settings.supportFolder}/Records/Focus/${session.id}.md`;
     const existing = this.app.vault.getAbstractFileByPath(path);
     if (!existing) return null;
@@ -676,6 +755,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       await this.exclusive(async () => {
         const session = this.focus;
         if (!session) return;
+        validateFolderSettings(this.settings);
         const stopped = pauseSession(session, Date.now());
         let elapsed = Math.round(focusMinutes(stopped, Date.now()) * 100) / 100;
         const folder = `${this.settings.supportFolder}/Records/Focus`;
@@ -712,6 +792,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   }
   async checkHabit(id: string): Promise<void> {
     await this.exclusive(async () => {
+      validateFolderSettings(this.settings);
       const habit = this.settings.habits.find((item) => item.id === id);
       if (!habit) throw new Error('This habit was archived.');
       const folder = `${this.settings.supportFolder}/Records/Habits`;
@@ -769,6 +850,12 @@ class TangrowSettings extends PluginSettingTab {
         try { await this.plugin.updateFolderSetting(key, value); new Notice(t('Path saved. Existing Bases keep their filters: edit them manually or choose a new companion folder and run setup.')); } catch (error) { new Notice(this.plugin.error(error)); }
       }));
     }
+    new Setting(this.containerEl).setName(t('Move companion folder')).setDesc(t('Move the current companion folder to 99-Tangrow at the vault root. Existing destinations are never merged; customized files are preserved.')).addButton((button) => button.setButtonText(t('Move to 99-Tangrow')).setDisabled(this.plugin.settings.supportFolder === DEFAULT_SETTINGS.supportFolder).onClick(async () => {
+      button.setDisabled(true);
+      try { await this.plugin.migrateCompanionFolder(); this.display(); }
+      catch (error) { new Notice(this.plugin.error(error)); }
+      finally { button.setDisabled(this.plugin.settings.supportFolder === DEFAULT_SETTINGS.supportFolder); }
+    }));
     let taskOverviewPath = this.plugin.settings.taskOverviewPath;
     new Setting(this.containerEl).setName(t('Task overview note')).setDesc(t('Existing Tasks note path. Tangrow opens it without changing its queries.')).addText((input) => input.setValue(taskOverviewPath).onChange((value) => { taskOverviewPath = value; })).addButton((button) => button.setButtonText(t('Apply')).onClick(async () => {
       try {
