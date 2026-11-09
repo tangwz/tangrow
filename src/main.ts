@@ -14,10 +14,11 @@ import { hasValidSupportFolder, SupportFolderConflictError, validateFolderSettin
 import { moveSupportFolder } from './support-migration';
 import { addEditingActivity, createActivityState, normalizeActivityState, summarizeActivity, type EditingActivityState } from './activity';
 import { ReportSource } from './report-source';
+import { captureWritingNavigation } from './writing-navigation';
 import { aggregateReport } from './report-data';
 import type { ReportPreferences, ReportRange, ReportSnapshot } from './report-contract';
 import { translate, describeError, type TranslationValues } from './i18n';
-import { DEFAULT_SETTINGS, type ComposerState, type Habit, type Locale, type ActionId, type BaseId, type FocusSession, type NoteKind, type NoteSummary, type Settings, type SidebarHost, type Snapshot, type TaskSummary, type WritingDraft } from './types';
+import { DEFAULT_SETTINGS, type ComposerState, type Habit, type Locale, type ActionId, type BaseId, type FocusSession, type NoteKind, type NoteSummary, type Settings, type SidebarHost, type Snapshot, type TaskSummary, type WritingDraft, type WritingSaveOrigin } from './types';
 
 const dateTime = moment as unknown as (input?: number | string | Date) => { format(pattern: string): string };
 
@@ -670,21 +671,28 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     if (!(file instanceof TFile) || file.extension !== 'md' || this.app.metadataCache.getFileCache(file)?.frontmatter?.tangrow_kind !== 'capture') throw new Error('This capture no longer exists.');
     return this.app.vault.cachedRead(file);
   }
-  async saveDraft(text: string, title: string): Promise<void> {
+  async saveDraft(text: string, title: string, origin?: WritingSaveOrigin): Promise<void> {
     if (!text.trim()) throw new Error('Write a draft before saving.');
-    const file = await this.exclusive(() => this.createUnique(this.settings.inboxFolder, title || this.t('Draft {date}', { date: dateTime().format('YYYY-MM-DD HHmmss') }), text, { tangrow_kind: 'draft', tangrow_status: 'draft', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') }));
-    if (!this.alive) return;
-    try { await this.openNote(file.path); }
-    catch (error) { new Notice(this.t('Draft saved, but it could not be opened: {error}', { error: this.error(error) })); }
+    const revision = this.scratchRevision;
+    const navigation = captureWritingNavigation(this.app.workspace, origin);
+    try {
+      const file = await this.exclusive(() => this.createUnique(this.settings.inboxFolder, title || this.t('Draft {date}', { date: dateTime().format('YYYY-MM-DD HHmmss') }), text, { tangrow_kind: 'draft', tangrow_status: 'draft', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') }));
+      if (!this.alive || this.scratchRevision !== revision || this.scratchEditingView !== undefined) return;
+      const target = navigation.destination();
+      navigation.dispose();
+      if (!target) return;
+      try { await target.openFile(file, { active: true }); }
+      catch (error) { new Notice(this.t('Draft saved, but it could not be opened: {error}', { error: this.error(error) })); }
+    } finally { navigation.dispose(); }
   }
-  submitWritingDraft(expectedRevision: number): Promise<void> {
+  submitWritingDraft(expectedRevision: number, origin?: WritingSaveOrigin): Promise<void> {
     const draft = this.loadWritingDraft();
     if (draft.editingView !== undefined) return Promise.reject(new Error('Finish typing before saving this draft.'));
     if (draft.revision !== expectedRevision) return Promise.reject(new Error('The writing draft changed in another view. Review the latest text before saving.'));
     if (!draft.text.trim()) return Promise.reject(new Error('Write a draft before saving.'));
     const pending = this.scratchSubmissions.get(draft.revision);
     if (pending) return pending;
-    const submission = this.saveDraft(draft.text, draft.title).then(async () => {
+    const submission = this.saveDraft(draft.text, draft.title, origin).then(async () => {
       if (!this.alive) return;
       this.updateWritingDraft({ text: '', title: '' }, draft.revision);
       try { await this.persist(); }

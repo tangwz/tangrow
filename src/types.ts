@@ -1,4 +1,4 @@
-import type { App } from 'obsidian';
+import type { App, WorkspaceLeaf } from 'obsidian';
 import type { ReportPreferences, ReportRange, ReportSnapshot } from './report-contract';
 
 export type Locale = 'zh-CN' | 'en';
@@ -45,6 +45,10 @@ export const DEFAULT_SETTINGS: Settings = {
 };
 export interface ComposerState { capture: string; scratchTitle: string }
 export interface WritingDraft { text: string; title: string; revision: number; editingView?: string }
+export interface WritingSaveOrigin {
+  leaf: WorkspaceLeaf;
+  editor: HTMLTextAreaElement;
+}
 export interface NoteSummary { path: string; name: string; folder: string; modified: number; kind?: string; status?: string }
 export interface CaptureSummary extends NoteSummary { created: number }
 export interface TaskSummary { path: string; line: number; text: string; done: boolean }
@@ -89,12 +93,12 @@ export interface SidebarHost {
   submitCaptureDraft(): Promise<void>;
   openCaptureWindow(): Promise<void>;
   readCapture(path: string): Promise<string>;
-  saveDraft(text: string, title: string): Promise<void>;
+  saveDraft(text: string, title: string, origin?: WritingSaveOrigin): Promise<void>;
   loadWritingDraft(): WritingDraft;
   updateWritingDraft(patch: Partial<Pick<WritingDraft, 'text' | 'title'>>, expectedRevision: number, viewId?: string): boolean;
   beginWritingDraftComposition(viewId: string, expectedRevision: number): boolean;
   endWritingDraftComposition(viewId: string): void;
-  submitWritingDraft(expectedRevision: number): Promise<void>;
+  submitWritingDraft(expectedRevision: number, origin?: WritingSaveOrigin): Promise<void>;
   setup(): Promise<void>;
   startFocus(minutes: number): Promise<void>;
   pauseFocus(): Promise<void>;

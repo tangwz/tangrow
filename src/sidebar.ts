@@ -498,8 +498,7 @@ export class TangrowSidebar extends ItemView {
       this.scratchSaving = true;
       this.updateStudioControls();
       try {
-        await this.host.submitWritingDraft(this.scratchRevision);
-        if (text.isConnected) text.focus();
+        await this.host.submitWritingDraft(this.scratchRevision, { leaf: this.leaf, editor: text });
       } finally {
         this.scratchSaving = false;
         this.updateStudioControls();
