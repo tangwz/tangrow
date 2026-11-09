@@ -34,6 +34,32 @@ test('support cannot be an ancestor of any configured content folder', () => {
   }
 });
 
+test('portable validation rejects case-only support aliases and ancestors for every content folder', () => {
+  for (const key of CONTENT_FOLDER_KEYS) {
+    assert.throws(() => validateFolderSettings({ ...DEFAULT_SETTINGS, supportFolder: DEFAULT_SETTINGS[key].toLowerCase() }), SupportFolderConflictError);
+    assert.throws(() => validateFolderSettings({ ...DEFAULT_SETTINGS, supportFolder: 'CONTENT', [key]: 'content/Notes' }), SupportFolderConflictError);
+    assert.throws(() => validateFolderSettings({ ...DEFAULT_SETTINGS, supportFolder: 'Content', [key]: 'CONTENT' }), SupportFolderConflictError);
+  }
+});
+
+test('portable validation treats composed and decomposed Unicode paths as aliases without rewriting them', () => {
+  for (const [supportFolder, inboxFolder] of [
+    ['Cafe\u0301', 'Caf\u00e9'],
+    ['Caf\u00e9', 'Cafe\u0301/Notes'],
+    ['CAFE\u0301', 'caf\u00e9/Notes']
+  ] as const) {
+    const settings = { ...DEFAULT_SETTINGS, supportFolder, inboxFolder };
+    assert.throws(() => validateFolderSettings(settings), (error: unknown) => {
+      assert.ok(error instanceof SupportFolderConflictError);
+      assert.equal(error.supportFolder, supportFolder);
+      assert.equal(error.contentFolder, inboxFolder);
+      return true;
+    });
+    assert.equal(settings.supportFolder, supportFolder);
+    assert.equal(settings.inboxFolder, inboxFolder);
+  }
+});
+
 test('changing a content folder is checked against the current support folder', () => {
   for (const key of CONTENT_FOLDER_KEYS) {
     const current = { ...DEFAULT_SETTINGS, supportFolder: '99-Tangrow' };
@@ -51,6 +77,15 @@ test('dedicated support subfolders remain valid inside any content folder', () =
       supportFolder: `${DEFAULT_SETTINGS[key]}/Tangrow`
     }));
   }
+});
+
+test('portable validation still permits dedicated child folders and sibling prefix boundaries', () => {
+  for (const [supportFolder, inboxFolder] of [
+    ['content/Tangrow', 'CONTENT'],
+    ['Cafe\u0301/Tangrow', 'Caf\u00e9'],
+    ['NOTES', 'notes-Archive'],
+    ['CAF\u00c9', 'cafe\u0301 Notes/Inbox']
+  ] as const) assert.doesNotThrow(() => validateFolderSettings({ ...DEFAULT_SETTINGS, supportFolder, inboxFolder }));
 });
 
 test('similar path prefixes do not create ancestor conflicts', () => {
@@ -93,4 +128,6 @@ test('support validity is a nonthrowing check for conflicting or malformed persi
     assert.equal(hasValidSupportFolder({ ...DEFAULT_SETTINGS, [key]: '../notes' }), false);
   }
   assert.equal(hasValidSupportFolder({ ...DEFAULT_SETTINGS, supportFolder: '../notes' }), false);
+  assert.equal(hasValidSupportFolder({ ...DEFAULT_SETTINGS, supportFolder: '20-project' }), false);
+  assert.equal(hasValidSupportFolder({ ...DEFAULT_SETTINGS, supportFolder: 'Cafe\u0301', inboxFolder: 'Caf\u00e9/Notes' }), false);
 });

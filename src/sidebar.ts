@@ -135,6 +135,8 @@ export class TangrowSidebar extends ItemView {
   private scratchEditor?: HTMLTextAreaElement;
   private scratchComposingControl?: HTMLInputElement | HTMLTextAreaElement;
   private scratchTitleInput?: HTMLInputElement;
+  private studioHeading?: HTMLElement;
+  private studioCaption?: HTMLElement;
   private scratchSaveButton?: HTMLButtonElement;
   private scratchCount?: HTMLElement;
   private scratchTitle = '';
@@ -181,15 +183,20 @@ export class TangrowSidebar extends ItemView {
       end: inputs[focusedInput]?.selectionEnd ?? 0
     };
     const focusedTab = Array.from(this.navButtons).find(([, control]) => control === active)?.[0];
+    const composing = this.scratchComposingControl?.isConnected ?? false;
     const scrollTop = this.contentEl.scrollTop;
     this.preserveFocus(() => {
       this.refreshShellLabels();
       if (this.section === 'capture' && this.capturePanel) {
         this.capturePanel.refresh();
         this.refresh();
+      } else if (this.section === 'studio') {
+        this.refreshStudioLabels();
+        this.refresh();
       } else this.selectSection(this.section);
     });
     this.contentEl.scrollTop = scrollTop;
+    if (composing) return;
     const replacement = [this.scratchEditor, this.scratchTitleInput, this.habitInput][focusedInput];
     if (selection && replacement?.isConnected) {
       replacement.focus({ preventScroll: true });
@@ -230,7 +237,9 @@ export class TangrowSidebar extends ItemView {
       });
       icon(itemButton, item.icon);
       itemButton.createSpan({ cls: 'tangrow-nav-label', text: this.ui.t(item.label) });
-      itemButton.addEventListener('click', () => this.selectSection(item.id));
+      itemButton.addEventListener('click', () => {
+        if (this.section !== item.id) this.selectSection(item.id);
+      });
       itemButton.addEventListener('keydown', (event) => {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
         event.preventDefault();
@@ -238,7 +247,10 @@ export class TangrowSidebar extends ItemView {
         const next = event.key === 'Home' ? 0 : event.key === 'End' ? SECTIONS.length - 1
           : (index + (event.key === 'ArrowRight' ? 1 : -1) + SECTIONS.length) % SECTIONS.length;
         const target = SECTIONS[next];
-        if (target) { this.selectSection(target.id); this.navButtons.get(target.id)?.focus(); }
+        if (target) {
+          if (this.section !== target.id) this.selectSection(target.id);
+          this.navButtons.get(target.id)?.focus({ preventScroll: true });
+        }
       });
       this.navButtons.set(item.id, itemButton);
     }
@@ -462,7 +474,8 @@ export class TangrowSidebar extends ItemView {
 
   private mountStudio(): void {
     this.syncStudio();
-    this.ui.sectionHeading(this.pane, 'A quiet writing corner', 'Your scratchpad stays here until you turn it into a draft.');
+    this.studioHeading = this.pane.createEl('h3', { cls: 'tangrow-section-title', text: this.ui.t('A quiet writing corner') });
+    this.studioCaption = this.pane.createEl('p', { cls: 'tangrow-section-caption', text: this.ui.t('Your scratchpad stays here until you turn it into a draft.') });
     const composer = this.pane.createDiv({ cls: 'tangrow-composer' });
     const title = composer.createEl('input', {
       cls: 'tangrow-title-input', type: 'text', attr: { placeholder: this.ui.t('Working title'), 'aria-label': this.ui.t('Draft title') }
@@ -529,6 +542,30 @@ export class TangrowSidebar extends ItemView {
     this.scratchTitleInput = undefined;
     this.scratchSaveButton = undefined;
     this.scratchCount = undefined;
+    this.studioHeading = undefined;
+    this.studioCaption = undefined;
+  }
+
+  flushWritingDraft(): void { this.clearStudioControls(); }
+
+  private refreshStudioLabels(): void {
+    if (this.studioHeading) this.studioHeading.textContent = this.ui.t('A quiet writing corner');
+    if (this.studioCaption) this.studioCaption.textContent = this.ui.t('Your scratchpad stays here until you turn it into a draft.');
+    if (this.scratchTitleInput) {
+      this.scratchTitleInput.placeholder = this.ui.t('Working title');
+      this.scratchTitleInput.setAttribute('aria-label', this.ui.t('Draft title'));
+    }
+    if (this.scratchEditor) {
+      this.scratchEditor.placeholder = this.ui.t('Start with a sentence...');
+      this.scratchEditor.setAttribute('aria-label', this.ui.t('Writing scratchpad'));
+    }
+    if (this.scratchSaveButton) {
+      const label = this.ui.t('Save as draft');
+      this.scratchSaveButton.setAttribute('aria-label', label);
+      const text = this.scratchSaveButton.querySelector('span:not(.tangrow-icon)');
+      if (text) text.textContent = label;
+    }
+    this.updateStudioControls();
   }
 
   private isStudioControl(control: HTMLInputElement | HTMLTextAreaElement): boolean {

@@ -18,12 +18,19 @@ export class SupportFolderConflictError extends Error {
   }
 }
 
+function portableCollisionKey(path: string): string {
+  return path.normalize('NFC').toLowerCase();
+}
+
 export function validateFolderSettings(settings: FolderSettings): void {
   const supportFolder = safeFolder(settings.supportFolder);
+  const supportKey = portableCollisionKey(supportFolder);
   for (const key of CONTENT_FOLDER_KEYS) {
     const contentFolder = safeFolder(settings[key]);
+    const contentKey = portableCollisionKey(contentFolder);
     // Content may contain a dedicated support subfolder; the reverse hides user notes.
-    if (contentFolder === supportFolder || inFolder(contentFolder, supportFolder)) {
+    // Compare portable aliases without changing the user's stored path spelling.
+    if (contentKey === supportKey || inFolder(contentKey, supportKey)) {
       throw new SupportFolderConflictError(supportFolder, key, contentFolder);
     }
   }

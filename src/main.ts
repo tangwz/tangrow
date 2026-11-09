@@ -12,12 +12,18 @@ import { stampHeadingDate } from './note-tools';
 import { matchesGeneratedContent } from './managed-files';
 import { hasValidSupportFolder, SupportFolderConflictError, validateFolderSettings } from './folders';
 import { moveSupportFolder } from './support-migration';
+import { addEditingActivity, createActivityState, normalizeActivityState, summarizeActivity, type EditingActivityState } from './activity';
+import { ReportSource } from './report-source';
+import { aggregateReport } from './report-data';
+import type { ReportPreferences, ReportRange, ReportSnapshot } from './report-contract';
 import { translate, describeError, type TranslationValues } from './i18n';
 import { DEFAULT_SETTINGS, type ComposerState, type Habit, type Locale, type ActionId, type BaseId, type FocusSession, type NoteKind, type NoteSummary, type Settings, type SidebarHost, type Snapshot, type TaskSummary, type WritingDraft } from './types';
 
 const dateTime = moment as unknown as (input?: number | string | Date) => { format(pattern: string): string };
 
-interface SavedData { version: number; settings: Settings; focus: FocusSession | null; scratch: string; composer: ComposerState; recentOpened: string[] }
+interface SavedData { version: number; settings: Settings; focus: FocusSession | null; scratch: string; composer: ComposerState; recentOpened: string[]; activity: EditingActivityState }
+interface PersistenceCoordinator { owner?: symbol; tail: Promise<void> }
+const PERSISTENCE_COORDINATOR = Symbol.for('tangrow.persistence-coordinator');
 type FolderSettingKey = keyof Pick<Settings, 'supportFolder' | 'inboxFolder' | 'projectFolder' | 'areaFolder' | 'resourcesFolder' | 'archiveFolder' | 'journalFolder'>;
 
 class PromptModal extends Modal {
@@ -54,7 +60,9 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   private captureSubmissions = new Map<number, Promise<void>>();
   private recentOpened: string[] = [];
   private listeners = new Set<() => void>();
-  private writes: Promise<unknown> = Promise.resolve();
+  private writes: Promise<void> = Promise.resolve();
+  private persistenceOwner = Symbol('tangrow-instance');
+  private persistenceClaimed = false;
   private operations: Promise<unknown> = Promise.resolve();
   private scratchTimer: number | undefined;
   private refreshTimer: number | undefined;
@@ -65,12 +73,25 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   private taskLabels = new Map<string, { mtime: number; lines: Map<number, string> }>();
   private taskReads = new Set<string>();
   private alive = true;
+  private dataLoaded = false;
   private commandsRegistered = false;
   private ribbon: HTMLElement | null = null;
+  private readonly reportSource = new ReportSource(this.app);
+  private editingActivity = createActivityState();
+  private lastActivityEvent: number | null = null;
+  private activityTimer: number | undefined;
+  private activityWindows = new WeakSet<Window>();
 
   async onload(): Promise<void> {
+    const coordinator = this.persistenceCoordinator();
+    await coordinator.tail;
+    if (!this.alive) return;
     const stored = (await this.loadData() ?? null) as Partial<SavedData> | null;
+    if (!this.alive) return;
+    coordinator.owner = this.persistenceOwner;
+    this.persistenceClaimed = true;
     this.settings = readSettings(stored?.settings);
+    this.editingActivity = normalizeActivityState(stored?.activity);
     if (!hasValidSupportFolder(this.settings)) {
       new Notice(this.t('The companion folder conflicts with a content folder. Update the folder settings before creating companion files.'));
     }
@@ -82,16 +103,19 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     };
     const hasHistory = stored !== null && Object.hasOwn(stored, 'recentOpened');
     this.recentOpened = normalizeRecentOpened(hasHistory ? stored.recentOpened : this.app.workspace.getLastOpenFiles(), (path) => this.app.vault.getAbstractFileByPath(path) instanceof TFile);
+    this.dataLoaded = true;
     if (this.focus) {
       const session = this.focus;
       try {
         const recordedMinutes = await this.recordedFocusMinutes(session);
+        if (!this.alive) return;
         if (recordedMinutes !== null) {
           this.focus = { ...session, remainingMs: Math.max(0, session.durationMs - recordedMinutes * 60_000), endsAt: null };
           await this.persist();
         }
       } catch (error) { new Notice(this.error(error)); }
     }
+    if (!this.alive) return;
     this.registerView(VIEW_TYPE, (leaf: WorkspaceLeaf) => new TangrowSidebar(leaf, this));
     this.registerView(REPORT_VIEW_TYPE, (leaf: WorkspaceLeaf) => new TangrowReport(leaf, this));
     this.registerView(CAPTURE_VIEW_TYPE, (leaf: WorkspaceLeaf) => new TangrowCapture(leaf, this));
@@ -99,9 +123,10 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       await this.localizeManagedFiles('en');
       await this.persist();
     }
-    if (stored?.version !== 3 || !hasHistory || JSON.stringify(stored.recentOpened) !== JSON.stringify(this.recentOpened)) {
+    if (stored?.version !== 4 || !hasHistory || JSON.stringify(stored.recentOpened) !== JSON.stringify(this.recentOpened)) {
       try { await this.persist(); } catch (error) { new Notice(this.error(error)); }
     }
+    if (!this.alive) return;
     this.ribbon = this.addRibbonIcon('sprout', this.t('Open Tangrow'), () => { void this.openSidebar().catch((error) => new Notice(this.error(error))); });
     this.registerCommands();
     this.addSettingTab(new TangrowSettings(this));
@@ -110,15 +135,20 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       if (file instanceof TFile) this.updateRecentOpened(recordRecentOpened(this.recentOpened, file.path, (path) => this.app.vault.getAbstractFileByPath(path) instanceof TFile));
       refresh();
     }));
-    this.registerEvent(this.app.workspace.on('active-leaf-change', refresh));
-    this.registerEvent(this.app.metadataCache.on('changed', refresh));
-    this.registerEvent(this.app.metadataCache.on('resolved', refresh));
-    this.registerEvent(this.app.vault.on('create', refresh));
+    this.registerEvent(this.app.workspace.on('active-leaf-change', () => { this.lastActivityEvent = null; refresh(); }));
+    this.registerEvent(this.app.workspace.on('editor-change', (_editor, info) => this.recordEditingActivity(info)));
+    this.registerEvent(this.app.workspace.on('window-open', (_workspaceWindow, win) => this.watchActivityWindow(win)));
+    if (typeof window !== 'undefined' && window.document) this.watchActivityWindow(window);
+    this.registerEvent(this.app.metadataCache.on('changed', () => { this.reportSource.markLinksDirty(); refresh(); }));
+    this.registerEvent(this.app.metadataCache.on('resolved', () => { this.reportSource.markLinksResolved(); refresh(); }));
+    this.registerEvent(this.app.vault.on('create', (file) => { if (file instanceof TFile && file.extension === 'md') this.reportSource.markLinksDirty(); refresh(); }));
     this.registerEvent(this.app.vault.on('delete', (file) => {
+      if (file instanceof TFile && file.extension === 'md') this.reportSource.markLinksDirty();
       this.updateRecentOpened(removeRecentOpened(this.recentOpened, file.path));
       refresh();
     }));
     this.registerEvent(this.app.vault.on('rename', (file, oldPath) => {
+      if ((file instanceof TFile && file.extension === 'md') || (file instanceof TFolder && this.app.vault.getMarkdownFiles().some((note) => inFolder(note.path, file.path)))) this.reportSource.markLinksDirty();
       if (this.widePages.delete(oldPath)) this.widePages.add(file.path);
       this.updateRecentOpened(renameRecentOpened(this.recentOpened, oldPath, file.path, (path) => this.app.vault.getAbstractFileByPath(path) instanceof TFile));
       refresh();
@@ -148,14 +178,23 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   }
 
   onunload(): void {
+    if (this.dataLoaded) {
+      for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
+        if (leaf.view instanceof TangrowSidebar) leaf.view.flushWritingDraft();
+      }
+    }
     this.alive = false;
-    this.app.workspace.getLeavesOfType(VIEW_TYPE).forEach((leaf) => leaf.detach());
-    this.app.workspace.getLeavesOfType(REPORT_VIEW_TYPE).forEach((leaf) => leaf.detach());
-    this.app.workspace.getLeavesOfType(CAPTURE_VIEW_TYPE).forEach((leaf) => leaf.detach());
+    if (this.dataLoaded) {
+      this.app.workspace.getLeavesOfType(VIEW_TYPE).forEach((leaf) => leaf.detach());
+      this.app.workspace.getLeavesOfType(REPORT_VIEW_TYPE).forEach((leaf) => leaf.detach());
+      this.app.workspace.getLeavesOfType(CAPTURE_VIEW_TYPE).forEach((leaf) => leaf.detach());
+      void this.persist(true).catch((error) => console.error('Tangrow save failed', error));
+      this.app.workspace.iterateAllLeaves((leaf) => leaf.view.containerEl.removeClass('tangrow-wide'));
+    }
     window.clearTimeout(this.scratchTimer);
     window.clearTimeout(this.refreshTimer);
-    void this.persist().catch((error) => console.error('Tangrow save failed', error));
-    this.app.workspace.iterateAllLeaves((leaf) => leaf.view.containerEl.removeClass('tangrow-wide'));
+    window.clearTimeout(this.activityTimer);
+    this.lastActivityEvent = null;
     this.listeners.clear();
     this.composerListeners.clear();
   }
@@ -186,13 +225,15 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   }
 
   private async localizeManagedFiles(previousLanguage: Locale): Promise<number> {
-    if (!hasValidSupportFolder(this.settings)) return 0;
+    if (!this.alive || !hasValidSupportFolder(this.settings)) return 0;
     let updated = 0;
     for (const change of managedFileTranslations(this.settings, previousLanguage)) {
       const file = this.app.vault.getAbstractFileByPath(`${this.settings.supportFolder}/${change.filename}`);
       if (!(file instanceof TFile) || change.previous === change.next) continue;
       if (!matchesGeneratedContent(change.filename, await this.app.vault.cachedRead(file), change.previous, parseYaml)) continue;
+      if (!this.alive) break;
       await this.app.vault.process(file, (content) => {
+        if (!this.alive) return content;
         if (!matchesGeneratedContent(change.filename, content, change.previous, parseYaml)) return content;
         updated++;
         return change.next;
@@ -208,20 +249,23 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       if (previous === language) return;
       this.settings.language = language;
       try { await this.persist(); } catch (error) { this.settings.language = previous; throw error; }
+      if (!this.alive) return;
       try { await this.localizeManagedFiles(previous); }
       finally {
-        if (this.commandsRegistered) this.registerCommands();
-        if (this.ribbon) setTooltip(this.ribbon, this.t('Open Tangrow'));
-        for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
-          if (leaf.view instanceof TangrowSidebar) leaf.view.refreshLanguage();
+        if (this.alive) {
+          if (this.commandsRegistered) this.registerCommands();
+          if (this.ribbon) setTooltip(this.ribbon, this.t('Open Tangrow'));
+          for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
+            if (leaf.view instanceof TangrowSidebar) leaf.view.refreshLanguage();
+          }
+          for (const leaf of this.app.workspace.getLeavesOfType(REPORT_VIEW_TYPE)) {
+            if (leaf.view instanceof TangrowReport) leaf.view.refreshLanguage();
+          }
+          for (const leaf of this.app.workspace.getLeavesOfType(CAPTURE_VIEW_TYPE)) {
+            if (leaf.view instanceof TangrowCapture) leaf.view.refreshLanguage();
+          }
+          this.notify();
         }
-        for (const leaf of this.app.workspace.getLeavesOfType(REPORT_VIEW_TYPE)) {
-          if (leaf.view instanceof TangrowReport) leaf.view.refreshLanguage();
-        }
-        for (const leaf of this.app.workspace.getLeavesOfType(CAPTURE_VIEW_TYPE)) {
-          if (leaf.view instanceof TangrowCapture) leaf.view.refreshLanguage();
-        }
-        this.notify();
       }
     });
   }
@@ -243,6 +287,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     this.scheduleComposerSave();
   }
   private notify(): void {
+    if (!this.alive) return;
     this.cachedSnapshot = null;
     this.applyWidths();
     for (const listener of this.listeners) listener();
@@ -251,13 +296,28 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     window.clearTimeout(this.refreshTimer);
     this.refreshTimer = window.setTimeout(() => this.notify(), 180);
   }
-  private persist(): Promise<void> {
-    const next = this.writes.catch(() => undefined).then(async () => {
-      const data: SavedData = { version: 3, settings: this.settings, focus: this.focus, scratch: this.scratch, composer: this.composer, recentOpened: this.recentOpened };
-      await this.saveData(structuredClone(data));
+  private persistenceCoordinator(): PersistenceCoordinator {
+    const app = this.app as unknown as Record<symbol, PersistenceCoordinator | undefined>;
+    return app[PERSISTENCE_COORDINATOR] ??= { tail: Promise.resolve() };
+  }
+  private persistenceSnapshot(): SavedData {
+    return structuredClone({ version: 4, settings: this.settings, focus: this.focus, scratch: this.scratch, composer: this.composer, recentOpened: this.recentOpened, activity: this.editingActivity });
+  }
+  private persist(finalFlush = false): Promise<void> {
+    if (!this.alive && !finalFlush) return Promise.resolve();
+    const coordinator = this.persistenceCoordinator();
+    if (!this.persistenceClaimed) {
+      coordinator.owner = this.persistenceOwner;
+      this.persistenceClaimed = true;
+    }
+    const next = coordinator.tail.then(async () => {
+      if (coordinator.owner !== this.persistenceOwner || (!this.alive && !finalFlush)) return;
+      // Earlier failed transactions must roll back before the final reload flush reads state.
+      await this.saveData(this.persistenceSnapshot());
     });
+    coordinator.tail = next.then(() => undefined, () => undefined);
     this.writes = next;
-    return next;
+    return this.writes;
   }
   private exclusive<T>(operation: () => Promise<T>): Promise<T> {
     const next = this.operations.catch(() => undefined).then(operation);
@@ -271,6 +331,68 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     this.notify();
   }
   async saveSettings(): Promise<void> { await this.persist(); this.notify(); }
+  async loadReport(range: ReportRange): Promise<ReportSnapshot> {
+    const settings = structuredClone(this.settings);
+    const source = await this.reportSource.collect(settings);
+    const now = Date.now();
+    return {
+      data: aggregateReport(source.records, settings, now, { range, folders: source.folders }),
+      records: source.records,
+      activity: summarizeActivity(this.editingActivity, range, now),
+      generatedAt: now,
+      quality: { unreadable: source.unreadable, linksReady: source.linksReady }
+    };
+  }
+  async updateReportSettings(patch: Partial<ReportPreferences>): Promise<void> {
+    await this.exclusive(async () => {
+      const previous = this.settings;
+      const next = { ...previous };
+      if (patch.reportExcludedFolders !== undefined) {
+        if (!Array.isArray(patch.reportExcludedFolders) || patch.reportExcludedFolders.length > 100 || patch.reportExcludedFolders.some((path) => typeof path !== 'string')) throw new Error('Use at most 100 relative folder exclusions.');
+        next.reportExcludedFolders = [...new Set(patch.reportExcludedFolders.map(safeFolder))];
+      }
+      if (patch.activityGoalMinutes !== undefined) {
+        if (!Number.isInteger(patch.activityGoalMinutes) || patch.activityGoalMinutes < 1 || patch.activityGoalMinutes > 1440) throw new Error('Use an activity goal from 1 to 1440 whole minutes.');
+        next.activityGoalMinutes = patch.activityGoalMinutes;
+      }
+      if (patch.trackEditingActivity !== undefined) {
+        if (typeof patch.trackEditingActivity !== 'boolean') throw new Error('Choose whether editing activity is enabled.');
+        next.trackEditingActivity = patch.trackEditingActivity;
+      }
+      this.settings = next;
+      try { await this.persist(); }
+      catch (error) { this.settings = previous; throw error; }
+      this.lastActivityEvent = null;
+      this.reportSource.invalidate();
+      this.notify();
+      new Notice(this.t('Report preferences saved. Existing notes and Bases were preserved.'));
+    });
+  }
+  private watchActivityWindow(win: Window): void {
+    if (this.activityWindows.has(win) || typeof this.registerDomEvent !== 'function') return;
+    this.activityWindows.add(win);
+    this.registerDomEvent(win, 'blur', () => { this.lastActivityEvent = null; });
+    this.registerDomEvent(win.document, 'visibilitychange', () => { this.lastActivityEvent = null; });
+  }
+  private recordEditingActivity(info: unknown): void {
+    if (!this.alive || !this.settings.trackEditingActivity || !(info instanceof MarkdownView) || !info.file) { this.lastActivityEvent = null; return; }
+    const doc = info.containerEl.ownerDocument;
+    const path = info.file.path;
+    const excluded = (hasValidSupportFolder(this.settings) && inFolder(path, this.settings.supportFolder))
+      || this.settings.reportExcludedFolders.some((folder) => inFolder(path, folder));
+    if (!doc || doc.hidden || !doc.hasFocus() || this.activeFile()?.path !== path || excluded) { this.lastActivityEvent = null; return; }
+    this.watchActivityWindow(doc.defaultView ?? window);
+    const now = Date.now();
+    if (this.lastActivityEvent !== null && now >= this.lastActivityEvent && now - this.lastActivityEvent < 1000) return;
+    const result = addEditingActivity(this.editingActivity, now, this.lastActivityEvent);
+    this.editingActivity = result.state;
+    this.lastActivityEvent = result.lastEventMs;
+    if (this.activityTimer !== undefined) return;
+    this.activityTimer = window.setTimeout(() => {
+      this.activityTimer = undefined;
+      void this.persist().catch((error) => { if (this.alive) new Notice(this.error(error)); });
+    }, 2000);
+  }
   async updateFolderSetting(key: FolderSettingKey, path: string): Promise<void> {
     const folder = safeFolder(path);
     await this.exclusive(async () => {
@@ -302,6 +424,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     return { text: this.scratch, title: this.composer.scratchTitle, revision: this.scratchRevision, ...(this.scratchEditingView ? { editingView: this.scratchEditingView } : {}) };
   }
   beginWritingDraftComposition(viewId: string, expectedRevision: number): boolean {
+    if (!this.alive) return false;
     if (!viewId || expectedRevision !== this.scratchRevision || (this.scratchEditingView !== undefined && this.scratchEditingView !== viewId)) return false;
     if (this.scratchEditingView === viewId) return true;
     this.scratchEditingView = viewId;
@@ -314,6 +437,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     for (const listener of this.composerListeners) listener();
   }
   updateWritingDraft(patch: Partial<Pick<WritingDraft, 'text' | 'title'>>, expectedRevision: number, viewId?: string): boolean {
+    if (!this.alive) return false;
     if (expectedRevision !== this.scratchRevision || (this.scratchEditingView !== undefined && this.scratchEditingView !== viewId)) return false;
     const text = patch.text ?? this.scratch;
     const title = patch.title ?? this.composer.scratchTitle;
@@ -326,6 +450,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     return true;
   }
   saveComposer(patch: Partial<ComposerState>): void {
+    if (!this.alive) return;
     let changed = false;
     if (typeof patch.capture === 'string' && patch.capture !== this.composer.capture) {
       this.composer.capture = patch.capture;
@@ -518,6 +643,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     if (!text.trim()) throw new Error('Write something before saving.');
     const title = this.t('Capture {date}', { date: dateTime().format('YYYY-MM-DD HHmmss') });
     await this.exclusive(() => this.createUnique(this.settings.inboxFolder, title, text, { tangrow_kind: 'capture', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') }));
+    if (!this.alive) return;
     this.notify();
     new Notice(this.t('Captured in your inbox.'));
   }
@@ -528,6 +654,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     const pending = this.captureSubmissions.get(revision);
     if (pending) return pending;
     const submission = this.capture(source).then(async () => {
+      if (!this.alive) return;
       if (this.captureRevision === revision && this.composer.capture === source) this.saveComposer({ capture: '' });
       try { await this.persist(); }
       catch {
@@ -546,6 +673,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   async saveDraft(text: string, title: string): Promise<void> {
     if (!text.trim()) throw new Error('Write a draft before saving.');
     const file = await this.exclusive(() => this.createUnique(this.settings.inboxFolder, title || this.t('Draft {date}', { date: dateTime().format('YYYY-MM-DD HHmmss') }), text, { tangrow_kind: 'draft', tangrow_status: 'draft', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') }));
+    if (!this.alive) return;
     try { await this.openNote(file.path); }
     catch (error) { new Notice(this.t('Draft saved, but it could not be opened: {error}', { error: this.error(error) })); }
   }
@@ -557,6 +685,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     const pending = this.scratchSubmissions.get(draft.revision);
     if (pending) return pending;
     const submission = this.saveDraft(draft.text, draft.title).then(async () => {
+      if (!this.alive) return;
       this.updateWritingDraft({ text: '', title: '' }, draft.revision);
       try { await this.persist(); }
       catch {
@@ -672,8 +801,13 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
         break;
       }
       case 'toggle-pin': await this.app.fileManager.processFrontMatter(requireMarkdown(), (fm) => {
-        if (fm.tangrow_pin === true) delete fm.tangrow_pin;
-        else fm.tangrow_pin = true;
+        if (fm.tangrow_pin === true) {
+          delete fm.tangrow_pin;
+          delete fm.tangrow_pinned_at;
+        } else {
+          fm.tangrow_pin = true;
+          fm.tangrow_pinned_at = new Date(Date.now()).toISOString();
+        }
       }); this.notify(); break;
       case 'settings': if (!openNativeSettings(this.app, this.manifest.id)) this.instructions('Tangrow settings', 'Open Obsidian Settings, then select Tangrow under Community plugins.'); break;
       case 'appearance': if (!openNativeSettings(this.app, 'appearance')) this.instructions('Appearance', 'Open Obsidian Settings > Appearance to change the theme and accent color.'); break;

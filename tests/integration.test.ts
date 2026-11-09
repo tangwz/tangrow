@@ -17,6 +17,7 @@ interface TestPlugin extends MockPlugin {
   scratch: string;
   writes: Promise<unknown>;
   onload(): Promise<void>;
+  onunload(): void;
   setup(): Promise<void>;
   openNote(path: string, line?: number): Promise<void>;
   openBase(id: 'captures'): Promise<void>;
@@ -87,6 +88,8 @@ interface TestSidebar {
   refresh(): void;
   registerInterval(): void;
   clearStudioControls(): void;
+  refreshLanguage(): void;
+  flushWritingDraft(): void;
 }
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -132,6 +135,84 @@ async function withClock(run: (advance: (minutes: number) => void) => Promise<vo
   try { await run((minutes) => { now += minutes * 60_000; }); }
   finally { Date.now = originalNow; }
 }
+
+function mockFrontmatterWrites(app: MockApp): void {
+  Object.assign(app.fileManager, {
+    processFrontMatter: async (file: MockFile, update: (fields: Record<string, unknown>) => void): Promise<void> => {
+      await app.vault.process(file, (content) => {
+        const fields = { ...app.metadataCache.getFileCache(file).frontmatter };
+        update(fields);
+        const body = content.replace(/^---\n[\s\S]*?\n---(?:\n|$)/, '');
+        const frontmatter = Object.entries(fields).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join('\n');
+        return `---\n${frontmatter}\n---\n${body}`;
+      });
+    }
+  });
+}
+
+test('pinning records the action time and repinning replaces it without changing other note data', async () => {
+  await withClock(async (advance) => {
+    const { plugin, app } = createPlugin();
+    const body = '\n# Original heading\n\nOriginal body with [[Internal link]].\n';
+    const properties = { title: 'Original title', tags: ['reading', 'reference'], source: 'https://example.com/article' };
+    const frontmatter = Object.entries(properties).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join('\n');
+    const note = app.vault.seedFile('00-Inbox/Pinned note.md', `---\n${frontmatter}\n---\n${body}`);
+    const originalPath = note.path;
+    const originalCreated = note.stat.ctime;
+    app.workspace.setActiveFile(note);
+    mockFrontmatterWrites(app);
+
+    const firstPinnedAt = new Date(Date.now()).toISOString();
+    await plugin.action('toggle-pin');
+    assert.deepEqual(app.metadataCache.getFileCache(note).frontmatter, { ...properties, tangrow_pin: true, tangrow_pinned_at: firstPinnedAt });
+    assert.equal(plugin.snapshot().activePinned, true);
+
+    advance(60);
+    await plugin.action('toggle-pin');
+    assert.deepEqual(app.metadataCache.getFileCache(note).frontmatter, properties);
+    assert.equal(plugin.snapshot().activePinned, false);
+
+    advance(60);
+    const secondPinnedAt = new Date(Date.now()).toISOString();
+    await plugin.action('toggle-pin');
+    assert.notEqual(secondPinnedAt, firstPinnedAt);
+    assert.deepEqual(app.metadataCache.getFileCache(note).frontmatter, { ...properties, tangrow_pin: true, tangrow_pinned_at: secondPinnedAt });
+    assert.equal(note.content.replace(/^---\n[\s\S]*?\n---\n/, ''), body);
+    assert.equal(note.path, originalPath);
+    assert.equal(note.stat.ctime, originalCreated);
+    assert.deepEqual(app.vault.createdPaths, []);
+  });
+});
+
+test('reading reports leaves legacy pins untouched and unpinning removes stale pin dates', async () => {
+  await withClock(async () => {
+    const { plugin, app } = createPlugin();
+    const legacy = app.vault.seedFile('00-Inbox/Legacy pin.md', '---\ntangrow_pin: true\ntitle: "Legacy title"\n---\n\n# Legacy pin\n');
+    const dated = app.vault.seedFile('00-Inbox/Dated pin.md', '---\ntangrow_pin: true\ntangrow_pinned_at: "invalid legacy date"\nsource: "https://example.com"\n---\n\n# Dated pin\n');
+    const before = currentContents(app);
+    const report = aggregateReport(app.vault.getMarkdownFiles().map((file) => ({
+      path: file.path,
+      name: file.basename,
+      created: file.stat.ctime,
+      modified: file.stat.mtime,
+      frontmatter: app.metadataCache.getFileCache(file).frontmatter
+    })), plugin.settings);
+    assert.equal(report.counts.pins, 2);
+    assert.deepEqual(currentContents(app), before);
+    assert.deepEqual(app.vault.processedPaths, []);
+
+    mockFrontmatterWrites(app);
+    app.workspace.setActiveFile(legacy);
+    await plugin.action('toggle-pin');
+    assert.deepEqual(app.metadataCache.getFileCache(legacy).frontmatter, { title: 'Legacy title' });
+    assert.equal(legacy.content.endsWith('\n\n# Legacy pin\n'), true);
+
+    app.workspace.setActiveFile(dated);
+    await plugin.action('toggle-pin');
+    assert.deepEqual(app.metadataCache.getFileCache(dated).frontmatter, { source: 'https://example.com' });
+    assert.equal(dated.content.endsWith('\n\n# Dated pin\n'), true);
+  });
+});
 
 test('setup creates only missing companion files and is repeatable', async () => {
   const { plugin, app } = createPlugin();
@@ -1087,7 +1168,7 @@ test('recently opened notes track renames and deletions and remain bounded after
     assert.equal(plugin.snapshot().recentOpened.length, 49);
     const expected = plugin.snapshot().recentOpened.map((note) => note.path);
     const persisted = structuredClone(plugin.savedData) as { version: number; recentOpened: string[] };
-    assert.equal(persisted.version, 3);
+    assert.equal(persisted.version, 4);
     assert.deepEqual(persisted.recentOpened, expected);
     const reloadedApp = harness.createMockApp();
     for (const file of app.vault.getFiles()) reloadedApp.vault.seedFile(file.path, file.content);
@@ -1438,4 +1519,116 @@ test('sidebar focus totals match report validation, stable session deduplication
   assert.equal(plugin.snapshot().counts.focusMinutes, 3.25);
   assert.deepEqual(currentContents(app), before);
   assert.deepEqual(app.vault.processedPaths, []);
+});
+
+test('Studio language refresh keeps the composing inputs and editing lease without rebuilding or refocusing', async () => {
+  await withWindow(async () => {
+    const { plugin } = createPlugin();
+    plugin.updateWritingDraft({ text: 'The shared body before composition.', title: 'The shared title' }, plugin.loadWritingDraft().revision);
+    const view = new harness.TangrowSidebar({}, plugin);
+    view.renderShell = () => undefined;
+    view.refresh = () => undefined;
+    view.registerInterval = () => undefined;
+    view.contentEl = { empty: () => undefined };
+    await view.onOpen();
+    let focused = 0;
+    let selected = 0;
+    let selectedSection = 0;
+    let clearedControls = 0;
+    const document = { activeElement: null as DraftControl | null };
+    const createControl = (value: string) => {
+      const attributes: Record<string, string> = { 'aria-label': 'Writing scratchpad' };
+      return {
+        value, isConnected: true, readOnly: false, ownerDocument: document, selectionStart: 5, selectionEnd: 5,
+        selectionDirection: 'none' as const, scrollTop: 12, dataset: {}, placeholder: '',
+        focus: (): void => { focused++; },
+        getAttribute: (key: string): string | null => attributes[key] ?? null,
+        setAttribute: (key: string, text: string): void => { attributes[key] = text; },
+        setSelectionRange: (): void => { selected++; }
+      };
+    };
+    const text = createControl(plugin.loadScratch());
+    const title = createControl(plugin.loadComposer().scratchTitle);
+    view.scratchEditor = text;
+    view.scratchTitleInput = title;
+    document.activeElement = text;
+    assert.equal(plugin.beginWritingDraftComposition(view.viewId, view.scratchRevision), true);
+    text.value = 'The pending IME text still inside this input.';
+    const heading = { textContent: '' };
+    const caption = { textContent: '' };
+    const originalClear = view.clearStudioControls.bind(view);
+    const content = {
+      ownerDocument: document, scrollTop: 31,
+      empty: (): void => { throw new Error('The Studio shell must not be rebuilt during composition.'); },
+      querySelector: (): null => null
+    };
+    Object.assign(view, {
+      section: 'studio', scratchComposingControl: text, contentEl: content,
+      pane: { contains: (control: unknown) => control === text || control === title, querySelectorAll: () => [] },
+      setupBanner: { empty: () => undefined }, studioHeading: heading, studioCaption: caption,
+      selectSection: (): void => { selectedSection++; throw new Error('Studio section selection would discard composing controls.'); },
+      clearStudioControls: (): void => { clearedControls++; throw new Error('Studio controls must remain mounted during composition.'); }
+    });
+    plugin.settings.language = 'en';
+    view.refreshLanguage();
+    assert.equal(view.scratchEditor, text);
+    assert.equal(view.scratchTitleInput, title);
+    assert.equal(text.value, 'The pending IME text still inside this input.');
+    assert.equal(title.value, 'The shared title');
+    assert.equal(plugin.loadWritingDraft().editingView, view.viewId);
+    assert.equal(plugin.loadWritingDraft().text, 'The shared body before composition.');
+    assert.equal(heading.textContent, 'A quiet writing corner');
+    assert.equal(text.placeholder, 'Start with a sentence...');
+    assert.equal(title.placeholder, 'Working title');
+    assert.equal(content.scrollTop, 31);
+    assert.equal(selectedSection, 0);
+    assert.equal(clearedControls, 0);
+    assert.equal(focused, 0);
+    assert.equal(selected, 0);
+    view.clearStudioControls = originalClear;
+    content.empty = () => undefined;
+    await view.onClose();
+    assert.equal(plugin.loadWritingDraft().text, 'The pending IME text still inside this input.');
+    assert.equal(plugin.loadWritingDraft().editingView, undefined);
+  });
+});
+
+test('plugin unload flushes unpublished IME input and title before releasing persistence ownership', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    await plugin.onload();
+    plugin.updateWritingDraft({ text: 'The body before composition.', title: 'The title before composition' }, plugin.loadWritingDraft().revision);
+    const view = new harness.TangrowSidebar({}, plugin);
+    view.renderShell = () => undefined;
+    view.refresh = () => undefined;
+    view.registerInterval = () => undefined;
+    view.contentEl = { empty: () => undefined };
+    await view.onOpen();
+    const control = (value: string): DraftControl => ({
+      value, isConnected: true, readOnly: false, ownerDocument: { activeElement: null }, selectionStart: 0, selectionEnd: 0,
+      selectionDirection: 'none', scrollTop: 0, setSelectionRange: () => undefined
+    });
+    const text = control(plugin.loadScratch());
+    const title = control(plugin.loadComposer().scratchTitle);
+    view.scratchEditor = text;
+    view.scratchTitleInput = title;
+    assert.equal(plugin.beginWritingDraftComposition(view.viewId, view.scratchRevision), true);
+    text.value = 'The latest IME body not yet published by an input event.';
+    title.value = 'The latest unpublished title';
+    const previousLeaves = app.workspace.getLeavesOfType;
+    Object.assign(app.workspace, { getLeavesOfType: (type: string) => type === 'tangrow-sidebar' ? [{ view, detach: () => { void view.onClose(); } }] : [] });
+    try {
+      plugin.onunload();
+      await plugin.writes;
+    } finally { app.workspace.getLeavesOfType = previousLeaves; }
+    const saved = plugin.savedData as { scratch: string; composer: ComposerState };
+    assert.equal(saved.scratch, text.value);
+    assert.equal(saved.composer.scratchTitle, title.value);
+    assert.equal(plugin.loadWritingDraft().editingView, undefined);
+    const reloaded = new harness.TangrowPlugin(app);
+    reloaded.savedData = structuredClone(saved);
+    await reloaded.onload();
+    assert.equal(reloaded.loadWritingDraft().text, text.value);
+    assert.equal(reloaded.loadWritingDraft().title, title.value);
+  });
 });

@@ -1,4 +1,5 @@
 import type { App } from 'obsidian';
+import type { ReportPreferences, ReportRange, ReportSnapshot } from './report-contract';
 
 export type Locale = 'zh-CN' | 'en';
 export type Section = 'tools' | 'capture' | 'pins' | 'studio' | 'focus' | 'habits';
@@ -7,7 +8,7 @@ export type ActionId = 'copy-link' | 'copy-path' | 'file-location' | 'fold' | 'u
 export type BaseId = 'notes' | 'recent' | 'projects' | 'areas' | 'resources' | 'inbox' | 'sources' | 'captures' | 'pins' | 'drafts' | 'focus' | 'habits' | 'tasks';
 
 export interface Habit { id: string; name: string }
-export interface Settings {
+export interface Settings extends ReportPreferences {
   language: Locale;
   supportFolder: string;
   inboxFolder: string;
@@ -37,7 +38,10 @@ export const DEFAULT_SETTINGS: Settings = {
   focusMinutes: 25,
   autoOpen: true,
   wideByDefault: false,
-  habits: []
+  habits: [],
+  reportExcludedFolders: [],
+  trackEditingActivity: true,
+  activityGoalMinutes: 60
 };
 export interface ComposerState { capture: string; scratchTitle: string }
 export interface WritingDraft { text: string; title: string; revision: number; editingView?: string }
@@ -74,6 +78,8 @@ export interface SidebarHost {
   app: App;
   settings: Settings;
   snapshot(): Snapshot;
+  loadReport(range: ReportRange): Promise<ReportSnapshot>;
+  updateReportSettings(patch: Partial<ReportPreferences>): Promise<void>;
   subscribe(listener: () => void): () => void;
   action(id: ActionId): Promise<void>;
   openNote(path: string, line?: number): Promise<void>;
