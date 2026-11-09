@@ -672,8 +672,18 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   }
   async saveDraft(text: string, title: string): Promise<void> {
     if (!text.trim()) throw new Error('Write a draft before saving.');
+    const revision = this.scratchRevision;
+    const origin = this.app.workspace.getMostRecentLeaf();
+    const view = origin?.view;
+    const originFile = view instanceof FileView ? view.file : null;
+    const document = view?.containerEl.ownerDocument;
+    const active = document?.activeElement;
     const file = await this.exclusive(() => this.createUnique(this.settings.inboxFolder, title || this.t('Draft {date}', { date: dateTime().format('YYYY-MM-DD HHmmss') }), text, { tangrow_kind: 'draft', tangrow_status: 'draft', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') }));
     if (!this.alive) return;
+    // Saving must not navigate away from a newer edit, window, note, or focused control.
+    if (this.scratchRevision !== revision || this.app.workspace.getMostRecentLeaf() !== origin
+      || origin?.view !== view || (view instanceof FileView && view.file !== originFile)
+      || (document && (document.hidden || !document.hasFocus() || document.activeElement !== active))) return;
     try { await this.openNote(file.path); }
     catch (error) { new Notice(this.t('Draft saved, but it could not be opened: {error}', { error: this.error(error) })); }
   }
