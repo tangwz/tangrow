@@ -974,7 +974,7 @@ test('writing edits and edits reverted to the same text survive an earlier submi
   });
 });
 
-test('failed writing submissions retain the draft for retry while navigation failures cannot duplicate it', async () => {
+test('failed writing submissions retain the draft for retry and originless retries save in the background', async () => {
   await withWindow(async () => {
     const { plugin, app } = createPlugin();
     plugin.updateWritingDraft({ text: 'Keep this text if writing fails.', title: 'A retryable draft' }, plugin.loadWritingDraft().revision);
@@ -990,7 +990,8 @@ test('failed writing submissions retain the draft for retry while navigation fai
     assert.equal(plugin.loadWritingDraft().title, '');
     await assert.rejects(plugin.submitWritingDraft(plugin.loadWritingDraft().revision), /Write a draft before saving/);
     assert.equal(draftFiles(app).length, 1);
-    assert.ok(harness.notices.some((notice) => notice.includes('Simulated navigation failure')));
+    assert.equal(app.workspace.navigationRequests.length, 0);
+    assert.equal(harness.notices.some((notice) => notice.includes('Simulated navigation failure')), false);
   });
 });
 
