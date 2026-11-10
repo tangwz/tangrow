@@ -81,6 +81,7 @@ interface TestSidebar {
   scratchRevision: number;
   scratchEditor?: DraftControl;
   scratchTitleInput?: DraftControl;
+  scratchComposingControl?: DraftControl;
   contentEl: { empty(): void };
   onOpen(): Promise<void>;
   onClose(): Promise<void>;
@@ -88,6 +89,7 @@ interface TestSidebar {
   refresh(): void;
   registerInterval(): void;
   clearStudioControls(): void;
+  mountStudio(): void;
   refreshLanguage(): void;
   flushWritingDraft(): void;
 }
@@ -884,6 +886,7 @@ test('IME composition protects pending input from remote updates and cleanup rel
       first.scratchEditor = firstControl;
       second.scratchEditor = secondControl;
       assert.equal(plugin.beginWritingDraftComposition(first.viewId, first.scratchRevision), true);
+      first.scratchComposingControl = firstControl;
       assert.equal(firstControl.readOnly, false);
       assert.equal(secondControl.readOnly, true);
       firstControl.value = 'The uncommitted composition text.';
@@ -902,8 +905,8 @@ test('IME composition protects pending input from remote updates and cleanup rel
       if (close) await first.onClose();
       else first.clearStudioControls();
       assert.equal(plugin.loadWritingDraft().editingView, undefined);
-      assert.equal(plugin.loadScratch(), 'The uncommitted composition text.');
-      assert.equal(secondControl.value, 'The uncommitted composition text.');
+      assert.equal(plugin.loadScratch(), 'The current shared body.');
+      assert.equal(secondControl.value, 'The current shared body.');
       assert.equal(secondControl.readOnly, false);
       assert.equal(plugin.updateWritingDraft({ text: 'Editing can continue in the other view.' }, second.scratchRevision, second.viewId), true);
       if (!close) await first.onClose();
@@ -925,6 +928,98 @@ test('finishing IME composition publishes the final body and releases other Stud
     assert.equal(finished.text, 'The finalized composition.');
     assert.equal(finished.editingView, undefined);
     assert.equal(plugin.updateWritingDraft({ title: 'A title from the other view' }, finished.revision, 'second-view'), true);
+  });
+});
+
+class StudioElement extends EventTarget {
+  value = '';
+  isConnected = true;
+  readOnly = false;
+  disabled = false;
+  textContent = '';
+  selectionStart = 0;
+  selectionEnd = 0;
+  selectionDirection = 'none' as const;
+  scrollTop = 0;
+  ownerDocument = { activeElement: null };
+  createDiv(): StudioElement { return new StudioElement(); }
+  createEl(): StudioElement { return new StudioElement(); }
+  createSpan(): StudioElement { return new StudioElement(); }
+  setSelectionRange(): void {}
+}
+
+async function mountedStudio(plugin: TestPlugin): Promise<TestSidebar> {
+  const view = new harness.TangrowSidebar({}, plugin);
+  view.renderShell = () => undefined;
+  view.refresh = () => undefined;
+  view.registerInterval = () => undefined;
+  view.contentEl = { empty: () => undefined };
+  await view.onOpen();
+  Object.assign(view, {
+    pane: new StudioElement(),
+    ui: { t: (value: string) => value, number: (value: number) => String(value), button: () => new StudioElement() }
+  });
+  view.mountStudio();
+  return view;
+}
+
+test('IME preedit is not persisted when a writing view closes during composition', async () => {
+  await withWindow(async (timers) => {
+    for (const field of ['text', 'title'] as const) {
+      const { plugin } = createPlugin();
+      await plugin.onload();
+      plugin.updateWritingDraft({ text: 'Committed body', title: 'Committed title' }, 0);
+      const view = await mountedStudio(plugin);
+      const control = (field === 'text' ? view.scratchEditor : view.scratchTitleInput) as unknown as StudioElement;
+      control.dispatchEvent(new Event('compositionstart'));
+      control.value += 'ni';
+      control.dispatchEvent(new Event('input'));
+      assert.equal(plugin.loadWritingDraft().text, 'Committed body');
+      assert.equal(plugin.loadWritingDraft().title, 'Committed title');
+      timers.flush();
+      await plugin.writes;
+      const saved = plugin.savedData as { scratch: string; composer: ComposerState };
+      assert.equal(saved.scratch, 'Committed body');
+      assert.equal(saved.composer.scratchTitle, 'Committed title');
+      await view.onClose();
+      assert.equal(plugin.loadWritingDraft().editingView, undefined);
+      assert.equal(plugin.loadWritingDraft().text, 'Committed body');
+      assert.equal(plugin.loadWritingDraft().title, 'Committed title');
+      assert.equal(plugin.updateWritingDraft({ text: 'The other view can edit.' }, plugin.loadWritingDraft().revision, 'other'), true);
+    }
+  });
+});
+
+test('IME completion publishes the selected title or body and ordinary input still updates', async () => {
+  await withWindow(async () => {
+    for (const field of ['text', 'title'] as const) {
+      const { plugin } = createPlugin();
+      plugin.updateWritingDraft({ text: 'Committed body', title: 'Committed title' }, 0);
+      const view = await mountedStudio(plugin);
+      const control = (field === 'text' ? view.scratchEditor : view.scratchTitleInput) as unknown as StudioElement;
+      control.dispatchEvent(new Event('compositionstart'));
+      control.value = 'ni';
+      control.dispatchEvent(new Event('input'));
+      control.value = 'Selected candidate';
+      control.dispatchEvent(new Event('compositionend'));
+      assert.equal(plugin.loadWritingDraft()[field], 'Selected candidate');
+      assert.equal(plugin.loadWritingDraft().editingView, undefined);
+      control.value = 'Selected candidate with more input';
+      control.dispatchEvent(new Event('input'));
+      assert.equal(plugin.loadWritingDraft()[field], 'Selected candidate with more input');
+      control.dispatchEvent(new Event('compositionstart'));
+      control.value = 'Selected candidate with more inputni';
+      control.dispatchEvent(new Event('input'));
+      control.value = 'Selected candidate with more input';
+      control.dispatchEvent(new Event('compositionend'));
+      assert.equal(plugin.loadWritingDraft()[field], 'Selected candidate with more input');
+      control.dispatchEvent(new Event('compositionstart'));
+      control.value = 'ni';
+      control.dispatchEvent(new Event('input'));
+      control.dispatchEvent(new Event('compositionend'));
+      assert.equal(plugin.loadWritingDraft()[field], 'ni');
+      await view.onClose();
+    }
   });
 });
 
@@ -1589,12 +1684,12 @@ test('Studio language refresh keeps the composing inputs and editing lease witho
     view.clearStudioControls = originalClear;
     content.empty = () => undefined;
     await view.onClose();
-    assert.equal(plugin.loadWritingDraft().text, 'The pending IME text still inside this input.');
+    assert.equal(plugin.loadWritingDraft().text, 'The shared body before composition.');
     assert.equal(plugin.loadWritingDraft().editingView, undefined);
   });
 });
 
-test('plugin unload flushes unpublished IME input and title before releasing persistence ownership', async () => {
+test('plugin unload discards pending IME text while preserving the other field', async () => {
   await withWindow(async () => {
     const { plugin, app } = createPlugin();
     await plugin.onload();
@@ -1614,6 +1709,7 @@ test('plugin unload flushes unpublished IME input and title before releasing per
     view.scratchEditor = text;
     view.scratchTitleInput = title;
     assert.equal(plugin.beginWritingDraftComposition(view.viewId, view.scratchRevision), true);
+    view.scratchComposingControl = text;
     text.value = 'The latest IME body not yet published by an input event.';
     title.value = 'The latest unpublished title';
     const previousLeaves = app.workspace.getLeavesOfType;
@@ -1623,13 +1719,13 @@ test('plugin unload flushes unpublished IME input and title before releasing per
       await plugin.writes;
     } finally { app.workspace.getLeavesOfType = previousLeaves; }
     const saved = plugin.savedData as { scratch: string; composer: ComposerState };
-    assert.equal(saved.scratch, text.value);
+    assert.equal(saved.scratch, 'The body before composition.');
     assert.equal(saved.composer.scratchTitle, title.value);
     assert.equal(plugin.loadWritingDraft().editingView, undefined);
     const reloaded = new harness.TangrowPlugin(app);
     reloaded.savedData = structuredClone(saved);
     await reloaded.onload();
-    assert.equal(reloaded.loadWritingDraft().text, text.value);
+    assert.equal(reloaded.loadWritingDraft().text, 'The body before composition.');
     assert.equal(reloaded.loadWritingDraft().title, title.value);
   });
 });
