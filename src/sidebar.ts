@@ -522,8 +522,10 @@ export class TangrowSidebar extends ItemView {
     });
     title.value = this.scratchTitle;
     this.scratchTitleInput = title;
+    // Unconfirmed IME text must not enter the shared, automatically saved draft.
     title.addEventListener('input', () => {
       if (!this.isMounted || this.scratchTitleInput !== title || !title.isConnected) return;
+      if (this.scratchComposingControl === title) return;
       if (!this.host.updateWritingDraft({ title: title.value }, this.scratchRevision, this.viewId)) this.syncStudio();
     });
     const text = composer.createEl('textarea', {
@@ -538,7 +540,7 @@ export class TangrowSidebar extends ItemView {
       this.scratchSaving = true;
       this.updateStudioControls();
       try {
-        await this.host.submitWritingDraft(this.scratchRevision);
+        await this.host.submitWritingDraft(this.scratchRevision, { leaf: this.leaf, editor: text });
       } finally {
         this.scratchSaving = false;
         this.updateStudioControls();
@@ -546,6 +548,7 @@ export class TangrowSidebar extends ItemView {
     }, { icon: 'file-plus-2', cls: 'mod-cta' });
     text.addEventListener('input', () => {
       if (!this.isMounted || this.scratchEditor !== text || !text.isConnected) return;
+      if (this.scratchComposingControl === text) return;
       if (!this.host.updateWritingDraft({ text: text.value }, this.scratchRevision, this.viewId)) this.syncStudio();
     });
     for (const control of [title, text]) {
@@ -573,7 +576,11 @@ export class TangrowSidebar extends ItemView {
 
   private clearStudioControls(): void {
     if (this.host.loadWritingDraft().editingView === this.viewId) {
-      this.host.updateWritingDraft({ text: this.scratchEditor?.value ?? this.scratch, title: this.scratchTitleInput?.value ?? this.scratchTitle }, this.scratchRevision, this.viewId);
+      if (this.scratchComposingControl === this.scratchEditor && this.scratchEditor) {
+        this.host.updateWritingDraft({ title: this.scratchTitleInput?.value ?? this.scratchTitle }, this.scratchRevision, this.viewId);
+      } else if (this.scratchComposingControl === this.scratchTitleInput && this.scratchTitleInput) {
+        this.host.updateWritingDraft({ text: this.scratchEditor?.value ?? this.scratch }, this.scratchRevision, this.viewId);
+      }
       this.host.endWritingDraftComposition(this.viewId);
     }
     this.scratchEditor = undefined;

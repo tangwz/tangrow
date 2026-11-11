@@ -23,10 +23,11 @@ import { hasValidSupportFolder, SupportFolderConflictError, validateFolderSettin
 import { moveSupportFolder } from './support-migration';
 import { addEditingActivity, createActivityState, normalizeActivityState, summarizeActivity, type EditingActivityState } from './activity';
 import { ReportSource } from './report-source';
+import { captureWritingNavigation } from './writing-navigation';
 import { aggregateReport } from './report-data';
 import type { ReportPreferences, ReportRange, ReportSnapshot } from './report-contract';
 import { translate, describeError, type TranslationValues } from './i18n';
-import { DEFAULT_SETTINGS, type CaptureRequest, type ComposerState, type Habit, type Locale, type ActionId, type BaseId, type FocusSession, type NoteKind, type NoteSummary, type Settings, type SidebarHost, type Snapshot, type TaskSummary, type WritingDraft } from './types';
+import { DEFAULT_SETTINGS, type CaptureRequest, type ComposerState, type Habit, type Locale, type ActionId, type BaseId, type FocusSession, type NoteKind, type NoteSummary, type Settings, type SidebarHost, type Snapshot, type TaskSummary, type WritingDraft, type WritingSaveOrigin } from './types';
 
 const dateTime = moment as unknown as (input?: number | string | Date) => { format(pattern: string): string };
 
@@ -1037,28 +1038,25 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       this.notify();
     }
   }
-  async saveDraft(text: string, title: string, submission?: DraftSubmission): Promise<void> {
+  async saveDraft(text: string, title: string, origin?: WritingSaveOrigin, submission?: DraftSubmission): Promise<void> {
     if (!text.trim()) throw new Error('Write a draft before saving.');
     const revision = this.scratchRevision;
-    const origin = this.app.workspace.getMostRecentLeaf();
-    const view = origin?.view;
-    const originFile = view instanceof FileView ? view.file : null;
-    const document = view?.containerEl.ownerDocument;
-    const active = document?.activeElement;
-    const file = await this.exclusive(() => {
-      const name = title || this.t('Draft {date}', { date: dateTime().format('YYYY-MM-DD HHmmss') });
-      const fields = { tangrow_kind: 'draft', tangrow_status: 'draft', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') };
-      return submission ? this.createSubmittedNote(submission, 'draft', name, text, fields) : this.createUnique(this.settings.inboxFolder, name, text, fields);
-    });
-    if (!this.alive) return;
-    // Saving must not navigate away from a newer edit, window, note, or focused control.
-    if (this.scratchRevision !== revision || this.app.workspace.getMostRecentLeaf() !== origin
-      || origin?.view !== view || (view instanceof FileView && view.file !== originFile)
-      || (document && (document.hidden || !document.hasFocus() || document.activeElement !== active))) return;
-    try { await this.openNote(file.path); }
-    catch (error) { new Notice(this.t('Draft saved, but it could not be opened: {error}', { error: this.error(error) })); }
+    const navigation = captureWritingNavigation(this.app.workspace, origin);
+    try {
+      const file = await this.exclusive(() => {
+        const name = title || this.t('Draft {date}', { date: dateTime().format('YYYY-MM-DD HHmmss') });
+        const fields = { tangrow_kind: 'draft', tangrow_status: 'draft', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') };
+        return submission ? this.createSubmittedNote(submission, 'draft', name, text, fields) : this.createUnique(this.settings.inboxFolder, name, text, fields);
+      });
+      if (!this.alive || this.scratchRevision !== revision || this.scratchEditingView !== undefined) return;
+      const target = navigation.destination();
+      navigation.dispose();
+      if (!target) return;
+      try { await target.openFile(file, { active: true }); }
+      catch (error) { new Notice(this.t('Draft saved, but it could not be opened: {error}', { error: this.error(error) })); }
+    } finally { navigation.dispose(); }
   }
-  submitWritingDraft(expectedRevision: number): Promise<void> {
+  submitWritingDraft(expectedRevision: number, origin?: WritingSaveOrigin): Promise<void> {
     const draft = this.loadWritingDraft();
     if (draft.editingView !== undefined) return Promise.reject(new Error('Finish typing before saving this draft.'));
     if (draft.revision !== expectedRevision) return Promise.reject(new Error('The writing draft changed in another view. Review the latest text before saving.'));
@@ -1066,7 +1064,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     const pending = this.scratchSubmissions.get(draft.revision);
     if (pending) return pending;
     const receipt = this.submissions.writing ??= { id: uid(), path: null };
-    const submission = this.saveDraft(draft.text, draft.title, receipt).then(async () => {
+    const submission = this.saveDraft(draft.text, draft.title, origin, receipt).then(async () => {
       if (!this.alive) return;
       this.updateWritingDraft({ text: '', title: '' }, draft.revision);
       try { await this.persist(); }

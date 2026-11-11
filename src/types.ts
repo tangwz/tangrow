@@ -1,4 +1,4 @@
-import type { App } from 'obsidian';
+import type { App, WorkspaceLeaf } from 'obsidian';
 import type { ReportPreferences, ReportRange, ReportSnapshot } from './report-contract';
 import type { JournalPeriod } from './periodic-notes';
 import type { AiContext, AiRequest, AiSource, CaptureSuggestion, QuickKind } from './ai';
@@ -61,6 +61,10 @@ export const DEFAULT_SETTINGS: Settings = {
 };
 export interface ComposerState { capture: string; scratchTitle: string }
 export interface WritingDraft { text: string; title: string; revision: number; editingView?: string }
+export interface WritingSaveOrigin {
+  leaf: WorkspaceLeaf;
+  editor: HTMLTextAreaElement;
+}
 export interface NoteSummary { path: string; name: string; folder: string; modified: number; kind?: string; status?: string }
 export interface CaptureSummary extends NoteSummary { created: number; processed?: boolean; processing?: boolean }
 export type CaptureRequest =
@@ -126,12 +130,12 @@ export interface SidebarHost {
   openPeriodicNote(period: JournalPeriod, date?: string, immersive?: boolean): Promise<void>;
   readCapture(path: string): Promise<string>;
   processCapture(path: string, request: CaptureRequest): Promise<string | null>;
-  saveDraft(text: string, title: string): Promise<void>;
+  saveDraft(text: string, title: string, origin?: WritingSaveOrigin): Promise<void>;
   loadWritingDraft(): WritingDraft;
   updateWritingDraft(patch: Partial<Pick<WritingDraft, 'text' | 'title'>>, expectedRevision: number, viewId?: string): boolean;
   beginWritingDraftComposition(viewId: string, expectedRevision: number): boolean;
   endWritingDraftComposition(viewId: string): void;
-  submitWritingDraft(expectedRevision: number): Promise<void>;
+  submitWritingDraft(expectedRevision: number, origin?: WritingSaveOrigin): Promise<void>;
   setup(): Promise<void>;
   startFocus(minutes: number): Promise<void>;
   pauseFocus(): Promise<void>;
