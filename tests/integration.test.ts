@@ -7,6 +7,7 @@ import { build } from 'esbuild';
 import { baseDefinitions, setupReadme } from '../src/bases';
 import { aggregateReport } from '../src/report-data';
 import type { ActionId, ComposerState, FocusSession, Locale, NoteKind, Settings, Snapshot, WritingDraft } from '../src/types';
+import { JOURNAL_PERIODS, type JournalPeriod } from '../src/periodic-notes';
 import type { FileView as MockFileView, ItemView as MockItemView, MarkdownView as MockMarkdownView, MockApp, Plugin as MockPlugin, TFile as MockFile, TFolder as MockFolder, createMockApp as MockAppFactory } from './obsidian-mock';
 
 type FolderSettingKey = keyof Pick<Settings, 'supportFolder' | 'inboxFolder' | 'projectFolder' | 'areaFolder' | 'resourcesFolder' | 'archiveFolder' | 'journalFolder'>;
@@ -39,6 +40,10 @@ interface TestPlugin extends MockPlugin {
   subscribeComposer(listener: () => void): () => void;
   submitCaptureDraft(): Promise<void>;
   readCapture(path: string): Promise<string>;
+  openPeriodicNote(period: JournalPeriod, date?: string, immersive?: boolean): Promise<void>;
+  updateJournalSettings(period: JournalPeriod, format: string, template: string): Promise<void>;
+  bindNoteImmersionAction(): void;
+  toggleNoteImmersion(view?: MockMarkdownView | null): void;
   startFocus(minutes: number): Promise<void>;
   pauseFocus(): Promise<void>;
   resumeFocus(): Promise<void>;
@@ -1641,4 +1646,102 @@ test('plugin unload flushes unpublished IME input and title before releasing per
     assert.equal(reloaded.loadWritingDraft().text, text.value);
     assert.equal(reloaded.loadWritingDraft().title, title.value);
   });
+});
+
+test('five journal periods create separate native notes and concurrent opens preserve existing content', async () => {
+  const { plugin, app } = createPlugin();
+  const original = app.vault.seedFile('20-Project/Original.md', '# Original\n');
+  for (const period of JOURNAL_PERIODS) {
+    const before = app.vault.getMarkdownFiles().length;
+    await Promise.all([plugin.openPeriodicNote(period, '2026-11-09'), plugin.openPeriodicNote(period, '2026-11-09')]);
+    assert.equal(app.vault.getMarkdownFiles().length, before + 1);
+    const opened = app.workspace.rootOpenedFiles.at(-1)!;
+    const note = app.vault.getAbstractFileByPath(opened) as MockFile;
+    assert.match(note.content, new RegExp(`journal: ${period[0]!.toUpperCase() + period.slice(1)}`));
+    note.content += '\nKeep my journal edits.\n';
+    const saved = note.content;
+    await plugin.openPeriodicNote(period, '2026-11-09');
+    assert.equal(note.content, saved);
+  }
+  assert.equal(original.content, '# Original\n');
+  assert.deepEqual(app.vault.processedPaths, []);
+  assert.equal(app.vault.getMarkdownFiles().length, 6);
+});
+
+test('journals read templates only for new notes and fail without creating an empty journal', async () => {
+  const { plugin, app } = createPlugin();
+  const template = app.vault.seedFile('Templates/Weekly.md', '# {{title}}\n\n{{start}} to {{end}}\n\n## Review\n');
+  plugin.settings.journalTemplates.weekly = template.path;
+  await plugin.openPeriodicNote('weekly', '2021-01-01');
+  const path = `${plugin.settings.journalFolder}/2020/Weekly/2020-W53.md`;
+  const note = app.vault.getAbstractFileByPath(path) as MockFile;
+  assert.equal(note.content, '# 2020-W53\n\n2020-12-28 to 2021-01-03\n\n## Review\n');
+  plugin.settings.journalTemplates.weekly = 'Templates/Missing.md';
+  await plugin.openPeriodicNote('weekly', '2021-01-03');
+  const before = [...app.vault.createdPaths];
+  await assert.rejects(plugin.openPeriodicNote('weekly', '2021-01-04'), /existing Markdown/);
+  assert.deepEqual(app.vault.createdPaths, before);
+  assert.equal(template.content, '# {{title}}\n\n{{start}} to {{end}}\n\n## Review\n');
+});
+
+test('journal writes and folder conflicts fail safely and can be retried', async () => {
+  const { plugin, app } = createPlugin();
+  app.vault.failCreates = 1;
+  await assert.rejects(plugin.openPeriodicNote('monthly', '2026-11-09'), /write failure/);
+  assert.equal(app.vault.getMarkdownFiles().length, 0);
+  assert.equal(app.workspace.rootOpenedFiles.length, 0);
+  await plugin.openPeriodicNote('monthly', '2026-11-30');
+  assert.equal(app.vault.getMarkdownFiles().length, 1);
+  const folder = `${plugin.settings.journalFolder}/2026/Quarterly/2026-Q4.md`;
+  app.vault.seedFolder(folder);
+  await assert.rejects(plugin.openPeriodicNote('quarterly', '2026-11-09'), /occupied by a folder/);
+  assert.ok(app.vault.getAbstractFileByPath(folder) instanceof harness.TFolder);
+});
+
+test('journal configuration validates paths and restores settings when persistence fails', async () => {
+  const { plugin, app } = createPlugin();
+  const original = structuredClone(plugin.settings);
+  for (const format of ['[../]/YYYY', '[/absolute]/YYYY', '']) {
+    await assert.rejects(plugin.updateJournalSettings('weekly', format, ''));
+    assert.deepEqual(plugin.settings, original);
+  }
+  await assert.rejects(plugin.updateJournalSettings('daily', 'YYYY-MM-DD', 'Templates/Missing.md'));
+  plugin.saveFailures = 1;
+  await assert.rejects(plugin.updateJournalSettings('monthly', '[Monthly]/YYYY-MM', ''), /settings write failure/);
+  assert.deepEqual(plugin.settings, original);
+  await plugin.updateJournalSettings('monthly', '[Monthly]/YYYY-MM', '');
+  assert.equal(plugin.settings.journalFormats.monthly, '[Monthly]/YYYY-MM');
+  assert.equal(plugin.settings.journalFormat, original.journalFormat);
+  assert.deepEqual(app.vault.createdPaths, []);
+});
+
+test('the note header immersion action stays attached to its native view when the sidebar has focus', () => {
+  const { plugin, app } = createPlugin();
+  const note = app.vault.seedFile('00-Inbox/Existing.md', '# Existing\n');
+  const view = new harness.MarkdownView();
+  view.file = note;
+  app.workspace.setMostRecentRootLeaf({ view });
+  app.workspace.setMostRecentLeaf({ view: new harness.ItemView() });
+  let removed = 0;
+  const callbacks: Array<() => void> = [];
+  Object.assign(view, {
+    addAction: (_icon: string, _label: string, callback: () => void) => {
+      callbacks.push(callback);
+      return { remove: () => { removed++; } };
+    }
+  });
+  const targets: unknown[] = [];
+  plugin.toggleNoteImmersion = (target) => { targets.push(target); };
+  plugin.bindNoteImmersionAction();
+  assert.equal(callbacks.length, 1);
+  callbacks[0]!();
+  assert.deepEqual(targets, [view]);
+  plugin.bindNoteImmersionAction();
+  assert.equal(removed, 0);
+  assert.equal(callbacks.length, 1);
+  app.workspace.setMostRecentRootLeaf({ view: new harness.ItemView() });
+  plugin.bindNoteImmersionAction();
+  assert.equal(removed, 1);
+  assert.equal(callbacks.length, 1);
+  assert.equal(note.content, '# Existing\n');
 });

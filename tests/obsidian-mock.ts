@@ -1,3 +1,5 @@
+import momentLibrary from 'moment';
+
 export const notices: string[] = [];
 export const Platform = { isDesktopApp: true };
 
@@ -275,6 +277,8 @@ export class Notice {
   constructor(text: string) { notices.push(text); }
 }
 export class Modal {}
+export class Menu {}
+export const MarkdownRenderer = { render: async (): Promise<void> => {} };
 export class MockView {
   containerEl = { toggleClass: (): void => {}, removeClass: (): void => {} };
   getViewType(): string { return 'unknown'; }
@@ -329,14 +333,7 @@ export class MarkdownView extends FileView {
 }
 export function setIcon(): void {}
 export function normalizePath(path: string): string { return path.replace(/\/+/g, '/').replace(/^\/+|\/+$/g, ''); }
-export function moment(input?: string | number | Date): { format(pattern: string): string } {
-  const date = input === undefined ? new Date(Date.now()) : new Date(input);
-  const parts: Record<string, string> = {
-    YYYY: String(date.getFullYear()), MM: String(date.getMonth() + 1).padStart(2, '0'), DD: String(date.getDate()).padStart(2, '0'),
-    HH: String(date.getHours()).padStart(2, '0'), mm: String(date.getMinutes()).padStart(2, '0'), ss: String(date.getSeconds()).padStart(2, '0'), Z: '+00:00'
-  };
-  return { format: (pattern) => pattern.replace(/\[[^\]]*\]|YYYY|MM|DD|HH|mm|ss|Z/g, (token) => token.startsWith('[') ? token.slice(1, -1) : parts[token]!) };
-}
+export const moment = momentLibrary;
 export function setTooltip(): void {}
 export function getFrontMatterInfo(content: string): { exists: boolean; frontmatter: string; from: number; to: number; contentStart: number } {
   const match = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(content);

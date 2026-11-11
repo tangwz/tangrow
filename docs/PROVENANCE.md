@@ -15,6 +15,9 @@
 
 - 2026-11-08 的[功能对照审计](PARITY-AUDIT.md)以用户截图、宿主实际界面和 Tangrow 实现为依据，记录可见功能的覆盖与差异。
 - 2026-11-09 对固定基线 `e992ef101519425dc9e2a45c42c7c562ff289f81` 做[发布前复用核查](REUSE-AUDIT.md)，事后读取了用户提供的参考插件发布代码、样式、模板与 Bases，没有执行参考插件或使用其授权机制。未发现可识别的专有业务、成组样式、素材或模板直接复制证据，但存在通用短片段重合。
+- 2026-11-10 按用户选择，自 `0.4.0` 起采用 [GPLv3 或任何后续版本](../LICENSE)，此前本地拟定的专有商业许可草案由 GPL 方案替代。已按 MIT 发布的材料以 `47549973f5f8a5157f7849468223aad942f9ce20` 为公开历史参考，原文保留在 [LICENSE-MIT-LEGACY](../LICENSE-MIT-LEGACY)；本次变更不收回已有 MIT、第三方或其他独立有效授权。项目附加许可见 [NOTICE](../NOTICE)，版本与源码交付说明见 [LICENSING.md](LICENSING.md)。
+
+- 2026-11-12 的界面与 AI 改版中，读取了用户提供的参考压缩包里面向用户的说明文档（库根 README、入门教程和 AI 目录的使用说明），用于了解其功能范围；没有读取其中的插件代码、样式、模板、数据库配置或 AI 技能正文，也没有运行该插件。新的布局、样式、文案、提示词和 `AGENTS.md` 内容均为本项目独立编写。
 
 功能参考、实现过程与事后技术核查应分别记录；本记录不作整个项目从未接触参考实现的永久声明。现有静态结果不能证明独立创作或全部权利状态。对外商业化或采用新的第三方材料时，仍需核对其来源、许可及实际界面表达。
 
@@ -26,8 +29,9 @@
 | [Bases 语法](https://obsidian.md/help/bases/syntax) | 原生视图文件格式 | 独立生成查询配置 |
 | [Bases 函数](https://obsidian.md/help/bases/functions) | 路径、日期与属性筛选 | 使用文档化表达式 |
 | [API 许可证](https://github.com/obsidianmd/obsidian-api/blob/master/LICENSE.md) | 类型定义许可核查 | 保留来源和许可文本 |
+| [Anthropic TypeScript SDK](https://github.com/anthropics/anthropic-sdk-typescript) | 调用 Claude API | 作为依赖打包，保留 Apache-2.0 许可文本 |
 
-图标通过 Obsidian 内置 `setIcon` 请求，不复制第三方 SVG、字体或图片。当前没有直接运行时包依赖，也没有独立素材包。开发工具依赖及许可见 [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)。
+图标通过 Obsidian 内置 `setIcon` 请求，不复制第三方 SVG、字体或图片。运行时依赖只有用于 AI 功能的 Anthropic 官方 SDK 及其被打包的依赖，没有独立素材包。运行时与开发依赖的许可见 [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)。
 
 ## 维护要求
 

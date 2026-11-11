@@ -31,6 +31,29 @@ export class CaptureProcessingModal extends Modal {
     for (const file of captureProjectFiles(this.host.app, this.host.settings).filter((file) => file.path !== this.capture.path)) {
       project.createEl('option', { value: file.path, text: file.path });
     }
+    const advice = form.createDiv({ cls: 'tangrow-quick-suggestion', attr: { 'aria-live': 'polite' } });
+    if (this.host.aiReady()) {
+      const suggest = form.createEl('button', { cls: 'tangrow-button tangrow-capture-suggest', text: t('Suggest with AI'), attr: { type: 'button' } });
+      suggest.addEventListener('click', () => {
+        if (suggest.disabled) return;
+        suggest.disabled = true;
+        suggest.textContent = t('Thinking...');
+        error.textContent = '';
+        void this.host.readCapture(this.capture.path).then((content) => this.host.suggestCapture(content)).then((result) => {
+          // A project or an unsorted idea both map to keeping a note; the user still chooses.
+          action.value = result.kind === 'task' ? 'task' : result.kind === 'capture' ? 'done' : 'note';
+          if (result.title) title.value = result.title;
+          project.value = result.project && action.value === 'note' ? result.project : '';
+          advice.textContent = result.reason;
+          update();
+        }).catch((failure: unknown) => {
+          error.textContent = describeError(this.host.settings.language, failure);
+        }).finally(() => {
+          suggest.disabled = false;
+          suggest.textContent = t('Suggest with AI');
+        });
+      });
+    }
     const destination = form.createEl('p', { cls: 'tangrow-destination' });
     const error = form.createDiv({ cls: 'tangrow-input-error', attr: { 'aria-live': 'polite' } });
     const footer = form.createDiv({ cls: 'tangrow-dialog-actions' });

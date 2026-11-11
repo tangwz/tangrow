@@ -5,12 +5,13 @@ import { CaptureProcessingModal } from './capture-processing-modal';
 import { describeError, translate } from './i18n';
 import type { TranslationValues } from './i18n';
 import type { CaptureSummary, SidebarHost } from './types';
+import { JOURNAL_PERIODS, journalInterval, type JournalPeriod } from './periodic-notes';
 
 const PAGE_SIZE = 12;
 const PREVIEW_CONCURRENCY = 3;
 const PREVIEW_CACHE_SIZE = 200;
 
-interface CapturePanelOptions { allowPopout?: boolean }
+interface CapturePanelOptions { allowPopout?: boolean; composerOnly?: boolean }
 interface PreviewJob { key: string; path: string; targets: Set<HTMLElement> }
 
 export class CapturePanel {
@@ -31,6 +32,7 @@ export class CapturePanel {
   private timeline?: HTMLElement;
   private footer?: HTMLElement;
   private allDaysButton?: HTMLButtonElement;
+  private periodControls?: HTMLElement;
   private labels: Array<{ element: HTMLElement; source: string; values?: TranslationValues }> = [];
   private buttonLabels = new Map<HTMLButtonElement, { source: string; values?: TranslationValues }>();
   private unsubscribe?: () => void;
@@ -83,8 +85,18 @@ export class CapturePanel {
     });
     const composerFooter = composer.createDiv({ cls: 'tangrow-composer-footer' });
     this.count = composerFooter.createSpan({ cls: 'tangrow-muted' });
+    if (!this.options.composerOnly) this.button(composerFooter, 'Immersive capture', () => this.host.openImmersiveCapture(), 'expand', 'tangrow-capture-icon-button');
     this.saveButton = this.button(composerFooter, 'Save capture', () => this.submit(), 'arrow-up-right', 'mod-cta');
     this.destination = this.root.createEl('p', { cls: 'tangrow-destination' });
+    if (this.options.composerOnly) {
+      this.root.addClass('tangrow-capture-composer-only');
+      this.label(this.root, 'p', 'Drafts sync automatically. Mod+Enter saves; Esc returns to your workspace.', 'tangrow-muted tangrow-immersive-hint');
+      this.unsubscribe = this.host.subscribe(() => this.refresh());
+      this.unsubscribeComposer = this.host.subscribeComposer(() => this.syncComposer());
+      this.language = '';
+      this.refresh();
+      return;
+    }
     if (this.options.allowPopout !== false) {
       this.button(this.root, 'Open capture window', () => this.host.openCaptureWindow(), 'external-link', 'tangrow-full-width tangrow-capture-popout');
     }
@@ -94,6 +106,7 @@ export class CapturePanel {
     this.button(calendarHeader, 'Previous month', () => this.moveMonth(-1), 'chevron-left', 'tangrow-capture-icon-button');
     this.calendarTitle = calendarHeader.createEl('h3', { attr: { id: `${this.instanceId}-month`, 'aria-live': 'polite' } });
     this.button(calendarHeader, 'Next month', () => this.moveMonth(1), 'chevron-right', 'tangrow-capture-icon-button');
+    this.periodControls = calendar.createDiv({ cls: 'tangrow-period-controls', attr: { role: 'group' } });
     this.weekdays = calendar.createDiv({ cls: 'tangrow-capture-weekdays', attr: { 'aria-hidden': 'true' } });
     this.calendarGrid = calendar.createDiv({ cls: 'tangrow-capture-days', attr: { role: 'group', 'aria-labelledby': `${this.instanceId}-month` } });
     const calendarFooter = calendar.createDiv({ cls: 'tangrow-capture-calendar-footer' });
@@ -105,6 +118,7 @@ export class CapturePanel {
       this.limit = PAGE_SIZE;
       this.refresh();
     }, undefined, 'tangrow-text-button');
+    this.root.prepend(calendar);
 
     const timelineHeader = this.root.createDiv({ cls: 'tangrow-capture-timeline-heading' });
     this.timelineTitle = this.label(timelineHeader, 'h3', 'Capture timeline', 'tangrow-section-title');
@@ -151,6 +165,7 @@ export class CapturePanel {
     }
     if (this.destination) this.destination.textContent = this.t('Destination: {path}', { path: this.host.settings.inboxFolder });
     this.syncComposer();
+    if (this.options.composerOnly) return;
     const captures = this.host.snapshot().captures;
     const fingerprint = captures.map((capture) => [capture.path, capture.created, capture.modified, capture.name, capture.processed, capture.processing]);
     const calendarSignature = JSON.stringify([this.language, this.year, this.monthIndex, this.selectedDay, this.focusedDay, captureDay(Date.now()), fingerprint]);
@@ -180,6 +195,7 @@ export class CapturePanel {
     this.root?.remove();
     this.root = undefined;
     this.editor = undefined;
+    this.periodControls = undefined;
     this.statusFilter = undefined;
     this.labels = [];
     this.buttonLabels.clear();
@@ -272,6 +288,7 @@ export class CapturePanel {
     if (!this.calendarGrid || !this.calendarTitle) return;
     const cells = captureCalendar(captures, this.year, this.monthIndex);
     this.calendarTitle.textContent = new Date(this.year, this.monthIndex, 1, 12).toLocaleDateString(this.host.settings.language, { year: 'numeric', month: 'long' });
+    this.renderPeriodControls();
     if (this.monthCount) this.monthCount.textContent = this.t('{count} captures this month', { count: this.number(cells.filter((cell) => cell.inMonth).reduce((sum, cell) => sum + cell.count, 0)) });
     if (this.allDaysButton) this.allDaysButton.setAttribute('aria-pressed', String(this.selectedDay === null));
     const active = this.calendarGrid.ownerDocument.activeElement as HTMLElement | null;
@@ -313,10 +330,44 @@ export class CapturePanel {
 
   private selectToday(): void { this.selectDay(captureDay(Date.now())); }
 
+  private journalDay(): string {
+    const selected = this.selectedDay ?? captureDay(Date.now());
+    const prefix = `${this.year}-${String(this.monthIndex + 1).padStart(2, '0')}-`;
+    return selected.startsWith(prefix) ? selected : `${prefix}01`;
+  }
+
+  private renderPeriodControls(): void {
+    if (!this.periodControls) return;
+    const day = this.journalDay();
+    const interval = journalInterval('daily', day);
+    const selected = interval.date;
+    const values: Record<JournalPeriod, string> = {
+      daily: selected.toLocaleDateString(this.host.settings.language, { month: 'short', day: 'numeric' }),
+      weekly: this.t('W{week}', { week: interval.week }),
+      monthly: selected.toLocaleDateString(this.host.settings.language, { month: 'short' }),
+      quarterly: `Q${interval.quarter}`, yearly: String(selected.getFullYear())
+    };
+    const sources: Record<JournalPeriod, string> = {
+      daily: 'Open daily note for {period}', weekly: 'Open weekly note for {period}', monthly: 'Open monthly note for {period}',
+      quarterly: 'Open quarterly note for {period}', yearly: 'Open yearly note for {period}'
+    };
+    this.periodControls.empty();
+    this.periodControls.setAttribute('aria-label', this.t('Periodic notes'));
+    for (const period of [...JOURNAL_PERIODS].reverse()) {
+      const title = journalInterval(period, day).title;
+      const button = this.button(this.periodControls, sources[period], () => this.host.openPeriodicNote(period, day), undefined, 'tangrow-period-button', { period: title });
+      button.querySelector('span')!.textContent = values[period];
+      setTooltip(button, this.t(sources[period], { period: title }));
+    }
+  }
+
   private moveMonth(offset: number): void {
     const next = shiftCaptureMonth(this.year, this.monthIndex, offset);
     this.year = next.year;
     this.monthIndex = next.monthIndex;
+    this.selectedDay = `${this.year}-${String(this.monthIndex + 1).padStart(2, '0')}-01`;
+    this.focusedDay = this.selectedDay;
+    this.limit = PAGE_SIZE;
     this.refresh();
   }
 

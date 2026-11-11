@@ -55,6 +55,7 @@ interface Host {
   settings: Settings;
   processCapture(path: string, request: CaptureRequest): Promise<string | null>;
   openNote(path: string): Promise<void>;
+  aiReady(): boolean;
 }
 interface Panel {
   root: Element;
@@ -88,7 +89,7 @@ const harness = moduleObject.exports as {
   createMockApp: typeof MockAppFactory;
 };
 function host(): Host {
-  return { app: harness.createMockApp(), settings: readSettings({ language: 'en' }), processCapture: async () => null, openNote: async () => undefined };
+  return { app: harness.createMockApp(), settings: readSettings({ language: 'en' }), processCapture: async () => null, openNote: async () => undefined, aiReady: () => false };
 }
 function capture(name: string, fields: Partial<CaptureSummary> = {}): CaptureSummary {
   return { name, path: `00-Inbox/${name}.md`, folder: '00-Inbox', modified: 1, created: new Date(2026, 10, 9, 12).getTime(), ...fields };

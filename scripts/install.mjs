@@ -60,7 +60,7 @@ const plugins = path.join(config, 'plugins');
 const destination = path.join(plugins, 'tangrow');
 await inspect(plugins, 'directory');
 await inspect(destination, 'directory');
-const files = ['manifest.json', 'main.js', 'styles.css', 'LICENSE', 'THIRD_PARTY_NOTICES.md'];
+const files = ['manifest.json', 'main.js', 'styles.css', 'LICENSE', 'NOTICE', 'LICENSE-MIT-LEGACY', 'THIRD_PARTY_NOTICES.md'];
 for (const name of files) {
   if (!(await inspect(path.join(root, name), 'file'))) throw new Error(`Installation file missing: ${name}. Build the plugin and ensure its license notices are present.`);
   await inspect(path.join(destination, name), 'file');
