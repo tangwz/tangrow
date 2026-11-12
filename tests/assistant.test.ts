@@ -4,10 +4,10 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
-import { AI_INPUT_LIMIT, AI_SECRET_ID, agentGuide, buildPrompt, buildSuggestionPrompt, parseSuggestion, readAiModel, type AiPrompt, type AiRequest, type CaptureSuggestion } from '../src/ai';
+import { AI_INPUT_LIMIT, AI_SECRET_ID, agentGuide, buildPrompt, buildSuggestionPrompt, parseSuggestion, readAiModel, type AiActionId, type AiContext, type AiPrompt, type AiRequest, type AiSource, type CaptureSuggestion } from '../src/ai';
 import { readSettings } from '../src/model';
 import { appendTaskLine, completeTaskLine, extractTasks, taskLine } from '../src/task-tools';
-import type { Settings, Snapshot } from '../src/types';
+import type { Settings, Snapshot, WritingDraft } from '../src/types';
 import type { MockApp, Plugin as MockPlugin, TFile as MockFile, createMockApp as MockAppFactory } from './obsidian-mock';
 
 interface TestPlugin extends MockPlugin {
@@ -21,17 +21,68 @@ interface TestPlugin extends MockPlugin {
   setAiKey(value: string): Promise<void>;
   updateAiSettings(patch: { aiEnabled?: boolean; aiModel?: string }): Promise<void>;
   runAi(request: AiRequest): Promise<string>;
-  aiContext(source: 'note' | 'draft' | 'today'): Promise<{ title: string; text: string }>;
+  aiContext(source: AiSource): Promise<AiContext>;
+  loadWritingDraft(): WritingDraft;
+  updateWritingDraft(patch: Partial<Pick<WritingDraft, 'text' | 'title'>>, expectedRevision: number): boolean;
+  submitWritingDraft(expectedRevision: number): Promise<void>;
   suggestCapture(text: string): Promise<CaptureSuggestion>;
   openAiGuide(): Promise<void>;
   appendToActiveNote(text: string): Promise<void>;
 }
-interface Harness { TangrowPlugin: new (app: MockApp) => TestPlugin; createMockApp: typeof MockAppFactory; notices: string[] }
+interface TestAiPanel {
+  mount(container: Element): void;
+  destroy(): void;
+  setSource(source: AiSource): void;
+  run(action: AiActionId): Promise<void>;
+}
+interface Harness {
+  TangrowPlugin: new (app: MockApp) => TestPlugin;
+  AiPanel: new (host: TestPlugin, component: object) => TestAiPanel;
+  createMockApp: typeof MockAppFactory;
+  notices: string[];
+}
+
+class Element extends EventTarget {
+  children: Element[] = [];
+  textContent = '';
+  value = '';
+  disabled = false;
+  parentElement?: Element;
+  attributes = new Map<string, string>();
+  constructor(readonly tag = 'div') { super(); }
+  createEl(tag: string, options: { text?: string; attr?: Record<string, string> } = {}): Element {
+    const child = new Element(tag);
+    child.textContent = options.text ?? '';
+    child.attributes = new Map(Object.entries(options.attr ?? {}));
+    child.parentElement = this;
+    this.children.push(child);
+    return child;
+  }
+  createDiv(options = {}): Element { return this.createEl('div', options); }
+  createSpan(options = {}): Element { return this.createEl('span', options); }
+  addClass(): void {}
+  empty(): void { this.children = []; }
+  remove(): void { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter((child) => child !== this); }
+  setAttribute(key: string, value: string): void { this.attributes.set(key, value); }
+  getAttribute(key: string): string | null { return this.attributes.get(key) ?? null; }
+  removeAttribute(key: string): void { this.attributes.delete(key); }
+  querySelectorAll(tag: string): Element[] {
+    return this.children.flatMap((child) => [...(child.tag === tag ? [child] : []), ...child.querySelectorAll(tag)]);
+  }
+}
+async function flush(): Promise<void> { await new Promise<void>((resolve) => setImmediate(resolve)); }
+async function click(root: Element, label: string): Promise<void> {
+  const button = root.querySelectorAll('button').find((element) => element.getAttribute('aria-label') === label);
+  assert.ok(button, `Missing button: ${label}`);
+  assert.equal(button.disabled, false);
+  button.dispatchEvent(new Event('click'));
+  await flush();
+}
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const bundled = await build({
   absWorkingDir: repository,
-  stdin: { contents: "export { default as TangrowPlugin } from './src/main'; export * from './tests/obsidian-mock';", resolveDir: repository, sourcefile: 'assistant-entry.ts', loader: 'ts' },
+  stdin: { contents: "export { default as TangrowPlugin } from './src/main'; export { AiPanel } from './src/ai-panel'; export * from './tests/obsidian-mock';", resolveDir: repository, sourcefile: 'assistant-entry.ts', loader: 'ts' },
   bundle: true, write: false, format: 'cjs', platform: 'node', target: 'node22',
   plugins: [{ name: 'mock-obsidian', setup(builder) {
     builder.onResolve({ filter: /^obsidian$/ }, () => ({ path: path.join(repository, 'tests/obsidian-mock.ts') }));
@@ -77,6 +128,17 @@ test('completing a task only touches an open checkbox that still matches', () =>
   assert.throws(() => completeTaskLine(note, 4));
   assert.throws(() => completeTaskLine(note, 1, 'a different task'));
   assert.throws(() => completeTaskLine(note, 40));
+});
+
+test('completing a task requires the entire indexed label, including CRLF and formatted labels', () => {
+  for (const marker of ['- [ ]', '  * [/]', '1. [ ]']) {
+    const note = `${marker} Call lawyer\r\n${marker} **Send** [draft](Draft.md)  \r\n`;
+    for (const label of ['Call', 'lawyer', '', '[ ] Call lawyer', 'CALL LAWYER']) {
+      assert.throws(() => completeTaskLine(note, 0, label), /changed in its note/);
+    }
+    assert.equal(completeTaskLine(note, 0, 'Call lawyer'), note.replace('[ ]', '[x]').replace('[/]', '[x]'));
+    assert.equal(completeTaskLine(note, 1, '**Send** [draft](Draft.md)  '), note.replace(/(\r\n.*?\[)[ /](\])/, '$1x$2'));
+  }
 });
 
 test('generated checklists become distinct task candidates', () => {
@@ -153,6 +215,18 @@ test('checking a task from the sidebar edits only that line in its note', async 
   assert.equal(plugin.snapshot().tasks.length, 1);
 });
 
+test('a stale sidebar task cannot complete a different task whose label contains the old one', async () => {
+  const { plugin, app } = await loaded();
+  const note = app.vault.seedFile('20-Project/Plan.md', '# Plan\n- [ ] Call\n- [ ] Call lawyer\n');
+  plugin.snapshot();
+  await flush();
+  const stale = plugin.snapshot().tasks.find((task) => task.text === 'Call')!;
+  assert.ok(stale);
+  note.content = '# Plan\n- [ ] Call lawyer\n';
+  await assert.rejects(plugin.completeTask(stale.path, stale.line), /changed in its note/);
+  assert.equal(note.content, '# Plan\n- [ ] Call lawyer\n');
+});
+
 test('nothing is sent until AI is enabled and a key exists', async () => {
   const { plugin, app, calls } = await loaded();
   const request: AiRequest = { action: 'summarize', context: { title: 'Note', text: 'Body' } };
@@ -208,6 +282,72 @@ test('assistant context reads the active note, the draft or a period log without
   await plugin.appendToActiveNote('## Summary\nShort.');
   assert.equal(note.content, '# Idea\n- [ ] Try it\n\n## Summary\nShort.\n');
 });
+
+test('draft context retains the revision of the submitted text', async () => {
+  const { plugin } = await loaded();
+  plugin.updateWritingDraft({ text: 'Original body', title: 'Original title' }, plugin.loadWritingDraft().revision);
+  const original = plugin.loadWritingDraft();
+  const pending = plugin.aiContext('draft');
+  plugin.updateWritingDraft({ text: 'Newer body' }, original.revision);
+  assert.deepEqual(await pending, { title: original.title, text: original.text, draftRevision: original.revision });
+});
+
+for (const action of ['polish', 'continue'] as const) {
+  const label = action === 'polish' ? 'Replace draft' : 'Add to draft';
+  test(`${action}: a reply survives remounts and applies to its unchanged draft only once`, async () => {
+    const { plugin } = await loaded();
+    plugin.settings.language = 'en';
+    await plugin.updateAiSettings({ aiEnabled: true });
+    await plugin.setAiKey('test-key-123');
+    plugin.updateWritingDraft({ text: 'Original body' }, plugin.loadWritingDraft().revision);
+    const panel = new harness.AiPanel(plugin, {});
+    const root = new Element();
+    panel.mount(root);
+    panel.setSource('draft');
+    await panel.run(action);
+    panel.destroy();
+    panel.mount(root);
+    await click(root, label);
+    const applied = plugin.loadWritingDraft();
+    assert.equal(applied.text, action === 'polish' ? 'reply' : 'Original body\n\nreply');
+    await click(root, label);
+    assert.deepEqual(plugin.loadWritingDraft(), applied);
+    assert.match(harness.notices.at(-1)!, /changed in another view/);
+  });
+
+  for (const change of ['edit', 'save', 'revert'] as const) {
+    test(`${action}: ${change} after the request prevents a stale reply from updating the draft`, async () => {
+      const { plugin } = await loaded();
+      plugin.settings.language = 'en';
+      await plugin.updateAiSettings({ aiEnabled: true });
+      await plugin.setAiKey('test-key-123');
+      plugin.updateWritingDraft({ text: 'Original body', title: 'Original title' }, plugin.loadWritingDraft().revision);
+      const original = plugin.loadWritingDraft();
+      let finish!: (text: string) => void;
+      plugin.aiRunner = () => new Promise<string>((resolve) => { finish = resolve; });
+      const panel = new harness.AiPanel(plugin, {});
+      const root = new Element();
+      panel.mount(root);
+      panel.setSource('draft');
+      const pending = panel.run(action);
+      await flush();
+      if (change === 'save') await plugin.submitWritingDraft(original.revision);
+      else {
+        plugin.updateWritingDraft({ text: 'Newer body', title: 'Newer title' }, original.revision);
+        if (change === 'revert') plugin.updateWritingDraft(original, plugin.loadWritingDraft().revision);
+      }
+      const latest = plugin.loadWritingDraft();
+      finish('Rewritten old body');
+      await pending;
+      panel.destroy();
+      panel.setSource('note');
+      panel.mount(root);
+      await click(root, label);
+      assert.deepEqual(plugin.loadWritingDraft(), latest);
+      assert.match(harness.notices.at(-1)!, /changed in another view/);
+    });
+  }
+}
 
 test('the agent guide is created once and an edited copy is left alone', async () => {
   const { plugin, app } = await loaded();

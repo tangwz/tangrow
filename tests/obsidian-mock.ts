@@ -224,6 +224,7 @@ export function createMockApp() {
     emitLayoutReady: (): void => { layoutCallbacks.splice(0).forEach((callback) => callback()); }
   };
   const metadataCache = {
+    getFirstLinkpathDest: (_linkpath: string, _sourcePath: string): TFile | null => null,
     getFileCache: (file: TFile) => {
       const frontmatter = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(file.content)?.[1];
       const listItems = file.content.split(/\r?\n/).flatMap((line, index) => {

@@ -918,7 +918,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     if (source === 'draft') {
       const draft = this.loadWritingDraft();
       if (!draft.text.trim()) throw new Error('The writing draft is empty.');
-      return { title: draft.title || this.t('Writing draft'), text: draft.text };
+      return { title: draft.title || this.t('Writing draft'), text: draft.text, draftRevision: draft.revision };
     }
     if (source === 'today' || source === 'week') return this.activityLog(source);
     const note = this.activeMarkdown();

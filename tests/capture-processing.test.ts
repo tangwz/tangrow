@@ -76,6 +76,55 @@ test('a converted note can use an existing project directory without changing th
   assert.equal(source.path, '00-Inbox/Capture.md');
 });
 
+test('project conversion rebases relative Markdown links and images without changing the source body', async () => {
+  const { app, plugin, source } = setup();
+  const project = app.vault.seedFile('20-Project/Launch/Launch.md', '# Project content stays.\n');
+  source.content += '\r\n![sketch](./assets/sketch.png)\r\n[Plan](./Plan.md#Next "The plan")\r\n[Guide](../40-Resources/Guide.md)\r\n[ref]: <./assets/my sketch.png>\r\n';
+  const original = body(source);
+  await plugin.processCapture(source.path, { action: 'note', title: 'Launch insight', projectPath: project.path });
+  const result = notes(app)[0]!;
+  assert.match(body(result), /!\[sketch\]\(\.\.\/\.\.\/00-Inbox\/assets\/sketch\.png\)/);
+  assert.match(body(result), /\[Plan\]\(\.\.\/\.\.\/00-Inbox\/Plan\.md#Next "The plan"\)/);
+  assert.match(body(result), /\[Guide\]\(\.\.\/\.\.\/40-Resources\/Guide\.md\)/);
+  assert.match(body(result), /\[ref\]: <\.\.\/\.\.\/00-Inbox\/assets\/my sketch\.png>/);
+  assert.equal(body(source), original);
+  assert.equal(project.content, '# Project content stays.\n');
+});
+
+test('a resumed project conversion rebases the current body only once', async () => {
+  const { app, plugin, source } = setup();
+  const project = app.vault.seedFile('20-Project/Launch/Launch.md', '# Launch');
+  source.content += '\n![sketch](./assets/first.png)\n';
+  app.vault.failCreates = 1;
+  await assert.rejects(plugin.processCapture(source.path, { action: 'note', title: 'Retry insight', projectPath: project.path }), /write failure/);
+  source.content += '\n[Later](./Plan.md#Next)\n';
+  const original = body(source);
+  await plugin.processCapture(source.path, { action: 'resume' });
+  const result = notes(app)[0]!;
+  assert.match(body(result), /!\[sketch\]\(\.\.\/\.\.\/00-Inbox\/assets\/first\.png\)/);
+  assert.match(body(result), /\[Later\]\(\.\.\/\.\.\/00-Inbox\/Plan\.md#Next\)/);
+  assert.equal(body(source), original);
+  await plugin.processCapture(source.path, { action: 'resume' });
+  assert.equal(notes(app).length, 1);
+});
+
+test('project conversion respects Obsidian vault-root and shortest-path resolution', async () => {
+  const { app, plugin, source } = setup();
+  const project = app.vault.seedFile('20-Project/Launch/Launch.md', '# Launch');
+  const root = app.vault.seedFile('40-Resources/Guide.md', '# Guide');
+  const near = app.vault.seedFile('00-Inbox/Plan.md', '# Inbox plan');
+  const other = app.vault.seedFile('20-Project/Launch/Plan.md', '# Project plan');
+  app.metadataCache.getFirstLinkpathDest = (linkpath, sourcePath) => linkpath === root.path ? root
+    : linkpath === 'Plan.md' ? sourcePath === source.path ? near : other : null;
+  source.content += '\n[Guide](40-Resources/Guide.md)\n[Plan](Plan.md#Next)\n';
+  const original = body(source);
+  await plugin.processCapture(source.path, { action: 'note', title: 'Linked insight', projectPath: project.path });
+  const result = notes(app)[0]!;
+  assert.match(body(result), /\[Guide\]\(40-Resources\/Guide\.md\)/);
+  assert.match(body(result), /\[Plan\]\(\.\.\/\.\.\/00-Inbox\/Plan\.md#Next\)/);
+  assert.equal(body(source), original);
+});
+
 test('task conversion appends a single checkbox and source link without rewriting existing queries', async () => {
   const { app, plugin, source } = setup();
   const content = '---\ncustom: "keep"\n---\n\n# Existing tasks\n\n```tasks\nnot done\n```\n';

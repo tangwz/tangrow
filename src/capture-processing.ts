@@ -1,6 +1,7 @@
 import { getFrontMatterInfo, parseYaml, stringifyYaml, TFile, TFolder, type App } from 'obsidian';
 import { inFolder, safeFolder, safeTitle } from './model';
 import { hasValidSupportFolder } from './folders';
+import { rebaseMarkdownLinks } from './markdown-links';
 import type { CaptureRequest, Settings } from './types';
 
 interface CaptureJob { id: string; action: 'note' | 'task'; target: string; title: string; project?: string }
@@ -96,7 +97,8 @@ async function createResult(app: App, source: TFile, job: CaptureJob, resume: bo
   }
   const content = await app.vault.read(source);
   const info = getFrontMatterInfo(content);
-  const body = info.exists ? content.slice(info.contentStart) : content;
+  const body = rebaseMarkdownLinks(info.exists ? content.slice(info.contentStart) : content, source.path, job.target,
+    (linkpath, sourcePath) => app.metadataCache.getFirstLinkpathDest(linkpath, sourcePath)?.path ?? null);
   const fields = {
     tangrow_kind: 'note', created: new Date().toISOString(), tangrow_source: sourceLink,
     tangrow_capture_action_id: job.id, ...(job.project ? { tangrow_project: job.project } : {})

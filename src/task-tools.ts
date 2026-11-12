@@ -22,7 +22,7 @@ export function appendTaskLine(content: string, line: string): string {
 export function completeTaskLine(content: string, lineIndex: number, label?: string): string {
   const lines = content.split('\n');
   const line = lines[lineIndex];
-  if (line === undefined || !OPEN_TASK.test(line) || (label !== undefined && !line.includes(label))) {
+  if (line === undefined || !OPEN_TASK.test(line) || (label !== undefined && line.replace(OPEN_TASK, '').replace(/\r$/, '') !== label)) {
     throw new Error('This task changed in its note. Open the note to review it.');
   }
   lines[lineIndex] = line.replace(OPEN_TASK, '$1x$2');

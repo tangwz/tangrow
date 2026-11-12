@@ -8,7 +8,7 @@ export type AiActionId = 'summarize' | 'tasks' | 'title-tags' | 'polish' | 'cont
 export type AiSource = 'note' | 'selection' | 'draft' | 'today' | 'week';
 export type QuickKind = 'capture' | 'note' | 'task' | 'project';
 
-export interface AiContext { title: string; text: string }
+export interface AiContext { title: string; text: string; draftRevision?: number }
 export interface AiRequest { action: AiActionId; context: AiContext; question?: string }
 export interface AiPrompt { system: string; user: string; maxTokens: number; effort: 'low' | 'medium'; schema?: Record<string, unknown> }
 export interface CaptureSuggestion { kind: QuickKind; title: string; due: string | null; project: string | null; reason: string }

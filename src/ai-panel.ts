@@ -23,6 +23,7 @@ export class AiPanel {
   private outputTitle = '';
   private outputAction: AiActionId | null = null;
   private outputSource: AiSource = 'note';
+  private outputDraftRevision?: number;
   private failure = '';
   private running?: AbortController;
   private body?: HTMLElement;
@@ -135,7 +136,7 @@ export class AiPanel {
       this.ui.button(footer, action === 'polish' ? 'Replace draft' : 'Add to draft', () => {
         const draft = this.host.loadWritingDraft();
         const next = action === 'polish' ? text : `${draft.text.trimEnd()}\n\n${text}`;
-        if (!this.host.updateWritingDraft({ text: next }, draft.revision)) throw new Error('The writing draft changed in another view. Review the latest text before saving.');
+        if (this.outputDraftRevision === undefined || !this.host.updateWritingDraft({ text: next }, this.outputDraftRevision)) throw new Error('The writing draft changed in another view. Review the latest text before saving.');
         new Notice(this.ui.t('Writing draft updated.'));
       }, { icon: 'pen-line' });
     }
@@ -151,10 +152,12 @@ export class AiPanel {
     this.failure = '';
     this.outputAction = action;
     this.outputSource = this.source;
+    this.outputDraftRevision = undefined;
     this.outputTitle = '';
     try {
       const context = await this.host.aiContext(this.source);
       this.outputTitle = context.title;
+      this.outputDraftRevision = context.draftRevision;
       this.render();
       const question = action === 'ask' ? this.question : undefined;
       this.output = await this.host.runAi({ action, context, question }, (text) => {
