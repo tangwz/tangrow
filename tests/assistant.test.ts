@@ -18,6 +18,8 @@ interface TestPlugin extends MockPlugin {
   addTask(text: string, options?: { due?: string; target?: 'overview' | 'daily' }): Promise<string>;
   completeTask(path: string, line: number): Promise<void>;
   aiReady(): boolean;
+  hasAiKey(): boolean;
+  aiKeyProtected(): boolean;
   setAiKey(value: string): Promise<void>;
   updateAiSettings(patch: { aiEnabled?: boolean; aiModel?: string }): Promise<void>;
   runAi(request: AiRequest): Promise<string>;
@@ -258,6 +260,52 @@ test('the key prefers host secret storage and is then kept out of plugin data', 
   assert.equal(plugin.settings.aiApiKey, '');
   assert.equal(JSON.stringify(plugin.savedData).includes('test-key-456'), false);
   assert.equal(plugin.aiReady(), true);
+  assert.equal(plugin.aiKeyProtected(), true);
+});
+
+test('adding host secret storage does not mark a persisted plaintext key as protected', async () => {
+  const { plugin, app, calls } = await loaded();
+  await plugin.updateAiSettings({ aiEnabled: true });
+  await plugin.setAiKey('test-legacy-key');
+  assert.equal(plugin.aiKeyProtected(), false);
+  const secrets = new Map<string, string>();
+  (app as unknown as { secretStorage: unknown }).secretStorage = {
+    getSecret: (id: string) => secrets.get(id) ?? null,
+    setSecret: (id: string, value: string) => { secrets.set(id, value); }
+  };
+  assert.equal(plugin.hasAiKey(), true);
+  assert.equal(plugin.aiKeyProtected(), false);
+  await plugin.runAi({ action: 'summarize', context: { title: 'Note', text: 'Body' } });
+  assert.equal(calls.at(-1)!.config.apiKey, 'test-legacy-key');
+  assert.equal((plugin.savedData as { settings: Settings }).settings.aiApiKey, 'test-legacy-key');
+  secrets.set(AI_SECRET_ID, 'test-secret-key');
+  assert.equal(plugin.aiKeyProtected(), false);
+  await plugin.runAi({ action: 'summarize', context: { title: 'Note', text: 'Body' } });
+  assert.equal(calls.at(-1)!.config.apiKey, 'test-secret-key');
+  await plugin.setAiKey('test-replacement-key');
+  assert.equal(plugin.aiKeyProtected(), true);
+  assert.equal(plugin.settings.aiApiKey, '');
+  assert.equal((plugin.savedData as { settings: Settings }).settings.aiApiKey, '');
+});
+
+test('a failed secret read reports an existing plaintext fallback as unprotected', async () => {
+  const { plugin, app, calls } = await loaded();
+  await plugin.updateAiSettings({ aiEnabled: true });
+  await plugin.setAiKey('test-legacy-key');
+  (app as unknown as { secretStorage: unknown }).secretStorage = {
+    getSecret: () => { throw new Error('Secret storage unavailable'); }, setSecret: () => undefined
+  };
+  assert.equal(plugin.hasAiKey(), true);
+  assert.equal(plugin.aiKeyProtected(), false);
+  await plugin.runAi({ action: 'summarize', context: { title: 'Note', text: 'Body' } });
+  assert.equal(calls.at(-1)!.config.apiKey, 'test-legacy-key');
+});
+
+test('an empty key field describes secret storage when it is available for the next key', async () => {
+  const { plugin, app } = await loaded();
+  (app as unknown as { secretStorage: unknown }).secretStorage = { getSecret: () => null, setSecret: () => undefined };
+  assert.equal(plugin.hasAiKey(), false);
+  assert.equal(plugin.aiKeyProtected(), true);
 });
 
 test('suggestions can only point at project notes that exist', async () => {
@@ -290,6 +338,65 @@ test('draft context retains the revision of the submitted text', async () => {
   const pending = plugin.aiContext('draft');
   plugin.updateWritingDraft({ text: 'Newer body' }, original.revision);
   assert.deepEqual(await pending, { title: original.title, text: original.text, draftRevision: original.revision });
+});
+
+for (const changed of [false, true]) {
+  for (const succeeds of [false, true]) {
+    const behavior = changed ? 'preserves the next question across remounts' : succeeds ? 'clears the submitted question' : 'keeps the submitted question for retry';
+    test(`asking ${succeeds ? 'success' : 'failure'} ${behavior}`, async () => {
+      const { plugin, app, calls } = await loaded();
+      plugin.settings.language = 'en';
+      await plugin.updateAiSettings({ aiEnabled: true });
+      await plugin.setAiKey('test-key-123');
+      app.workspace.setActiveFile(app.vault.seedFile('00-Inbox/Idea.md', 'The original context.'));
+      let finish!: () => void;
+      const runner = plugin.aiRunner;
+      plugin.aiRunner = async (config, prompt) => {
+        await new Promise<void>((resolve) => { finish = resolve; });
+        if (!succeeds) throw new Error('Simulated request failure');
+        return runner(config, prompt);
+      };
+      const panel = new harness.AiPanel(plugin, {});
+      const root = new Element();
+      panel.mount(root);
+      let input = root.querySelectorAll('textarea')[0]!;
+      input.value = 'The submitted question?';
+      input.dispatchEvent(new Event('input'));
+      const pending = panel.run('ask');
+      await flush();
+      input = root.querySelectorAll('textarea')[0]!;
+      if (changed) { input.value = 'The next unsent question?'; input.dispatchEvent(new Event('input')); }
+      panel.destroy();
+      panel.mount(root);
+      assert.equal(root.querySelectorAll('textarea')[0]!.value, changed ? 'The next unsent question?' : 'The submitted question?');
+      finish();
+      await pending;
+      assert.equal(root.querySelectorAll('textarea')[0]!.value, changed ? 'The next unsent question?' : succeeds ? '' : 'The submitted question?');
+      if (succeeds) assert.match(calls.at(-1)!.prompt.user, /Question: The submitted question\?$/);
+    });
+  }
+}
+
+test('asking captures the submitted question before awaiting its context', async () => {
+  const { plugin, calls } = await loaded();
+  plugin.settings.language = 'en';
+  await plugin.updateAiSettings({ aiEnabled: true });
+  await plugin.setAiKey('test-key-123');
+  let finish!: (context: AiContext) => void;
+  plugin.aiContext = () => new Promise<AiContext>((resolve) => { finish = resolve; });
+  const panel = new harness.AiPanel(plugin, {});
+  const root = new Element();
+  panel.mount(root);
+  const input = root.querySelectorAll('textarea')[0]!;
+  input.value = 'The submitted question?';
+  input.dispatchEvent(new Event('input'));
+  const pending = panel.run('ask');
+  input.value = 'A newer question while context loads?';
+  input.dispatchEvent(new Event('input'));
+  finish({ title: 'Idea', text: 'The original context.' });
+  await pending;
+  assert.match(calls.at(-1)!.prompt.user, /Question: The submitted question\?$/);
+  assert.equal(root.querySelectorAll('textarea')[0]!.value, 'A newer question while context loads?');
 });
 
 for (const action of ['polish', 'continue'] as const) {

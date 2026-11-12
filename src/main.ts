@@ -867,8 +867,8 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     const storage = (this.app as unknown as { secretStorage?: Partial<SecretAccess> }).secretStorage;
     return typeof storage?.getSecret === 'function' && typeof storage.setSecret === 'function' ? storage as SecretAccess : null;
   }
-  /** True when the key lives in the host's secret storage instead of data.json. */
-  aiKeyProtected(): boolean { return this.secrets() !== null; }
+  /** Secret storage protects the key only when no plaintext fallback remains in data.json. */
+  aiKeyProtected(): boolean { return this.secrets() !== null && !this.settings.aiApiKey; }
   private aiKey(): string {
     try { return this.secrets()?.getSecret(AI_SECRET_ID)?.trim() || this.settings.aiApiKey; }
     catch { return this.settings.aiApiKey; }

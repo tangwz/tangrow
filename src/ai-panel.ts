@@ -146,6 +146,7 @@ export class AiPanel {
 
   private async run(action: AiActionId): Promise<void> {
     if (this.running) return;
+    const question = action === 'ask' ? this.question : undefined;
     const controller = new AbortController();
     this.running = controller;
     this.output = '';
@@ -159,7 +160,6 @@ export class AiPanel {
       this.outputTitle = context.title;
       this.outputDraftRevision = context.draftRevision;
       this.render();
-      const question = action === 'ask' ? this.question : undefined;
       this.output = await this.host.runAi({ action, context, question }, (text) => {
         this.output = text;
         if (this.body?.isConnected) {
@@ -168,7 +168,7 @@ export class AiPanel {
           if (pinned) this.body.scrollTop = this.body.scrollHeight;
         }
       }, controller.signal);
-      if (action === 'ask') this.question = '';
+      if (action === 'ask' && this.question === question) this.question = '';
     } catch (error) {
       // A stopped request keeps whatever text had already arrived.
       if (!controller.signal.aborted || !this.output) this.failure = describeError(this.host.settings.language, error);
