@@ -25,7 +25,8 @@ import { addEditingActivity, createActivityState, normalizeActivityState, summar
 import { ReportSource } from './report-source';
 import { captureWritingNavigation } from './writing-navigation';
 import { aggregateReport } from './report-data';
-import type { ReportPreferences, ReportRange, ReportSnapshot } from './report-contract';
+import { writeReportStatus } from './report-editing';
+import type { ReportPreferences, ReportRange, ReportSnapshot, ReportStatusChange } from './report-contract';
 import { translate, describeError, type TranslationValues } from './i18n';
 import { DEFAULT_SETTINGS, type CaptureRequest, type ComposerState, type Habit, type Locale, type ActionId, type BaseId, type FocusSession, type NoteKind, type NoteSummary, type Settings, type SidebarHost, type Snapshot, type TaskSummary, type WritingDraft, type WritingSaveOrigin } from './types';
 
@@ -861,6 +862,16 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       this.taskLabels.delete(path);
     });
     if (this.alive) this.notify();
+  }
+
+  async updateReportStatus(change: ReportStatusChange): Promise<void> {
+    const paths = change.kind === 'task' ? [change.task.path] : change.kind === 'note' ? [change.source.path]
+      : [...change.sources.map((source) => source.path), `${change.path}/README.md`];
+    try { await this.exclusive(() => writeReportStatus(this.app, this.settings, change)); }
+    finally {
+      for (const path of paths) { this.reportSource.invalidate(path); this.taskLabels.delete(path); }
+      this.notify();
+    }
   }
 
   private secrets(): SecretAccess | null {

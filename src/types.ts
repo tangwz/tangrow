@@ -1,5 +1,5 @@
 import type { App, WorkspaceLeaf } from 'obsidian';
-import type { ReportPreferences, ReportRange, ReportSnapshot } from './report-contract';
+import type { ReportPreferences, ReportRange, ReportSnapshot, ReportStatusChange } from './report-contract';
 import type { JournalPeriod } from './periodic-notes';
 import type { AiContext, AiRequest, AiSource, CaptureSuggestion, QuickKind } from './ai';
 
@@ -107,6 +107,7 @@ export interface SidebarHost {
   snapshot(): Snapshot;
   loadReport(range: ReportRange): Promise<ReportSnapshot>;
   updateReportSettings(patch: Partial<ReportPreferences>): Promise<void>;
+  updateReportStatus(change: ReportStatusChange): Promise<void>;
   subscribe(listener: () => void): () => void;
   action(id: ActionId): Promise<void>;
   openNote(path: string, line?: number): Promise<void>;
