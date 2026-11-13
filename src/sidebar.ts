@@ -1,7 +1,7 @@
 import { ItemView, Notice, setTooltip } from 'obsidian';
 import { describeError } from './i18n';
 import type { WorkspaceLeaf } from 'obsidian';
-import type { AiSource, QuickKind } from './ai';
+import type { QuickKind } from './ai';
 import { QUICK_KINDS } from './quick-add';
 import type { ActionId, BaseId, Locale, NoteSummary, Section, SidebarHost, Snapshot } from './types';
 import { CapturePanel } from './capture-panel';
@@ -104,8 +104,7 @@ export class TangrowSidebar extends ItemView {
   }
 
   /** Opens a workspace from a command or menu item. */
-  showSection(section: Section, source?: AiSource): void {
-    if (source) this.aiPanel.setSource(source);
+  showSection(section: Section): void {
     if (this.isMounted && this.section !== section) this.selectSection(section);
     else this.section = section;
   }
@@ -293,7 +292,7 @@ export class TangrowSidebar extends ItemView {
         this.aiPanel.mount(this.pane);
         let signature = '';
         this.refreshSection = (snapshot) => {
-          const next = JSON.stringify([snapshot.active?.path, this.host.aiReady()]);
+          const next = JSON.stringify([snapshot.active?.path, this.host.aiReady(), this.host.agentStatus(), this.host.agentRun()]);
           if (signature && next !== signature) this.aiPanel.refresh();
           signature = next;
         };
@@ -366,7 +365,7 @@ export class TangrowSidebar extends ItemView {
         this.actionButton(shortcuts, 'report', 'Open report', 'chart-no-axes-combined');
         this.actionButton(shortcuts, 'toggle-pin', state.activePinned ? 'Unpin note' : 'Pin note', 'pin', !this.isMarkdown(state), state.activePinned);
         this.actionButton(shortcuts, 'random-note', 'Rediscover a note', 'shuffle', state.counts.notes === 0);
-        this.ui.button(shortcuts, 'Ask the assistant', () => this.selectSection('ai'), { icon: 'sparkles' });
+        this.ui.button(shortcuts, 'Vault workflows', () => this.selectSection('ai'), { icon: 'sparkles' });
         this.actionButton(shortcuts, 'toggle-theme', 'Toggle light / dark', 'sun-moon');
         break;
       }

@@ -4,9 +4,10 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
-import { AI_INPUT_LIMIT, AI_SECRET_ID, agentGuide, buildPrompt, buildSuggestionPrompt, parseSuggestion, readAiModel, type AiActionId, type AiContext, type AiPrompt, type AiRequest, type AiSource, type CaptureSuggestion } from '../src/ai';
+import { AI_INPUT_LIMIT, AI_SECRET_ID, agentGuide, buildSuggestionPrompt, parseSuggestion, readAiModel, type AiPrompt, type CaptureSuggestion } from '../src/ai';
+import { CLAUDIAN_ID, CLAUDIAN_OPEN_COMMAND, WORKFLOWS, claudianApi, skillFiles, workflowPrompt, type AgentStatus, type SendStatus, type WorkflowId, type WorkflowRun } from '../src/claudian';
 import { readSettings } from '../src/model';
-import { appendTaskLine, completeTaskLine, extractTasks, taskLine } from '../src/task-tools';
+import { appendTaskLine, completeTaskLine, taskLine } from '../src/task-tools';
 import type { Settings, Snapshot, WritingDraft } from '../src/types';
 import type { MockApp, Plugin as MockPlugin, TFile as MockFile, createMockApp as MockAppFactory } from './obsidian-mock';
 
@@ -22,20 +23,22 @@ interface TestPlugin extends MockPlugin {
   aiKeyProtected(): boolean;
   setAiKey(value: string): Promise<void>;
   updateAiSettings(patch: { aiEnabled?: boolean; aiModel?: string }): Promise<void>;
-  runAi(request: AiRequest): Promise<string>;
-  aiContext(source: AiSource): Promise<AiContext>;
+  agentStatus(): AgentStatus;
+  agentRun(): WorkflowRun | null;
+  runWorkflow(id: WorkflowId): Promise<void>;
+  stopWorkflow(): Promise<void>;
+  openAgent(): Promise<void>;
+  installAgentSkills(): Promise<void>;
   loadWritingDraft(): WritingDraft;
   updateWritingDraft(patch: Partial<Pick<WritingDraft, 'text' | 'title'>>, expectedRevision: number): boolean;
   submitWritingDraft(expectedRevision: number): Promise<void>;
   suggestCapture(text: string): Promise<CaptureSuggestion>;
   openAiGuide(): Promise<void>;
-  appendToActiveNote(text: string): Promise<void>;
 }
 interface TestAiPanel {
   mount(container: Element): void;
   destroy(): void;
-  setSource(source: AiSource): void;
-  run(action: AiActionId): Promise<void>;
+  refresh(): void;
 }
 interface Harness {
   TangrowPlugin: new (app: MockApp) => TestPlugin;
@@ -103,7 +106,7 @@ async function loaded(): Promise<{ plugin: TestPlugin; app: MockApp; calls: { co
   globals.window ??= { setTimeout: () => 0, clearTimeout: () => undefined, setInterval: () => 0, clearInterval: () => undefined };
   await plugin.onload();
   const calls: { config: { apiKey: string; model: string }; prompt: AiPrompt }[] = [];
-  plugin.aiRunner = async (config, prompt) => { calls.push({ config, prompt }); return 'reply'; };
+  plugin.aiRunner = async (config, prompt) => { calls.push({ config, prompt }); return '{"kind":"capture","title":"","due":null,"project":null,"reason":""}'; };
   return { plugin, app, calls };
 }
 function content(app: MockApp, file: string): string { return (app.vault.getAbstractFileByPath(file) as MockFile).content; }
@@ -143,20 +146,15 @@ test('completing a task requires the entire indexed label, including CRLF and fo
   }
 });
 
-test('generated checklists become distinct task candidates', () => {
-  assert.deepEqual(extractTasks('Next steps:\n- [ ] Email Ana\n- [x] Email Ana\n* Book the room\n1. Draft agenda\nplain text'), ['Email Ana', 'Book the room', 'Draft agenda']);
-});
-
-test('prompts carry the whole selection and refuse empty or oversized input instead of truncating', () => {
-  const prompt = buildPrompt({ action: 'summarize', context: { title: 'Plan "A"', text: 'Body text.' } }, 'zh-CN', '2026-11-12');
-  assert.match(prompt.user, /<note title="Plan \\"A\\"">\nBody text\.\n<\/note>/);
+test('suggestion prompts carry the whole capture and refuse empty or oversized input instead of truncating', () => {
+  const prompt = buildSuggestionPrompt('Call Ana on Friday', ['20-Project/Book/Book.md'], 'zh-CN', '2026-11-12');
+  assert.match(prompt.user, /<capture>\nCall Ana on Friday\n<\/capture>/);
+  assert.match(prompt.user, /- 20-Project\/Book\/Book\.md/);
   assert.match(prompt.system, /Simplified Chinese/);
   assert.match(prompt.system, /2026-11-12/);
-  assert.equal(prompt.schema, undefined);
-  assert.throws(() => buildPrompt({ action: 'summarize', context: { title: 'x', text: '  ' } }, 'en', '2026-11-12'), /no text to send/);
-  assert.throws(() => buildPrompt({ action: 'polish', context: { title: 'x', text: 'a'.repeat(AI_INPUT_LIMIT + 1) } }, 'en', '2026-11-12'), /too long/);
-  assert.throws(() => buildPrompt({ action: 'ask', context: { title: 'x', text: 'a' } }, 'en', '2026-11-12'), /question/);
-  assert.match(buildPrompt({ action: 'ask', context: { title: 'x', text: 'a' }, question: 'Why?' }, 'en', '2026-11-12').user, /Question: Why\?$/);
+  assert.ok(prompt.schema);
+  assert.throws(() => buildSuggestionPrompt('  ', [], 'en', '2026-11-12'), /Write something/);
+  assert.throws(() => buildSuggestionPrompt('a'.repeat(AI_INPUT_LIMIT + 1), [], 'en', '2026-11-12'), /too long/);
 });
 
 test('capture suggestions are validated before they reach the dialog', () => {
@@ -231,19 +229,18 @@ test('a stale sidebar task cannot complete a different task whose label contains
 
 test('nothing is sent until AI is enabled and a key exists', async () => {
   const { plugin, app, calls } = await loaded();
-  const request: AiRequest = { action: 'summarize', context: { title: 'Note', text: 'Body' } };
   assert.equal(plugin.aiReady(), false);
-  assert.throws(() => plugin.runAi(request), /Turn on AI/);
+  await assert.rejects(plugin.suggestCapture('idea'), /Turn on AI/);
   await plugin.updateAiSettings({ aiEnabled: true });
   assert.equal(plugin.aiReady(), false);
-  assert.throws(() => plugin.runAi(request), /API key/);
   await assert.rejects(plugin.suggestCapture('idea'), /API key/);
   assert.equal(calls.length, 0);
   await plugin.setAiKey('test-key-123');
   assert.equal(plugin.aiReady(), true);
-  assert.equal(await plugin.runAi(request), 'reply');
+  plugin.aiRunner = async (config, prompt) => { calls.push({ config, prompt }); return '{"kind":"task","title":"Try it","due":null,"project":null,"reason":"r"}'; };
+  assert.equal((await plugin.suggestCapture('idea')).kind, 'task');
   assert.deepEqual(calls[0]!.config, { apiKey: 'test-key-123', model: 'claude-opus-5-5' });
-  assert.match(calls[0]!.prompt.user, /Body/);
+  assert.match(calls[0]!.prompt.user, /idea/);
   await assert.rejects(plugin.updateAiSettings({ aiModel: 'not a model' }), /model name/);
   await plugin.setAiKey('');
   assert.equal(plugin.aiReady(), false);
@@ -275,12 +272,12 @@ test('adding host secret storage does not mark a persisted plaintext key as prot
   };
   assert.equal(plugin.hasAiKey(), true);
   assert.equal(plugin.aiKeyProtected(), false);
-  await plugin.runAi({ action: 'summarize', context: { title: 'Note', text: 'Body' } });
+  await plugin.suggestCapture('Body');
   assert.equal(calls.at(-1)!.config.apiKey, 'test-legacy-key');
   assert.equal((plugin.savedData as { settings: Settings }).settings.aiApiKey, 'test-legacy-key');
   secrets.set(AI_SECRET_ID, 'test-secret-key');
   assert.equal(plugin.aiKeyProtected(), false);
-  await plugin.runAi({ action: 'summarize', context: { title: 'Note', text: 'Body' } });
+  await plugin.suggestCapture('Body');
   assert.equal(calls.at(-1)!.config.apiKey, 'test-secret-key');
   await plugin.setAiKey('test-replacement-key');
   assert.equal(plugin.aiKeyProtected(), true);
@@ -297,7 +294,7 @@ test('a failed secret read reports an existing plaintext fallback as unprotected
   };
   assert.equal(plugin.hasAiKey(), true);
   assert.equal(plugin.aiKeyProtected(), false);
-  await plugin.runAi({ action: 'summarize', context: { title: 'Note', text: 'Body' } });
+  await plugin.suggestCapture('Body');
   assert.equal(calls.at(-1)!.config.apiKey, 'test-legacy-key');
 });
 
@@ -317,144 +314,163 @@ test('suggestions can only point at project notes that exist', async () => {
   assert.equal((await plugin.suggestCapture('notes on chapter three')).project, null);
 });
 
-test('assistant context reads the active note, the draft or a period log without writing', async () => {
+interface FakeClaudian {
+  sent: { sessionId: string; text?: string; mode?: string }[];
+  commands: string[];
+  session: string | null;
+  reply: string;
+  status: SendStatus;
+  files: Map<string, string>;
+  folders: Set<string>;
+}
+/** Installs a stand-in for Claudian's documented plugin API, its open command and the vault adapter. */
+function withClaudian(app: MockApp, version: unknown = 1): FakeClaudian {
+  const fake: FakeClaudian = { sent: [], commands: [], session: 'session-1', reply: 'Done.', status: 'started', files: new Map(), folders: new Set() };
+  const host = app as unknown as Record<string, unknown>;
+  host.plugins = { getPlugin: (id: string) => id === CLAUDIAN_ID ? { api: {
+    version,
+    getActiveSessionId: () => fake.session,
+    send: async (sessionId: string, options: { text?: string; mode?: string }) => { fake.sent.push({ sessionId, ...options }); return options.text ? fake.status : 'interrupted'; },
+    read: async () => fake.reply
+  } } : null };
+  host.commands = { executeCommandById: (id: string) => { fake.commands.push(id); return true; } };
+  (app.vault as unknown as Record<string, unknown>).adapter = {
+    exists: async (target: string) => fake.files.has(target) || fake.folders.has(target),
+    mkdir: async (target: string) => { fake.folders.add(target); },
+    write: async (target: string, data: string) => { fake.files.set(target, data); }
+  };
+  return fake;
+}
+function endTurn(app: MockApp, sessionId: string): Promise<void> {
+  (app.workspace as unknown as { trigger(name: string, event: unknown): void }).trigger('claudian:turn-ended', { sessionId });
+  return flush();
+}
+
+test('workflow prompts name files by path, follow the configured folders and state whether they may write', () => {
+  const settings = readSettings({ language: 'en', inboxFolder: 'Inbox', taskOverviewPath: 'Tasks.md', supportFolder: 'Meta' });
+  const context = { today: '2026-11-12', weeklyNote: 'Journal/2026-W46.md', activeNote: 'Projects/Book/Book.md' };
+  const inbox = workflowPrompt('inbox', settings, context);
+  assert.match(inbox, /Today is 2026-11-12/);
+  assert.match(inbox, /Read `Meta\/AGENTS\.md` first/);
+  assert.match(inbox, /pending capture in `Inbox`/);
+  assert.match(inbox, /end of `Tasks\.md`/);
+  assert.match(inbox, /wait for my reply before writing/);
+  assert.match(inbox, /Do not move, rename or delete/);
+  assert.match(workflowPrompt('weekly', settings, context), /`Journal\/2026-W46\.md`/);
+  assert.match(workflowPrompt('tasks', settings, context), /read-only/);
+  assert.match(workflowPrompt('connect', settings, context), /`Projects\/Book\/Book\.md`/);
+  assert.throws(() => workflowPrompt('project-plan', settings, { today: '2026-11-12', weeklyNote: 'w.md' }), /Markdown note/);
+  assert.match(workflowPrompt('inbox', readSettings({}), context), /等我确认/);
+  for (const item of WORKFLOWS) assert.equal(workflowPrompt(item.id, settings, context).includes('undefined'), false);
+});
+
+test('vault skills cover every workflow with valid front matter and no session-specific paths', () => {
+  const files = skillFiles(readSettings({ language: 'en' }));
+  assert.deepEqual(files.map((file) => file.path), WORKFLOWS.map((item) => `.claude/skills/tangrow-${item.id}/SKILL.md`));
+  for (const file of files) {
+    assert.match(file.content, /^---\nname: tangrow-[a-z-]+\ndescription: ".+"\n---\n/);
+    assert.match(file.content, /## Ground rules/);
+    assert.equal(file.content.includes('undefined'), false);
+  }
+  assert.match(files.find((file) => file.path.includes('connect'))!.content, /the note I name/);
+  assert.match(skillFiles(readSettings({}))[0]!.content, /## 步骤/);
+});
+
+test('the bridge reports a missing, incompatible, idle or ready Claudian', async () => {
   const { plugin, app } = await loaded();
-  await assert.rejects(plugin.aiContext('note'), /Markdown note/);
-  await assert.rejects(plugin.aiContext('draft'), /draft is empty/);
-  const note = app.vault.seedFile('00-Inbox/Idea.md', '# Idea\n- [ ] Try it\n');
+  assert.equal(claudianApi(app as never), 'missing');
+  assert.equal(plugin.agentStatus(), 'missing');
+  await assert.rejects(plugin.runWorkflow('tasks'), /Install and enable the Claudian plugin/);
+  withClaudian(app, 2);
+  assert.equal(plugin.agentStatus(), 'incompatible');
+  await assert.rejects(plugin.runWorkflow('tasks'), /not compatible/);
+  const fake = withClaudian(app);
+  assert.equal(plugin.agentStatus(), 'ready');
+  fake.session = null;
+  assert.equal(plugin.agentStatus(), 'idle');
+  await assert.rejects(plugin.runWorkflow('tasks'), /Open a chat in Claudian/);
+  assert.deepEqual(fake.commands, [CLAUDIAN_OPEN_COMMAND]);
+  assert.equal(fake.sent.length, 0);
+});
+
+test('a workflow goes to the focused session once, creates the guide, and shows the reply when its turn ends', async () => {
+  const { plugin, app } = await loaded();
+  const fake = withClaudian(app);
+  await assert.rejects(plugin.runWorkflow('connect'), /Markdown note/);
+  assert.equal(fake.sent.length, 0);
+  const note = app.vault.seedFile('00-Inbox/Idea.md', '# Idea\n');
   app.workspace.setActiveFile(note);
-  assert.deepEqual(await plugin.aiContext('note'), { title: 'Idea', text: '# Idea\n- [ ] Try it\n' });
-  const log = await plugin.aiContext('today');
-  assert.match(log.text, /## Open tasks \(1\)\n- .*\(in \[\[Idea\]\]\)/);
-  assert.match(log.text, /## Notes created \(1\)\n- \[\[Idea\]\] in 00-Inbox/);
-  await plugin.appendToActiveNote('## Summary\nShort.');
-  assert.equal(note.content, '# Idea\n- [ ] Try it\n\n## Summary\nShort.\n');
+  await plugin.runWorkflow('connect');
+  assert.equal(fake.sent.length, 1);
+  assert.equal(fake.sent[0]!.sessionId, 'session-1');
+  assert.match(fake.sent[0]!.text!, /`00-Inbox\/Idea\.md`/);
+  assert.match(content(app, '99-Tangrow/AGENTS.md'), /协作约定/);
+  assert.equal(note.content, '# Idea\n');
+  assert.deepEqual(plugin.agentRun(), { workflow: 'connect', sessionId: 'session-1', state: 'running', reply: '' });
+  await assert.rejects(plugin.runWorkflow('tasks'), /already running/);
+  await endTurn(app, 'another-session');
+  assert.equal(plugin.agentRun()!.state, 'running');
+  fake.reply = '  Linked three notes.  ';
+  await endTurn(app, 'session-1');
+  assert.deepEqual(plugin.agentRun(), { workflow: 'connect', sessionId: 'session-1', state: 'done', reply: 'Linked three notes.' });
+  await plugin.stopWorkflow();
+  assert.equal(plugin.agentRun(), null);
+  assert.equal(fake.sent.length, 1);
 });
 
-test('draft context retains the revision of the submitted text', async () => {
-  const { plugin } = await loaded();
-  plugin.updateWritingDraft({ text: 'Original body', title: 'Original title' }, plugin.loadWritingDraft().revision);
-  const original = plugin.loadWritingDraft();
-  const pending = plugin.aiContext('draft');
-  plugin.updateWritingDraft({ text: 'Newer body' }, original.revision);
-  assert.deepEqual(await pending, { title: original.title, text: original.text, draftRevision: original.revision });
+test('stopping a running workflow interrupts only its own session', async () => {
+  const { plugin, app } = await loaded();
+  const fake = withClaudian(app);
+  await plugin.runWorkflow('tasks');
+  await plugin.stopWorkflow();
+  assert.deepEqual(fake.sent[1], { sessionId: 'session-1', mode: 'interrupt' });
+  assert.equal(plugin.agentRun(), null);
+  await endTurn(app, 'session-1');
+  assert.equal(plugin.agentRun(), null);
 });
 
-for (const changed of [false, true]) {
-  for (const succeeds of [false, true]) {
-    const behavior = changed ? 'preserves the next question across remounts' : succeeds ? 'clears the submitted question' : 'keeps the submitted question for retry';
-    test(`asking ${succeeds ? 'success' : 'failure'} ${behavior}`, async () => {
-      const { plugin, app, calls } = await loaded();
-      plugin.settings.language = 'en';
-      await plugin.updateAiSettings({ aiEnabled: true });
-      await plugin.setAiKey('test-key-123');
-      app.workspace.setActiveFile(app.vault.seedFile('00-Inbox/Idea.md', 'The original context.'));
-      let finish!: () => void;
-      const runner = plugin.aiRunner;
-      plugin.aiRunner = async (config, prompt) => {
-        await new Promise<void>((resolve) => { finish = resolve; });
-        if (!succeeds) throw new Error('Simulated request failure');
-        return runner(config, prompt);
-      };
-      const panel = new harness.AiPanel(plugin, {});
-      const root = new Element();
-      panel.mount(root);
-      let input = root.querySelectorAll('textarea')[0]!;
-      input.value = 'The submitted question?';
-      input.dispatchEvent(new Event('input'));
-      const pending = panel.run('ask');
-      await flush();
-      input = root.querySelectorAll('textarea')[0]!;
-      if (changed) { input.value = 'The next unsent question?'; input.dispatchEvent(new Event('input')); }
-      panel.destroy();
-      panel.mount(root);
-      assert.equal(root.querySelectorAll('textarea')[0]!.value, changed ? 'The next unsent question?' : 'The submitted question?');
-      finish();
-      await pending;
-      assert.equal(root.querySelectorAll('textarea')[0]!.value, changed ? 'The next unsent question?' : succeeds ? '' : 'The submitted question?');
-      if (succeeds) assert.match(calls.at(-1)!.prompt.user, /Question: The submitted question\?$/);
-    });
-  }
-}
+test('installing skills writes each file once and leaves an existing skill unchanged', async () => {
+  const { plugin, app } = await loaded();
+  const fake = withClaudian(app);
+  fake.files.set('.claude/skills/tangrow-inbox/SKILL.md', 'my own version');
+  await plugin.installAgentSkills();
+  assert.equal(fake.files.get('.claude/skills/tangrow-inbox/SKILL.md'), 'my own version');
+  assert.equal(fake.files.size, WORKFLOWS.length);
+  assert.match(fake.files.get('.claude/skills/tangrow-weekly/SKILL.md')!, /name: tangrow-weekly/);
+  assert.ok(fake.folders.has('.claude') && fake.folders.has('.claude/skills/tangrow-weekly'));
+  assert.match(harness.notices.at(-1)!, /5.*1/);
+  assert.equal(app.vault.getFiles().map((file) => file.path).join(), '99-Tangrow/AGENTS.md');
+});
 
-test('asking captures the submitted question before awaiting its context', async () => {
-  const { plugin, calls } = await loaded();
-  plugin.settings.language = 'en';
-  await plugin.updateAiSettings({ aiEnabled: true });
-  await plugin.setAiKey('test-key-123');
-  let finish!: (context: AiContext) => void;
-  plugin.aiContext = () => new Promise<AiContext>((resolve) => { finish = resolve; });
-  const panel = new harness.AiPanel(plugin, {});
+test('the panel offers workflows only when Claudian can take them and reports a run', async () => {
+  const { plugin, app } = await loaded();
+  const globals = globalThis as unknown as { window: { open?: (url: string) => void } };
+  const opened: string[] = [];
+  globals.window.open = (url) => { opened.push(url); };
   const root = new Element();
+  const panel = new harness.AiPanel(plugin, {});
   panel.mount(root);
-  const input = root.querySelectorAll('textarea')[0]!;
-  input.value = 'The submitted question?';
-  input.dispatchEvent(new Event('input'));
-  const pending = panel.run('ask');
-  input.value = 'A newer question while context loads?';
-  input.dispatchEvent(new Event('input'));
-  finish({ title: 'Idea', text: 'The original context.' });
-  await pending;
-  assert.match(calls.at(-1)!.prompt.user, /Question: The submitted question\?$/);
-  assert.equal(root.querySelectorAll('textarea')[0]!.value, 'A newer question while context loads?');
+  const labels = (): string[] => root.querySelectorAll('strong').map((element) => element.textContent);
+  assert.ok(labels().some((label) => /Claudian/.test(label)));
+  assert.equal(root.querySelectorAll('button').some((button) => button.getAttribute('aria-label') === null), false);
+  await click(root, plugin.settings.language === 'zh-CN' ? '在社区插件中查找 Claudian' : 'Find Claudian in Community plugins');
+  assert.deepEqual(opened, [`obsidian://show-plugin?id=${CLAUDIAN_ID}`]);
+  const fake = withClaudian(app);
+  panel.refresh();
+  const workflows = (): Element[] => root.querySelectorAll('button').filter((button) => button.getAttribute('aria-label') === null);
+  assert.equal(workflows().length, WORKFLOWS.length);
+  assert.deepEqual(workflows().map((button) => button.disabled), WORKFLOWS.map((item) => item.needsNote));
+  workflows()[2]!.dispatchEvent(new Event('click'));
+  await flush();
+  await flush();
+  assert.equal(fake.sent.length, 1);
+  panel.refresh();
+  assert.ok(workflows().every((button) => button.disabled));
+  await endTurn(app, 'session-1');
+  panel.refresh();
+  assert.equal(workflows().filter((button) => button.disabled).length, WORKFLOWS.filter((item) => item.needsNote).length);
+  panel.destroy();
 });
-
-for (const action of ['polish', 'continue'] as const) {
-  const label = action === 'polish' ? 'Replace draft' : 'Add to draft';
-  test(`${action}: a reply survives remounts and applies to its unchanged draft only once`, async () => {
-    const { plugin } = await loaded();
-    plugin.settings.language = 'en';
-    await plugin.updateAiSettings({ aiEnabled: true });
-    await plugin.setAiKey('test-key-123');
-    plugin.updateWritingDraft({ text: 'Original body' }, plugin.loadWritingDraft().revision);
-    const panel = new harness.AiPanel(plugin, {});
-    const root = new Element();
-    panel.mount(root);
-    panel.setSource('draft');
-    await panel.run(action);
-    panel.destroy();
-    panel.mount(root);
-    await click(root, label);
-    const applied = plugin.loadWritingDraft();
-    assert.equal(applied.text, action === 'polish' ? 'reply' : 'Original body\n\nreply');
-    await click(root, label);
-    assert.deepEqual(plugin.loadWritingDraft(), applied);
-    assert.match(harness.notices.at(-1)!, /changed in another view/);
-  });
-
-  for (const change of ['edit', 'save', 'revert'] as const) {
-    test(`${action}: ${change} after the request prevents a stale reply from updating the draft`, async () => {
-      const { plugin } = await loaded();
-      plugin.settings.language = 'en';
-      await plugin.updateAiSettings({ aiEnabled: true });
-      await plugin.setAiKey('test-key-123');
-      plugin.updateWritingDraft({ text: 'Original body', title: 'Original title' }, plugin.loadWritingDraft().revision);
-      const original = plugin.loadWritingDraft();
-      let finish!: (text: string) => void;
-      plugin.aiRunner = () => new Promise<string>((resolve) => { finish = resolve; });
-      const panel = new harness.AiPanel(plugin, {});
-      const root = new Element();
-      panel.mount(root);
-      panel.setSource('draft');
-      const pending = panel.run(action);
-      await flush();
-      if (change === 'save') await plugin.submitWritingDraft(original.revision);
-      else {
-        plugin.updateWritingDraft({ text: 'Newer body', title: 'Newer title' }, original.revision);
-        if (change === 'revert') plugin.updateWritingDraft(original, plugin.loadWritingDraft().revision);
-      }
-      const latest = plugin.loadWritingDraft();
-      finish('Rewritten old body');
-      await pending;
-      panel.destroy();
-      panel.setSource('note');
-      panel.mount(root);
-      await click(root, label);
-      assert.deepEqual(plugin.loadWritingDraft(), latest);
-      assert.match(harness.notices.at(-1)!, /changed in another view/);
-    });
-  }
-}
 
 test('the agent guide is created once and an edited copy is left alone', async () => {
   const { plugin, app } = await loaded();

@@ -18,6 +18,7 @@
 - 2026-11-10 按用户选择，自 `0.4.0` 起采用 [GPLv3 或任何后续版本](../LICENSE)，此前本地拟定的专有商业许可草案由 GPL 方案替代。已按 MIT 发布的材料以 `47549973f5f8a5157f7849468223aad942f9ce20` 为公开历史参考，原文保留在 [LICENSE-MIT-LEGACY](../LICENSE-MIT-LEGACY)；本次变更不收回已有 MIT、第三方或其他独立有效授权。项目附加许可见 [NOTICE](../NOTICE)，版本与源码交付说明见 [LICENSING.md](LICENSING.md)。
 
 - 2026-11-12 的界面与 AI 改版中，读取了用户提供的参考压缩包里面向用户的说明文档（库根 README、入门教程和 AI 目录的使用说明），用于了解其功能范围；没有读取其中的插件代码、样式、模板、数据库配置或 AI 技能正文，也没有运行该插件。新的布局、样式、文案、提示词和 `AGENTS.md` 内容均为本项目独立编写。
+- 同日接入 Claudian（`YishenTu/claudian`，MIT）时，读取了它的 README、`docs/plugin-api.md`、`manifest.json`，并在 `src/main.ts` 和 `src/features/agent-skills/AGENTS.md` 中只查看了命令标识和库级技能目录的位置。Tangrow 只在运行时调用它文档化的插件 API、打开视图的命令和回合结束事件，没有复制或打包它的代码、样式或文案。六个工作流的步骤和技能正文为本项目独立编写，没有参考上述压缩包中的 AI 技能。
 
 功能参考、实现过程与事后技术核查应分别记录；本记录不作整个项目从未接触参考实现的永久声明。现有静态结果不能证明独立创作或全部权利状态。对外商业化或采用新的第三方材料时，仍需核对其来源、许可及实际界面表达。
 
@@ -29,7 +30,8 @@
 | [Bases 语法](https://obsidian.md/help/bases/syntax) | 原生视图文件格式 | 独立生成查询配置 |
 | [Bases 函数](https://obsidian.md/help/bases/functions) | 路径、日期与属性筛选 | 使用文档化表达式 |
 | [API 许可证](https://github.com/obsidianmd/obsidian-api/blob/master/LICENSE.md) | 类型定义许可核查 | 保留来源和许可文本 |
-| [Anthropic TypeScript SDK](https://github.com/anthropics/anthropic-sdk-typescript) | 调用 Claude API | 作为依赖打包，保留 Apache-2.0 许可文本 |
+| [Anthropic TypeScript SDK](https://github.com/anthropics/anthropic-sdk-typescript) | 即时建议调用 Claude API | 作为依赖打包，保留 Apache-2.0 许可文本 |
+| [Claudian 插件 API](https://github.com/YishenTu/claudian/blob/main/docs/plugin-api.md) | 把工作流发给用户已安装的 Claudian 并读取回复 | 运行时调用，不打包；接口类型按文档在本项目中重新声明 |
 
 图标通过 Obsidian 内置 `setIcon` 请求，不复制第三方 SVG、字体或图片。运行时依赖只有用于 AI 功能的 Anthropic 官方 SDK 及其被打包的依赖，没有独立素材包。运行时与开发依赖的许可见 [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)。
 

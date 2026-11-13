@@ -819,12 +819,27 @@
 }
 
 /* Assistant */
-.tangrow-ai-sources { margin: 4px 0 12px; }
-.tangrow-ai-actions > .tangrow-ai-wide { grid-column: 1 / -1; justify-content: center; }
-.tangrow-ai-ask { margin-top: 12px; }
-.tangrow-ai-ask .tangrow-textarea { min-height: 54px; resize: none; padding: 10px 12px; }
+.tangrow-workflows { display: grid; gap: 6px; margin: 6px 0 10px; }
+.tangrow-workflow {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; column-gap: 10px;
+  width: 100%; height: auto; padding: 10px 12px; text-align: start; white-space: normal; cursor: pointer;
+  border: 1px solid var(--tangrow-line); border-radius: 10px; background: var(--background-primary); box-shadow: none;
+  transition: border-color 120ms ease, background-color 120ms ease, transform 120ms ease;
+}
+.tangrow-workflow:hover:not(:disabled) { border-color: var(--interactive-accent); background: var(--background-modifier-hover); }
+.tangrow-workflow:active:not(:disabled) { transform: translateY(1px); }
+.tangrow-workflow:disabled { opacity: 0.55; cursor: default; }
+.tangrow-workflow > .tangrow-icon { margin-top: 1px; color: var(--interactive-accent); }
+.tangrow-workflow-copy { display: contents; }
+.tangrow-workflow-copy > strong { grid-column: 2; grid-row: 1; font-size: 12px; font-weight: 600; color: var(--text-normal); }
+.tangrow-workflow-copy > span { grid-column: 2 / -1; grid-row: 2; margin-top: 2px; font-size: 11px; line-height: 1.45; color: var(--text-muted); }
+.tangrow-workflow-tag {
+  grid-column: 3; grid-row: 1; padding: 1px 7px; border-radius: 999px; white-space: nowrap;
+  font-size: 10px; color: var(--text-muted); background: var(--background-modifier-hover);
+}
+@media (prefers-reduced-motion: reduce) { .tangrow-workflow { transition: none; } }
 .tangrow-ai-output {
-  margin-top: 14px;
+  margin: 14px 0 12px;
   border: 1px solid color-mix(in srgb, var(--interactive-accent) 35%, var(--tangrow-line));
   border-radius: var(--tangrow-radius);
   background: linear-gradient(180deg, var(--tangrow-tint), var(--background-primary) 90px);

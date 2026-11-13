@@ -1,7 +1,8 @@
 import type { App, WorkspaceLeaf } from 'obsidian';
 import type { ReportPreferences, ReportRange, ReportSnapshot, ReportStatusChange } from './report-contract';
 import type { JournalPeriod } from './periodic-notes';
-import type { AiContext, AiRequest, AiSource, CaptureSuggestion, QuickKind } from './ai';
+import type { CaptureSuggestion, QuickKind } from './ai';
+import type { AgentStatus, WorkflowId, WorkflowRun } from './claudian';
 
 export type Locale = 'zh-CN' | 'en';
 export type Section = 'tools' | 'capture' | 'pins' | 'studio' | 'focus' | 'habits' | 'ai';
@@ -117,11 +118,13 @@ export interface SidebarHost {
   completeTask(path: string, line: number): Promise<void>;
   openQuickAdd(kind?: QuickKind, text?: string): void;
   aiReady(): boolean;
-  aiContext(source: AiSource): Promise<AiContext>;
-  runAi(request: AiRequest, onText?: (text: string) => void, signal?: AbortSignal): Promise<string>;
   suggestCapture(text: string, signal?: AbortSignal): Promise<CaptureSuggestion>;
-  insertAtCursor(text: string): Promise<void>;
-  appendToActiveNote(text: string): Promise<void>;
+  agentStatus(): AgentStatus;
+  agentRun(): WorkflowRun | null;
+  runWorkflow(id: WorkflowId): Promise<void>;
+  stopWorkflow(): Promise<void>;
+  openAgent(): Promise<void>;
+  installAgentSkills(): Promise<void>;
   createNoteWithBody(title: string, body: string): Promise<void>;
   openAiGuide(): Promise<void>;
   capture(text: string): Promise<void>;

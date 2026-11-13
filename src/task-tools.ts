@@ -28,16 +28,3 @@ export function completeTaskLine(content: string, lineIndex: number, label?: str
   lines[lineIndex] = line.replace(OPEN_TASK, '$1x$2');
   return lines.join('\n');
 }
-
-/** Reads checkbox or bullet lines from generated text so they can be saved as tasks. */
-export function extractTasks(text: string): string[] {
-  const tasks: string[] = [];
-  for (const line of text.split(/\r?\n/)) {
-    const match = /^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX/-]\]\s+)?(.+)$/.exec(line);
-    const value = match?.[1]?.trim();
-    if (!value || value.length > 240 || tasks.includes(value)) continue;
-    tasks.push(value);
-    if (tasks.length === 20) break;
-  }
-  return tasks;
-}

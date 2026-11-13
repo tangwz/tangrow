@@ -1,4 +1,4 @@
-import { FileView, MarkdownView, Menu, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, TFolder, moment, parseYaml, getFrontMatterInfo, stringifyYaml, setTooltip, type WorkspaceLeaf } from 'obsidian';
+import { FileView, MarkdownView, Menu, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, TFolder, moment, parseYaml, getFrontMatterInfo, stringifyYaml, setTooltip, type EventRef, type WorkspaceLeaf } from 'obsidian';
 import { baseDefinitions, setupReadme, managedFileTranslations } from './bases';
 import { focusMinutes, pauseSession, remainingMs, resumeSession, startSession } from './focus';
 import { dayKey, inFolder, readSession, readSettings, recentDays, safeFolder, safeTitle, streak } from './model';
@@ -8,8 +8,8 @@ import { TangrowReport, REPORT_VIEW_TYPE } from './report';
 import { TangrowCapture, CAPTURE_VIEW_TYPE, openCaptureWindow as revealCaptureWindow } from './capture-window';
 import { captureCreated, sortCaptures } from './capture-data';
 import { captureIsProcessed, captureProjectFiles, processCapturedNote } from './capture-processing';
-import { capturePreview } from './capture-preview';
-import { AI_SECRET_ID, agentGuide, buildPrompt, buildSuggestionPrompt, parseSuggestion, readAiModel, type AiContext, type AiRequest, type AiSource, type CaptureSuggestion, type QuickKind } from './ai';
+import { AI_SECRET_ID, agentGuide, buildSuggestionPrompt, parseSuggestion, readAiModel, type CaptureSuggestion, type QuickKind } from './ai';
+import { CLAUDIAN_OPEN_COMMAND, CLAUDIAN_TURN_ENDED, WORKFLOWS, claudianApi, skillFiles, workflowPrompt, type AgentStatus, type ClaudianAPI, type WorkflowId, type WorkflowRun } from './claudian';
 import { runPrompt } from './ai-client';
 import { QuickAddModal } from './quick-add';
 import { appendTaskLine, completeTaskLine, taskLine } from './task-tools';
@@ -100,6 +100,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   private noteImmersionActionView?: MarkdownView;
   /** Replaceable so tests never reach the network. */
   aiRunner: typeof runPrompt = runPrompt;
+  private workflow: WorkflowRun | null = null;
 
   async onload(): Promise<void> {
     const coordinator = this.persistenceCoordinator();
@@ -173,8 +174,10 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       };
       add('Tangrow: add selection as task', 'square-check-big', () => this.openQuickAdd('task', selection));
       add('Tangrow: capture selection', 'inbox', () => this.openQuickAdd('capture', selection));
-      if (this.aiReady()) add('Tangrow: ask the assistant about selection', 'sparkles', () => { void this.openAssistant('selection').catch((error) => new Notice(this.error(error))); });
     }));
+    // Claudian announces every finished turn; only the session a workflow was sent to matters here.
+    this.registerEvent((this.app.workspace as unknown as { on(name: string, callback: (event: { sessionId?: string }) => void): EventRef })
+      .on(CLAUDIAN_TURN_ENDED, (event) => { void this.finishWorkflow(event?.sessionId); }));
     this.registerEvent(this.app.workspace.on('window-open', (_workspaceWindow, win) => this.watchActivityWindow(win)));
     if (typeof window !== 'undefined' && window.document) this.watchActivityWindow(window);
     this.registerEvent(this.app.metadataCache.on('changed', () => { this.reportSource.markLinksDirty(); refresh(); }));
@@ -330,9 +333,9 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   }
 
   async openSidebar(): Promise<void> { await this.app.workspace.ensureSideLeaf(VIEW_TYPE, 'right', { active: false }); }
-  async openAssistant(source?: AiSource): Promise<void> {
+  async openAssistant(): Promise<void> {
     const leaf = await this.app.workspace.ensureSideLeaf(VIEW_TYPE, 'right', { active: true });
-    if (leaf.view instanceof TangrowSidebar) leaf.view.showSection('ai', source);
+    if (leaf.view instanceof TangrowSidebar) leaf.view.showSection('ai');
   }
   openQuickAdd(kind: QuickKind = 'capture', text = ''): void { new QuickAddModal(this, kind, text).open(); }
   openCaptureWindow(): Promise<void> { return revealCaptureWindow(this.app, this); }
@@ -916,83 +919,97 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     if (!apiKey) throw new Error('Add your Anthropic API key in Tangrow settings first.');
     return { apiKey, model: this.settings.aiModel };
   }
-  runAi(request: AiRequest, onText?: (text: string) => void, signal?: AbortSignal): Promise<string> {
-    const config = this.aiConfig();
-    return this.aiRunner(config, buildPrompt(request, this.settings.language, dayKey()), onText, signal);
-  }
   async suggestCapture(text: string, signal?: AbortSignal): Promise<CaptureSuggestion> {
     const config = this.aiConfig();
     const projects = captureProjectFiles(this.app, this.settings).map((file) => file.path);
     return parseSuggestion(await this.aiRunner(config, buildSuggestionPrompt(text, projects, this.settings.language, dayKey()), undefined, signal), projects);
   }
-  async aiContext(source: AiSource): Promise<AiContext> {
-    if (source === 'draft') {
-      const draft = this.loadWritingDraft();
-      if (!draft.text.trim()) throw new Error('The writing draft is empty.');
-      return { title: draft.title || this.t('Writing draft'), text: draft.text, draftRevision: draft.revision };
-    }
-    if (source === 'today' || source === 'week') return this.activityLog(source);
+  agentStatus(): AgentStatus {
+    const api = claudianApi(this.app);
+    if (typeof api === 'string') return api;
+    try { return api.getActiveSessionId() ? 'ready' : 'idle'; }
+    catch { return 'incompatible'; }
+  }
+  agentRun(): WorkflowRun | null { return this.workflow ? { ...this.workflow } : null; }
+  private agentApi(): ClaudianAPI {
+    const api = claudianApi(this.app);
+    if (api === 'missing') throw new Error('Install and enable the Claudian plugin first.');
+    if (typeof api === 'string') throw new Error('This Claudian version is not compatible with Tangrow workflows. Update both plugins.');
+    return api;
+  }
+  /** Reveals Claudian's chat view through its own command. */
+  async openAgent(): Promise<void> {
+    this.agentApi();
+    const commands = (this.app as unknown as { commands?: { executeCommandById?(id: string): boolean } }).commands;
+    if (!commands?.executeCommandById?.(CLAUDIAN_OPEN_COMMAND)) throw new Error('Claudian could not be opened. Open it from the ribbon or the command palette.');
+  }
+  /** Sends one workflow to the focused Claudian session; the agent reads the vault itself. */
+  async runWorkflow(id: WorkflowId): Promise<void> {
+    const item = WORKFLOWS.find((entry) => entry.id === id);
+    if (!item) throw new Error('Unknown workflow.');
+    if (this.workflow?.state === 'running') throw new Error('A workflow is already running in Claudian. Stop it or wait for it to finish.');
+    const api = this.agentApi();
     const note = this.activeMarkdown();
-    if (!note) throw new Error('Open a Markdown note first.');
-    const editor = this.editor()?.editor;
-    if (source === 'selection') {
-      const selection = editor?.getSelection() ?? '';
-      if (!selection.trim()) throw new Error('Select some text in the editor first.');
-      return { title: note.basename, text: selection };
+    if (item.needsNote && !note) throw new Error('Open a Markdown note first.');
+    let sessionId = api.getActiveSessionId();
+    if (!sessionId) {
+      await this.openAgent();
+      sessionId = api.getActiveSessionId();
+      if (!sessionId) throw new Error('Open a chat in Claudian, then run this again.');
     }
-    return { title: note.basename, text: editor ? editor.getValue() : await this.app.vault.cachedRead(note) };
+    await this.ensureAiGuide();
+    const today = dayKey();
+    const weeklyNote = journalPath(this.settings, 'weekly', today, (value, pattern) => dateTime(value).format(pattern));
+    const text = workflowPrompt(id, this.settings, { today, weeklyNote, ...(note ? { activeNote: note.path } : {}) });
+    const status = await api.send(sessionId, { text });
+    if (!this.alive) return;
+    this.workflow = { workflow: id, sessionId, state: 'running', reply: '' };
+    this.notify();
+    new Notice(this.t(status === 'queued' ? 'Queued in Claudian. It starts when the current work finishes.' : 'Sent to Claudian.'));
+    try { await this.openAgent(); } catch { /* The job is already running; the chat can be opened by hand. */ }
   }
-  private async activityLog(source: 'today' | 'week'): Promise<AiContext> {
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    if (source === 'week') start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
-    const since = start.getTime();
-    const firstDay = dayKey(since);
-    const snapshot = this.snapshot();
-    const excludeSupport = hasValidSupportFolder(this.settings);
-    const notes = this.app.vault.getMarkdownFiles().filter((file) => (!excludeSupport || !inFolder(file.path, this.settings.supportFolder)) && !inFolder(file.path, this.settings.archiveFolder));
-    const link = (file: { basename?: string; name?: string }): string => `[[${file.basename ?? file.name}]]`;
-    const lines = [`Period: ${firstDay} to ${dayKey()}`];
-    const captures = snapshot.captures.filter((capture) => capture.created >= since).slice(0, 40);
-    lines.push('', `## Captures saved (${captures.length})`);
-    for (const capture of captures) {
-      let preview = '';
-      try { preview = capturePreview(await this.readCapture(capture.path)); } catch { /* A capture that cannot be read is listed by name only. */ }
-      lines.push(`- [[${capture.name}]]${capture.processed ? ' (processed)' : ''}${preview ? `: ${preview}` : ''}`);
+  private async finishWorkflow(sessionId?: string): Promise<void> {
+    const run = this.workflow;
+    if (!run || run.state !== 'running' || run.sessionId !== sessionId) return;
+    let reply = '';
+    try {
+      const api = claudianApi(this.app);
+      if (typeof api !== 'string') reply = (await api.read(sessionId)).trim();
+    } catch { /* The reply stays readable in Claudian's own chat. */ }
+    if (!this.alive || this.workflow !== run) return;
+    this.workflow = { ...run, state: 'done', reply };
+    this.reportSource.invalidate();
+    this.notify();
+  }
+  /** Stops the running job like Claudian's Stop button, or dismisses a finished one. */
+  async stopWorkflow(): Promise<void> {
+    const run = this.workflow;
+    if (!run) return;
+    this.workflow = null;
+    this.notify();
+    if (run.state !== 'running') return;
+    const api = claudianApi(this.app);
+    if (typeof api !== 'string') await api.send(run.sessionId, { mode: 'interrupt' });
+  }
+  /** Writes the workflows as vault skills. A skill file that already exists is never overwritten. */
+  async installAgentSkills(): Promise<void> {
+    const adapter = this.app.vault.adapter;
+    await this.ensureAiGuide();
+    let created = 0;
+    let kept = 0;
+    for (const file of skillFiles(this.settings)) {
+      if (await adapter.exists(file.path)) { kept++; continue; }
+      const folders = file.path.split('/').slice(0, -1);
+      for (let depth = 1; depth <= folders.length; depth++) {
+        const folder = folders.slice(0, depth).join('/');
+        if (!(await adapter.exists(folder))) await adapter.mkdir(folder);
+      }
+      await adapter.write(file.path, file.content);
+      created++;
     }
-    const capturePaths = new Set(snapshot.captures.map((capture) => capture.path));
-    const created = notes.filter((file) => file.stat.ctime >= since && !capturePaths.has(file.path)).slice(0, 40);
-    lines.push('', `## Notes created (${created.length})`, ...created.map((file) => `- ${link(file)} in ${file.parent?.path ?? '/'}`));
-    const createdPaths = new Set(created.map((file) => file.path));
-    const edited = notes.filter((file) => file.stat.mtime >= since && !createdPaths.has(file.path) && !capturePaths.has(file.path)).sort((left, right) => right.stat.mtime - left.stat.mtime).slice(0, 40);
-    lines.push('', `## Notes edited (${edited.length})`, ...edited.map((file) => `- ${link(file)}`));
-    const tasks = snapshot.tasks.filter((task) => !task.done);
-    lines.push('', `## Open tasks (${tasks.length})`, ...tasks.slice(0, 30).map((task) => `- ${task.text} (in [[${task.path.split('/').pop()?.replace(/\.md$/, '')}]])`));
-    let minutes = 0;
-    let checkIns = 0;
-    for (const file of this.app.vault.getMarkdownFiles()) {
-      const fields = this.app.metadataCache.getFileCache(file)?.frontmatter;
-      if (typeof fields?.tangrow_day !== 'string' || fields.tangrow_day < firstDay) continue;
-      if (fields.tangrow_kind === 'focus' && typeof fields.tangrow_minutes === 'number' && Number.isFinite(fields.tangrow_minutes)) minutes += fields.tangrow_minutes;
-      if (fields.tangrow_kind === 'habit') checkIns++;
-    }
-    lines.push('', `## Focus and habits`, `- ${Math.round(minutes)} focus minutes recorded`, `- ${checkIns} habit check-ins`);
-    return { title: this.t(source === 'today' ? "Today's review" : "This week's review"), text: lines.join('\n') };
+    new Notice(this.t(kept ? 'Installed {created} skills; {kept} already existed and were left unchanged.' : 'Installed {created} skills. Type / in Claudian to use them.', { created, kept }));
   }
-  async insertAtCursor(text: string): Promise<void> {
-    if (!this.activeMarkdown()) throw new Error('Open a Markdown note first.');
-    const editor = this.editor()?.editor;
-    if (!editor) throw new Error('Open a note in the editor first.');
-    editor.replaceSelection(text);
-    new Notice(this.t('Inserted into the note.'));
-  }
-  async appendToActiveNote(text: string): Promise<void> {
-    const note = this.activeMarkdown();
-    if (!note) throw new Error('Open a Markdown note first.');
-    await this.app.vault.process(note, (content) => `${content.trimEnd()}\n\n${text.trim()}\n`);
-    new Notice(this.t('Added to the end of {name}.', { name: note.basename }));
-  }
-  async openAiGuide(): Promise<void> {
+  private async ensureAiGuide(): Promise<string> {
     const path = `${this.settings.supportFolder}/AGENTS.md`;
     await this.exclusive(async () => {
       validateFolderSettings(this.settings);
@@ -1001,8 +1018,9 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       await this.app.vault.create(path, agentGuide(this.settings));
       new Notice(this.t('Agent guide created at {path}.', { path }));
     });
-    await this.openNote(path);
+    return path;
   }
+  async openAiGuide(): Promise<void> { await this.openNote(await this.ensureAiGuide()); }
 
   async capture(text: string, submission?: DraftSubmission): Promise<void> {
     if (!text.trim()) throw new Error('Write something before saving.');
@@ -1395,8 +1413,8 @@ class TangrowSettings extends PluginSettingTab {
       if (!Number.isInteger(minutes) || minutes < 1 || minutes > 240) return;
       this.plugin.settings.focusMinutes = minutes; await this.plugin.saveSettings();
     }));
-    new Setting(this.containerEl).setName(t('AI assistant')).setHeading();
-    this.containerEl.createEl('p', { cls: 'setting-item-description', text: t('Off by default. When on, Tangrow sends the text you choose to the Claude API with your own key, and only when you press an AI action. Everything else stays local.') });
+    new Setting(this.containerEl).setName(t('AI suggestions')).setHeading();
+    this.containerEl.createEl('p', { cls: 'setting-item-description', text: t('Off by default. When on, quick add and capture processing send the text you are sorting to the Claude API with your own key, and only when you press an AI button. Vault workflows run in Claudian and do not use this key.') });
     new Setting(this.containerEl).setName(t('Enable AI features')).addToggle((toggle) => toggle.setValue(this.plugin.settings.aiEnabled).onChange(async (value) => {
       try { await this.plugin.updateAiSettings({ aiEnabled: value }); } catch (error) { new Notice(this.plugin.error(error)); }
     }));
@@ -1413,7 +1431,7 @@ class TangrowSettings extends PluginSettingTab {
     new Setting(this.containerEl).setName(t('Model')).setDesc(t('Claude model ID. The default is claude-opus-5-5; claude-sonnet-5-5 and claude-haiku-5-5 are faster and cheaper.')).addText((input) => input.setValue(aiModel).onChange((value) => { aiModel = value; })).addButton((button) => button.setButtonText(t('Apply')).onClick(async () => {
       try { await this.plugin.updateAiSettings({ aiModel }); new Notice(t('Model saved.')); } catch (error) { new Notice(this.plugin.error(error)); }
     }));
-    new Setting(this.containerEl).setName(t('Agent guide')).setDesc(t('Creates AGENTS.md in the companion folder: a plain description of your folders and Tangrow properties for outside agents. An existing file is opened, not overwritten.')).addButton((button) => button.setButtonText(t('Open agent guide')).onClick(async () => { try { await this.plugin.openAiGuide(); } catch (error) { new Notice(this.plugin.error(error)); } }));
+    new Setting(this.containerEl).setName(t('Agent guide')).setDesc(t('Creates AGENTS.md in the companion folder: a plain description of your folders and Tangrow properties for Claudian and other agents. An existing file is opened, not overwritten.')).addButton((button) => button.setButtonText(t('Open agent guide')).onClick(async () => { try { await this.plugin.openAiGuide(); } catch (error) { new Notice(this.plugin.error(error)); } }));
     new Setting(this.containerEl).setName(t('Set up companion Bases')).setDesc(t('Create missing files only. Existing Bases and notes are never overwritten.')).addButton((button) => button.setButtonText(t('Set up Bases')).onClick(async () => { try { await this.plugin.setup(); } catch (error) { new Notice(this.plugin.error(error)); } }));
   }
 }
