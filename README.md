@@ -27,9 +27,15 @@
 
 Bases 是查询视图，不是另一份笔记存储。笔记、近期修改、项目、领域、资源、Inbox、来源、捕获、收藏、草稿、专注、习惯和任务笔记分别有独立入口。现有没有属性的笔记也能通过路径、文件名和修改时间进入基础视图。正文复选框由侧栏单独索引，未完成计数包含 `[ ]` 与 `[/]`；任务索引排除补充目录与归档目录。Bases 的任务视图只展示任务笔记，不能把每个正文复选框变成数据库行。「打开任务总览」遵循设置的 `taskOverviewPath`，默认打开现有 `10-Life(Meta)/12-Tasks.md`，保留其中的 Tasks 查询，不创建平行任务库。
 
+## 许可与使用
+
+自 `0.4.0` 起，Tangrow 采用 [GPLv3 或任何后续版本](LICENSE)（`GPL-3.0-or-later`）。可以免费用于个人或商业工作，修改和再分发不要求购买授权、席位或设备许可。分发 GPL 覆盖的作品时，须遵守对应源码、声明保留等条件，不能另加禁止复制、再分发或转售的限制；仅供自己使用的修改不要求公开。
+
+此前已实际按 MIT 发布的材料继续保留 MIT 权利，原文见 [LICENSE-MIT-LEGACY](LICENSE-MIT-LEGACY)；其他独立有效授权和第三方许可也不被收回。用户自己的笔记不因使用插件变成 GPL 作品。[NOTICE](NOTICE) 包含 Obsidian 宿主链接和正常生成内容的附加许可，具体版本边界及对应源码交付说明见 [LICENSING.md](docs/LICENSING.md)。
+
 ## 安装
 
-要求 Obsidian 1.10.0 或更新版本，并开启核心插件 Bases。桌面构建需要 Node.js 22 或更新版本，以及 npm；打包脚本还需要系统 `zip`。
+要求 Obsidian 1.10.0 或更新版本，并开启核心插件 Bases。桌面构建需要 Node.js 22 或更新版本，以及 npm；打包和归档回归需要系统 `zip`、`unzip`。
 
 ```sh
 npm ci
@@ -41,7 +47,7 @@ npm run install:vault -- --vault /absolute/path/to/vault
 
 随后在 Obsidian 的 Community plugins 中启用 Tangrow。也可以在安装命令后增加 `--enable`，将插件 ID 追加到现有启用列表；如果应用已经运行，重新加载应用后生效。安装器不修改受限模式，不自动批准其他插件。若安装期间启用列表被 Obsidian 修改，安装器会保留最新列表并停止启用步骤；此时运行文件已经安装，可在应用内启用 Tangrow 或重新运行安装命令。
 
-安装器在 `.obsidian/plugins/tangrow/` 部署 `manifest.json`、`main.js`、`styles.css`、`LICENSE` 和 `THIRD_PARTY_NOTICES.md` 五个文件，不会覆盖 `data.json`。替换已有文件或启用列表前，会将原文件备份到用户主目录的 `.local/state/tangrow/backups`。它不触碰现有 Markdown、目录分类或 `workspace.json`，并拒绝通过插件路径的符号链接写入。交付 ZIP 或已安装的插件目录时，应保留两个许可声明文件。
+安装器在 `.obsidian/plugins/tangrow/` 部署 `manifest.json`、`main.js`、`styles.css`、`LICENSE`、`NOTICE`、`LICENSE-MIT-LEGACY` 和 `THIRD_PARTY_NOTICES.md` 七个文件，不会覆盖 `data.json`。替换已有文件或启用列表前，会将原文件备份到用户主目录的 `.local/state/tangrow/backups`。它不触碰现有 Markdown、目录分类或 `workspace.json`，并拒绝通过插件路径的符号链接写入。交付 ZIP 或已安装的插件目录时，应保留 GPL、项目附加声明、旧 MIT 全文和第三方声明，并按 GPL 提供对应源码。
 
 首次使用时打开命令面板，执行「Tangrow: 打开侧栏」；在设置中核对路径，再执行「Tangrow: 初始化补充数据库」。英文界面的对应命令为 `Tangrow: Open companion` 和 `Tangrow: Set up companion Bases`。首次初始化只新增补充目录和缺失的视图文件；只有全部 13 个数据库及补充说明文件都存在时，初始化状态才显示为就绪。补充目录默认位于笔记库根目录的 `99-Tangrow`，普通新笔记仍进入 `00-Inbox`；新项目默认在 `20-Project` 下创建以标题命名的子目录，并将项目笔记放入其中，也可明确选择已有项目子目录，不在项目根目录平铺笔记。可在插件设置中替换为自己已有的路径，无需重新组织目录。修改目录设置不会改写已有 Bases；如需调整旧视图，请手动修改其筛选条件，或选择新的补充目录后重新初始化。
 
@@ -102,7 +108,9 @@ npm run build
 npm run package
 ```
 
-`npm run package` 生成 `dist/tangrow-0.3.0.zip`，包含运行文件、MIT 许可和第三方声明。`main.js`、依赖与发布包不提交到源码仓库。
+`npm run package` 生成 `dist/tangrow-0.4.0.zip`，包含运行文件、GPL 全文、项目附加声明、旧 MIT 全文和第三方声明。发布时还须提供与运行文件实际对应的完整源码；获取方式见 [LICENSING.md](docs/LICENSING.md)。`main.js`、依赖与发布包不提交到源码仓库。
+
+打包前会核对包版本、GPL 元数据、七文件清单和构建首部；旧版本、旧 MIT 或旧专有许可首部的运行文件会被拒绝，应先重新构建。
 
 安装后的人工验收：
 
@@ -119,6 +127,6 @@ npm run package
 11. 在两个写作视图交错编辑、中文组字及同时归档，确认新稿不会被旧视图或旧保存结果覆盖，归档只创建一篇。
 12. 仅在副本中核对显式迁移：整个辅助目录及其中自定义文件移动至 `99-Tangrow`，链接与生成查询跟随更新、自定义内容不以模板覆盖；目标占用时停止。升级本身不调用迁移。
 13. 对照统计文档核对剪藏、日记、孤岛索引待确认、编辑活跃采样及周期目标；改变笔记统计排除目录时，原文与 Bases 不变。
-14. 核对单张年度图的四种类型与日期明细、原文入口，以及插件目录中的运行文件与两个许可声明；关闭并重新启用插件，确认原笔记、其他插件与工作区不受影响。
+14. 核对单张年度图的四种类型与日期明细、原文入口，以及插件目录中的运行文件、GPL、项目附加声明、旧 MIT 全文与第三方声明；关闭并重新启用插件，确认原笔记、其他插件与工作区不受影响。
 
-报表定义见 [REPORTING.md](docs/REPORTING.md)，功能对照见 [PARITY-AUDIT.md](docs/PARITY-AUDIT.md)，发布前代码、样式、素材与模板复用核查见 [REUSE-AUDIT.md](docs/REUSE-AUDIT.md)，设计边界见 [DESIGN.md](docs/DESIGN.md)，实现来源与许可说明见 [PROVENANCE.md](docs/PROVENANCE.md) 和 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。复用核查只支持其固定基线的静态技术判断，不是独立创作或不侵权证明。项目源码按 [MIT](LICENSE) 许可发布。
+报表定义见 [REPORTING.md](docs/REPORTING.md)，功能对照见 [PARITY-AUDIT.md](docs/PARITY-AUDIT.md)，发布前代码、样式、素材与模板复用核查见 [REUSE-AUDIT.md](docs/REUSE-AUDIT.md)，设计边界见 [DESIGN.md](docs/DESIGN.md)，实现来源见 [PROVENANCE.md](docs/PROVENANCE.md)。复用核查只支持其固定基线的静态技术判断，不是独立创作或不侵权证明。当前 GPL、附加许可、历史 MIT 与第三方权利的边界见 [LICENSING.md](docs/LICENSING.md)。

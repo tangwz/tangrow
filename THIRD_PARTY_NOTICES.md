@@ -2,7 +2,7 @@
 
 Tangrow 的运行包只包含独立实现及对 Obsidian 宿主 API 的调用。`obsidian` 在构建中标记为 external，不随运行包分发；图标通过宿主 `setIcon` 获取，没有复制或打包 SVG。Obsidian 应用本体、名称和内置资源仍归各自权利人所有，本项目不表示获得官方背书。
 
-以下为当前直接开发依赖的许可证记录；精确版本由 `package-lock.json` 固定。开发依赖的许可证继续适用于其自身，不因 Tangrow 的 MIT 许可而改变。
+以下为当前直接开发依赖的许可证记录；精确版本由 `package-lock.json` 固定。Tangrow 自 `0.4.0` 起采用 [GPLv3 或任何后续版本](LICENSE)，组件各自的原许可与版权声明仍须保留；项目级许可不撤销已独立授予的权利。此前实际按 MIT 发布的 Tangrow 材料保留原有权利，全文见 [LICENSE-MIT-LEGACY](LICENSE-MIT-LEGACY)，历史边界及附加许可见 [NOTICE](NOTICE)。
 
 | 依赖 | 当前安装版本 | 许可 | 来源 |
 | --- | --- | --- | --- |
