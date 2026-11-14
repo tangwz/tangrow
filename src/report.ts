@@ -3,13 +3,14 @@ import { baseDefinitions } from './bases';
 import { renderActivityHeatmaps, type ActivityViewState } from './activity-view';
 import { describeError, translate, type TranslationValues } from './i18n';
 import { inFolder, safeFolder } from './model';
-import type { CompletionSummary, ReportData, ReportEntity, ReportPage, ReportRange, ReportSnapshot, ReportStatus, ReportTask } from './report-contract';
-import { reportJournalDay, reportRecordStatus, sampleReportNotes } from './report-metrics';
+import type { CompletionSummary, EditableReportStatus, ReportData, ReportEntity, ReportPage, ReportRange, ReportRecord, ReportSnapshot, ReportStatus, ReportStatusChange, ReportTask, ReportTaskStatus } from './report-contract';
+import { canonicalEntityNotes, hasReportStatus, reportJournalDay, reportRecordStatus, reportStatusSource, sampleReportNotes } from './report-metrics';
 import type { SidebarHost } from './types';
 
 export const REPORT_VIEW_TYPE = 'tangrow-report';
 const PAGE_SIZE = 20;
-const RANGES: ReportRange[] = [1, 7, 30, 60, 90, 180, 365];
+const RANGES: ReportRange[] = [7, 30, 60, 90, 180, 365];
+const TIME_RANGES: ReportRange[] = [1, ...RANGES];
 const PAGES: Array<{ id: ReportPage; label: string; icon: string }> = [
   { id: 'overview', label: 'Overview', icon: 'layout-dashboard' },
   { id: 'actions', label: 'Actions', icon: 'list-checks' },
@@ -27,6 +28,8 @@ const SERIES = [
 ] as const;
 type SeriesKey = typeof SERIES[number]['key'];
 type FilterStatus = ReportStatus | 'cancelled' | 'all';
+const RECORD_STATUSES = [['open', 'Open'], ['done', 'Done'], ['archived', 'Archived']] as const;
+const TASK_STATUSES = [[' ', 'Open'], ['/', 'In progress'], ['x', 'Done'], ['-', 'Cancelled']] as const;
 
 export class TangrowReport extends ItemView {
   private readonly instanceId = `tangrow-report-${crypto.randomUUID()}`;
@@ -38,7 +41,9 @@ export class TangrowReport extends ItemView {
   private loading = false;
   private snapshot?: ReportSnapshot;
   private page: ReportPage = 'overview';
-  private range: ReportRange = 30;
+  private overviewRange: ReportRange = 30;
+  private timeRange: ReportRange = 30;
+  private snapshotRange?: ReportRange;
   private query = '';
   private statusFilter: FilterStatus = 'all';
   private noteRole = 'all';
@@ -48,6 +53,7 @@ export class TangrowReport extends ItemView {
   private walkIndex = 0;
   private exclusionsDraft?: string;
   private goalDraft?: string;
+  private readonly pendingStatuses = new Set<string>();
   private readonly activityState: ActivityViewState = { year: new Date().getFullYear(), focusedDays: {}, scrollPositions: {} };
 
   constructor(leaf: WorkspaceLeaf, private readonly host: SidebarHost) { super(leaf); }
@@ -76,6 +82,7 @@ export class TangrowReport extends ItemView {
   private t(source: string, values?: TranslationValues): string { return translate(this.host.settings.language, source, values); }
   private number(value: number, decimals = 2): string { return value.toLocaleString(this.host.settings.language, { maximumFractionDigits: decimals }); }
   private date(value: number | null): string { return value !== null && Number.isFinite(value) ? new Date(value).toLocaleDateString(this.host.settings.language) : this.t('Unknown'); }
+  private get range(): ReportRange { return this.page === 'time' ? this.timeRange : this.overviewRange; }
   private scheduleRefresh(): void {
     window.clearTimeout(this.refreshTimer);
     this.refreshTimer = window.setTimeout(() => { void this.refresh(); }, 180);
@@ -84,11 +91,14 @@ export class TangrowReport extends ItemView {
   private async refresh(): Promise<void> {
     const revision = ++this.epoch;
     this.loading = true;
+    const range = this.range;
     if (!this.snapshot) this.contentEl.setText(this.t('Loading your local report...'));
+    else this.render();
     try {
-      const snapshot = await this.host.loadReport(this.range);
+      const snapshot = await this.host.loadReport(range);
       if (!this.mounted || revision !== this.epoch) return;
       this.snapshot = snapshot;
+      this.snapshotRange = range;
       const paths = new Set(snapshot.data.notes.map((note) => note.path));
       this.walkPaths = this.walkPaths.filter((path) => paths.has(path));
       this.walkIndex = Math.max(0, Math.min(this.walkIndex, this.walkPaths.length - 1));
@@ -171,7 +181,12 @@ export class TangrowReport extends ItemView {
     this.renderHeader(shell);
     const body = shell.createDiv({ cls: 'tangrow-report-page', attr: { role: 'tabpanel', id: `${this.instanceId}-pane`, 'aria-labelledby': `${this.instanceId}-${this.page}` } });
     const { data } = this.snapshot;
-    switch (this.page) {
+    if ((this.page === 'overview' || this.page === 'time') && this.snapshotRange !== this.range) {
+      const panel = this.page === 'overview' ? body.createEl('section', { cls: 'tangrow-report-panel' }) : body;
+      this.renderRangeHeading(panel);
+      this.caption(panel, 'Loading your local report...');
+      if (!this.loading) this.control(panel, 'Retry report', 'refresh-cw', () => this.refresh());
+    } else switch (this.page) {
       case 'overview': this.renderOverview(body, data); break;
       case 'actions': this.renderActions(body, data); break;
       case 'tasks': this.renderTasks(body, data); break;
@@ -206,7 +221,7 @@ export class TangrowReport extends ItemView {
     const intro = header.createDiv();
     intro.createSpan({ cls: 'tangrow-report-eyebrow', text: this.t('LOCAL REPORT') });
     intro.createEl('h1', { text: this.t('Vault overview') });
-    this.caption(intro, 'A read-only view of the notes already in your folders.');
+    this.caption(intro, 'Browse your notes and update statuses in their source files.');
     const toolbar = header.createDiv({ cls: 'tangrow-report-toolbar' });
     const refresh = this.control(toolbar, this.loading ? 'Updating report...' : 'Refresh report', 'refresh-cw', () => this.refresh());
     refresh.disabled = this.loading;
@@ -231,10 +246,23 @@ export class TangrowReport extends ItemView {
         if (target) { this.selectPage(target.id); this.contentEl.querySelector<HTMLElement>(`[data-page="${target.id}"]`)?.focus(); }
       });
     }
+  }
+
+  private renderRangeHeading(parent: HTMLElement): void {
+    const heading = parent.createDiv({ cls: 'tangrow-report-panel-heading' });
+    heading.createEl('h2', { text: this.t(this.page === 'time' ? 'Editing activity' : 'Creation trends') });
+    this.renderRanges(heading);
+  }
+
+  private renderRanges(parent: HTMLElement): void {
     const ranges = parent.createDiv({ cls: 'tangrow-report-range', attr: { role: 'group', 'aria-label': this.t('Report date range') } });
-    for (const range of RANGES) {
+    for (const range of this.page === 'time' ? TIME_RANGES : RANGES) {
       const label = range === 1 ? this.t('Today') : this.t('Last {count} days', { count: range });
-      const button = this.control(ranges, label, '', async () => { this.range = range; await this.refresh(); }, undefined, true);
+      const button = this.control(ranges, label, '', async () => {
+        if (this.page === 'time') this.timeRange = range;
+        else this.overviewRange = range;
+        await this.refresh();
+      }, undefined, true);
       button.addClass('tangrow-report-range-button');
       button.toggleClass('is-active', this.range === range);
       button.setAttribute('aria-pressed', String(this.range === range));
@@ -244,13 +272,21 @@ export class TangrowReport extends ItemView {
   }
 
   private selectPage(page: ReportPage): void {
+    const previousRange = this.range;
     this.page = page;
+    const refreshInterrupted = previousRange !== this.range && this.loading;
+    if (previousRange !== this.range) {
+      this.epoch++;
+      this.loading = false;
+    }
     this.query = '';
     this.statusFilter = 'all';
     this.noteRole = 'all';
     this.listPage = 0;
     this.render();
     this.contentEl.querySelector<HTMLElement>(`[data-page="${page}"]`)?.focus({ preventScroll: true });
+    this.contentEl.querySelector<HTMLElement>(`[data-page="${page}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    if (refreshInterrupted || this.snapshotRange !== this.range) void this.refresh();
   }
 
   private renderOverview(parent: HTMLElement, data: ReportData): void {
@@ -303,7 +339,9 @@ export class TangrowReport extends ItemView {
   }
 
   private renderTrends(parent: HTMLElement, data: ReportData): void {
-    const panel = this.panel(parent, 'Creation trends', 'Current records grouped by creation day, not historical inventory snapshots.');
+    const panel = parent.createEl('section', { cls: 'tangrow-report-panel' });
+    this.renderRangeHeading(panel);
+    this.caption(panel, 'Current records grouped by creation day, not historical inventory snapshots.');
     const legend = panel.createDiv({ cls: 'tangrow-report-legend' });
     for (const series of SERIES) {
       const count = data.trends.reduce((sum, day) => sum + day[series.key], 0);
@@ -391,9 +429,11 @@ export class TangrowReport extends ItemView {
   }
   private randomOrphan(parent: HTMLElement, data: ReportData): void {
     const control = this.control(parent, 'Open a random orphan', 'shuffle', async () => {
-      const latest = await this.host.loadReport(this.range);
-      if (!this.mounted) return;
+      const range = this.range;
+      const latest = await this.host.loadReport(range);
+      if (!this.mounted || range !== this.range) return;
       this.snapshot = latest;
+      this.snapshotRange = range;
       if (!latest.quality.linksReady) { this.render(); return; }
       const note = sampleReportNotes(latest.data.orphanNotes, 1)[0];
       if (note) await this.host.openNote(note.path);
@@ -460,8 +500,46 @@ export class TangrowReport extends ItemView {
     if (!records.length) this.caption(parent, 'No matching records');
     return records.slice(this.listPage * PAGE_SIZE, (this.listPage + 1) * PAGE_SIZE);
   }
-  private status(parent: HTMLElement, status: FilterStatus): void {
-    parent.createSpan({ cls: 'tangrow-report-status', text: this.t(({ open: 'Open', done: 'Done', archived: 'Archived', cancelled: 'Cancelled', unknown: 'Unknown', all: 'All statuses' })[status]), attr: { 'data-status': status } });
+  private statusEditor(parent: HTMLElement, key: string, name: string, current: string, options: readonly (readonly [string, string])[], change: (status: string) => ReportStatusChange, hint: string): void {
+    const select = parent.createEl('select', { cls: 'tangrow-report-status tangrow-report-status-editor', attr: { 'aria-label': this.t('Change status for {name}', { name }) } });
+    select.dataset.reportFocus = `status-${key}`;
+    select.dataset.status = current === ' ' || current === '/' ? 'open' : current === 'x' ? 'done' : current === '-' ? 'cancelled' : current;
+    if (!options.some(([value]) => value === current)) select.createEl('option', { value: current, text: this.t('Unknown') }).disabled = true;
+    for (const [value, text] of options) select.createEl('option', { value, text: this.t(text) });
+    select.value = current;
+    select.disabled = this.pendingStatuses.has(key);
+    setTooltip(select, hint);
+    select.addEventListener('change', () => {
+      if (this.pendingStatuses.has(key) || select.value === current) return;
+      const next = select.value;
+      this.pendingStatuses.add(key);
+      select.disabled = true;
+      select.setAttribute('aria-busy', 'true');
+      void Promise.resolve().then(() => this.host.updateReportStatus(change(next))).catch((error: unknown) => {
+        new Notice(describeError(this.host.settings.language, error));
+      }).finally(async () => {
+        this.pendingStatuses.delete(key);
+        if (this.mounted) await this.refresh();
+      });
+    });
+  }
+
+  private noteStatus(parent: HTMLElement, note: ReportRecord): void {
+    this.statusEditor(parent, `note-${note.path}`, note.name, reportRecordStatus(note), RECORD_STATUSES,
+      (status) => ({ kind: 'note', source: reportStatusSource(note), status: status as EditableReportStatus }),
+      this.t('Save status to {path}.', { path: note.path }));
+  }
+
+  private entityStatus(parent: HTMLElement, entity: ReportEntity, collection: 'projects' | 'areas'): void {
+    const rootNote = this.snapshot!.data.notes.find((note) => note.path === entity.path);
+    if (rootNote) { this.noteStatus(parent, rootNote); return; }
+    const sources = canonicalEntityNotes(this.snapshot!.data.notes, entity.path);
+    const targets = sources.filter((source, index) => index === 0 || hasReportStatus(source));
+    const hint = targets.length > 1 ? this.t('Save status to {count} canonical notes in {path}.', { count: targets.length, path: entity.path })
+      : targets.length ? this.t('Save status to {path}.', { path: targets[0]!.path })
+      : this.t('A README note will be created in {path} to save this status.', { path: entity.path });
+    this.statusEditor(parent, `entity-${entity.path}`, entity.name, entity.status, RECORD_STATUSES,
+      (status) => ({ kind: 'entity', collection, path: entity.path, sources: sources.map(reportStatusSource), status: status as EditableReportStatus }), hint);
   }
   private taskStatus(task: ReportTask): FilterStatus { return task.status === ' ' || task.status === '/' ? 'open' : task.status.toLowerCase() === 'x' ? 'done' : task.status === '-' ? 'cancelled' : 'unknown'; }
 
@@ -476,7 +554,8 @@ export class TangrowReport extends ItemView {
     for (const task of visible) {
       const row = body.createEl('tr');
       this.control(row.createEl('td'), task.text || task.name, 'arrow-up-right', () => this.host.openNote(task.path, task.line), undefined, true).dataset.reportFocus = `task-${task.path}-${task.line}`;
-      this.status(row.createEl('td'), this.taskStatus(task));
+      this.statusEditor(row.createEl('td'), `task-${task.path}-${task.line}`, task.text || task.name, task.status === 'X' ? 'x' : task.status, TASK_STATUSES,
+        (status) => ({ kind: 'task', task, status: status as ReportTaskStatus }), this.t('Update the checkbox in {path}, line {line}.', { path: task.path, line: task.line + 1 }));
       const source = row.createEl('td', { text: task.path });
       this.caption(source, 'Source note · line {line}', { line: task.line + 1 });
     }
@@ -495,7 +574,7 @@ export class TangrowReport extends ItemView {
       button.dataset.reportFocus = `entity-${entity.path}`;
       button.disabled = !entity.notePath;
       if (!entity.notePath) setTooltip(button, this.t('No canonical note available'));
-      this.status(row.createEl('td'), entity.status);
+      this.entityStatus(row.createEl('td'), entity, kind);
       row.createEl('td', { text: this.number(entity.noteCount) });
       row.createEl('td', { text: this.date(entity.created) });
       row.createEl('td', { text: entity.path });
@@ -513,16 +592,17 @@ export class TangrowReport extends ItemView {
     const panel = this.panel(parent, 'Notes', 'Support records and configured report exclusions are omitted.');
     this.caption(panel, '{count} words', { count: this.number(data.counts.words) });
     this.caption(panel, '{count} characters excluding whitespace', { count: this.number(data.counts.characters) });
-    this.filters(panel, false, true);
+    this.filters(panel, true, true);
     if (this.noteRole === 'orphans' && !this.snapshot!.quality.linksReady) {
       this.caption(panel, 'Link indexing is still in progress; orphan results may change.');
     } else {
       const orphans = new Set(data.orphanNotes.map((note) => note.path));
-      const records = data.notes.filter((note) => this.matches(note.name, note.path) && (this.noteRole === 'all' || this.noteRole === 'pins' && note.frontmatter?.tangrow_pin === true || this.noteRole === 'orphans' && orphans.has(note.path) || this.noteRole === 'journals' && reportJournalDay(note, this.host.settings) !== null || this.noteRole === 'captures' && note.frontmatter?.tangrow_kind === 'capture'));
-      const body = this.table(panel, ['Name', 'Words', 'Characters', 'Created', 'Modified', 'Location'], 'Notes');
+      const records = data.notes.filter((note) => (this.statusFilter === 'all' || reportRecordStatus(note) === this.statusFilter) && this.matches(note.name, note.path) && (this.noteRole === 'all' || this.noteRole === 'pins' && note.frontmatter?.tangrow_pin === true || this.noteRole === 'orphans' && orphans.has(note.path) || this.noteRole === 'journals' && reportJournalDay(note, this.host.settings) !== null || this.noteRole === 'captures' && note.frontmatter?.tangrow_kind === 'capture'));
+      const body = this.table(panel, ['Name', 'Status', 'Words', 'Characters', 'Created', 'Modified', 'Location'], 'Notes');
       for (const note of this.paginate(panel, records)) {
         const row = body.createEl('tr');
         this.control(row.createEl('td'), note.name, 'file-text', () => this.host.openNote(note.path), undefined, true).dataset.reportFocus = `note-${note.path}`;
+        this.noteStatus(row.createEl('td'), note);
         row.createEl('td', { text: note.wordCount === undefined ? this.t('Unknown') : this.number(note.wordCount) });
         row.createEl('td', { text: note.characterCount === undefined ? this.t('Unknown') : this.number(note.characterCount) });
         row.createEl('td', { text: this.date(note.created) });
@@ -543,13 +623,14 @@ export class TangrowReport extends ItemView {
     for (const note of this.paginate(panel, records)) {
       const row = body.createEl('tr');
       this.control(row.createEl('td'), note.name, 'bookmark', () => this.host.openNote(note.path), undefined, true).dataset.reportFocus = `clip-${note.path}`;
-      this.status(row.createEl('td'), reportRecordStatus(note));
+      this.noteStatus(row.createEl('td'), note);
       row.createEl('td', { text: String(note.frontmatter?.source ?? '') });
       row.createEl('td', { text: this.date(note.created) });
     }
   }
 
   private renderTime(parent: HTMLElement): void {
+    this.renderRangeHeading(parent);
     const { activity, data } = this.snapshot!;
     const metrics = parent.createDiv({ cls: 'tangrow-report-metrics' });
     this.renderActivityMetric(metrics);

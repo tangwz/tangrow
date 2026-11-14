@@ -109,5 +109,6 @@
   "The new companion folder must not contain or be inside the current companion folder.": "新辅助目录不得包含当前辅助目录，也不能位于当前辅助目录内部。",
   "The new companion folder already exists. No files were moved.": "新辅助目录已存在，未移动任何文件。",
   "The current companion path is not a folder.": "当前辅助路径不是文件夹。",
-  "The companion folder migration failed and could not be fully rolled back. Check the folder paths before retrying.": "辅助目录迁移失败，且未能完全恢复。请核对目录位置后再重试。"
+  "The companion folder migration failed and could not be fully rolled back. Check the folder paths before retrying.": "辅助目录迁移失败，且未能完全恢复。请核对目录位置后再重试。",
+  "Saved submission state is invalid.": "\u4fdd\u5b58\u7684\u63d0\u4ea4\u72b6\u6001\u65e0\u6548\uff0c\u8bf7\u5148\u6062\u590d\u63d2\u4ef6\u6570\u636e\u3002"
 }

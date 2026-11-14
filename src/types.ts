@@ -1,8 +1,11 @@
 import type { App, WorkspaceLeaf } from 'obsidian';
-import type { ReportPreferences, ReportRange, ReportSnapshot } from './report-contract';
+import type { ReportPreferences, ReportRange, ReportSnapshot, ReportStatusChange } from './report-contract';
+import type { JournalPeriod } from './periodic-notes';
+import type { CaptureSuggestion, QuickKind } from './ai';
+import type { AgentStatus, WorkflowId, WorkflowRun } from './claudian';
 
 export type Locale = 'zh-CN' | 'en';
-export type Section = 'tools' | 'capture' | 'pins' | 'studio' | 'focus' | 'habits';
+export type Section = 'tools' | 'capture' | 'pins' | 'studio' | 'focus' | 'habits' | 'ai';
 export type NoteKind = 'note' | 'project' | 'draft';
 export type ActionId = 'copy-link' | 'copy-path' | 'file-location' | 'fold' | 'unfold' | 'page-width' | 'all-width' | 'refresh' | 'cover' | 'timestamp' | 'toggle-pin' | 'settings' | 'appearance' | 'file-list' | 'stack-tabs' | 'hide-panel' | 'random-note' | 'daily-note' | 'report' | 'title-date' | 'toggle-theme' | 'task-overview';
 export type BaseId = 'notes' | 'recent' | 'projects' | 'areas' | 'resources' | 'inbox' | 'sources' | 'captures' | 'pins' | 'drafts' | 'focus' | 'habits' | 'tasks';
@@ -18,11 +21,17 @@ export interface Settings extends ReportPreferences {
   archiveFolder: string;
   journalFolder: string;
   journalFormat: string;
+  journalFormats: Record<Exclude<JournalPeriod, 'daily'>, string>;
+  journalTemplates: Record<JournalPeriod, string>;
   taskOverviewPath: string;
   focusMinutes: number;
   autoOpen: boolean;
   wideByDefault: boolean;
   habits: Habit[];
+  aiEnabled: boolean;
+  aiModel: string;
+  /** Used only when the host has no secret storage. */
+  aiApiKey: string;
 }
 export const DEFAULT_SETTINGS: Settings = {
   language: 'zh-CN',
@@ -34,11 +43,19 @@ export const DEFAULT_SETTINGS: Settings = {
   archiveFolder: '90-Archive',
   journalFolder: '10-Life(Meta)/13-Journal',
   journalFormat: 'YYYY/[Daily]/YYYY-MM-DD',
+  journalFormats: {
+    weekly: 'GGGG/[Weekly]/GGGG-[W]WW', monthly: 'YYYY/[Monthly]/YYYY-MM',
+    quarterly: 'YYYY/[Quarterly]/YYYY-[Q]Q', yearly: 'YYYY/[Yearly]/YYYY'
+  },
+  journalTemplates: { daily: '', weekly: '', monthly: '', quarterly: '', yearly: '' },
   taskOverviewPath: '10-Life(Meta)/12-Tasks.md',
   focusMinutes: 25,
   autoOpen: true,
   wideByDefault: false,
   habits: [],
+  aiEnabled: false,
+  aiModel: 'claude-opus-5-5',
+  aiApiKey: '',
   reportExcludedFolders: [],
   trackEditingActivity: true,
   activityGoalMinutes: 60
@@ -50,7 +67,14 @@ export interface WritingSaveOrigin {
   editor: HTMLTextAreaElement;
 }
 export interface NoteSummary { path: string; name: string; folder: string; modified: number; kind?: string; status?: string }
-export interface CaptureSummary extends NoteSummary { created: number }
+export interface CaptureSummary extends NoteSummary { created: number; processed?: boolean; processing?: boolean }
+export type CaptureRequest =
+  | { action: 'note'; title: string; projectPath?: string }
+  | { action: 'task'; title: string }
+  | { action: 'project'; projectPath: string }
+  | { action: 'done' }
+  | { action: 'pending' }
+  | { action: 'resume' };
 export interface TaskSummary { path: string; line: number; text: string; done: boolean }
 export interface FocusSession {
   id: string;
@@ -84,15 +108,32 @@ export interface SidebarHost {
   snapshot(): Snapshot;
   loadReport(range: ReportRange): Promise<ReportSnapshot>;
   updateReportSettings(patch: Partial<ReportPreferences>): Promise<void>;
+  updateReportStatus(change: ReportStatusChange): Promise<void>;
   subscribe(listener: () => void): () => void;
   action(id: ActionId): Promise<void>;
   openNote(path: string, line?: number): Promise<void>;
   openBase(id: BaseId): Promise<void>;
-  createNote(kind: NoteKind, title: string, projectFolder?: string): Promise<void>;
+  createNote(kind: NoteKind, title: string, projectFolder?: string, body?: string): Promise<void>;
+  addTask(text: string, options?: { due?: string; target?: 'overview' | 'daily' }): Promise<string>;
+  completeTask(path: string, line: number): Promise<void>;
+  openQuickAdd(kind?: QuickKind, text?: string): void;
+  aiReady(): boolean;
+  suggestCapture(text: string, signal?: AbortSignal): Promise<CaptureSuggestion>;
+  agentStatus(): AgentStatus;
+  agentRun(): WorkflowRun | null;
+  runWorkflow(id: WorkflowId): Promise<void>;
+  stopWorkflow(): Promise<void>;
+  openAgent(): Promise<void>;
+  installAgentSkills(): Promise<void>;
+  createNoteWithBody(title: string, body: string): Promise<void>;
+  openAiGuide(): Promise<void>;
   capture(text: string): Promise<void>;
   submitCaptureDraft(): Promise<void>;
   openCaptureWindow(): Promise<void>;
+  openImmersiveCapture(): void;
+  openPeriodicNote(period: JournalPeriod, date?: string, immersive?: boolean): Promise<void>;
   readCapture(path: string): Promise<string>;
+  processCapture(path: string, request: CaptureRequest): Promise<string | null>;
   saveDraft(text: string, title: string, origin?: WritingSaveOrigin): Promise<void>;
   loadWritingDraft(): WritingDraft;
   updateWritingDraft(patch: Partial<Pick<WritingDraft, 'text' | 'title'>>, expectedRevision: number, viewId?: string): boolean;

@@ -1,0 +1,67 @@
+Tangrow
+Copyright (c) 2026 Terence and the respective contributors.
+SPDX-License-Identifier: GPL-3.0-or-later
+First version under this notice: 0.4.0
+Notice date: 2026-11-10
+
+Tangrow is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later version.
+
+Tangrow is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+Tangrow in LICENSE. If not, see <https://www.gnu.org/licenses/>.
+
+Existing licenses
+
+Material previously released under MIT, including Tangrow 0.3.0 and its earlier
+MIT releases, retains its existing MIT rights. A historical public reference is:
+https://github.com/tangwz/tangrow/tree/47549973f5f8a5157f7849468223aad942f9ce20
+
+The original Tangrow MIT copyright notice and license are preserved verbatim in
+LICENSE-MIT-LEGACY. This GPL release does not revoke or narrow rights already
+granted under MIT or any other independently applicable license, regardless of
+version number. Third-party material remains subject to its applicable notices
+and licenses; see THIRD_PARTY_NOTICES.md. This release does not make the complete
+new work available under MIT merely because it incorporates legacy MIT material.
+
+Additional permission under GNU GPL version 3 section 7: Obsidian host
+
+For material whose copyright holders authorize this permission, you may combine
+or link Tangrow with the Obsidian application and its provided plugin APIs, as
+needed for Tangrow to operate as an Obsidian plugin, and convey the resulting
+combination. You need not provide Obsidian's source code as part of Tangrow's
+Corresponding Source solely because of that combination. Tangrow itself remains
+covered by the GPL, including its applicable Corresponding Source requirements.
+
+This permission grants no right to redistribute Obsidian itself or to disregard
+Obsidian's own license or third-party terms. It is not a general exception for
+combining Tangrow with other proprietary software. Contributors may extend this
+permission to their modifications but are not obliged to do so. Additional
+permissions may be removed as allowed by GPL section 7.
+
+Additional permission for ordinary generated outputs
+
+Your own notes, attachments, personal data, and other content do not become
+GPL-covered merely because you use Tangrow to create, edit, or store them.
+To the extent ordinary generated Markdown notes or Bases query files contain
+material copyrighted by Tangrow's copyright holders, those holders additionally
+permit you to use, copy, modify, and redistribute those ordinary outputs under
+terms of your choice. This permission does not cover the plugin implementation,
+its runtime files, or independently licensed third-party material. Additional
+permissions may be removed as allowed by GPL section 7.
+
+Corresponding Source
+
+The project repository is <https://github.com/tangwz/tangrow>. The preferred form
+for modification includes the TypeScript and locale sources, styles, build
+configuration, package metadata and lockfile, and scripts needed to build the
+distributed version. A distributor must provide Corresponding Source using a
+method permitted by the GPL. A link to an unrelated or incomplete revision is
+not a substitute for the source corresponding to the distributed runtime files.
+
+These notices add no payment, seat, device-count, or resale restriction beyond
+the GPL. They do not replace the GPL text or independently applicable rights.

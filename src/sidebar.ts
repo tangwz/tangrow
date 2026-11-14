@@ -1,16 +1,19 @@
-import { ItemView, Modal, Notice, setIcon, setTooltip } from 'obsidian';
+import { ItemView, Notice, setTooltip } from 'obsidian';
+import { describeError } from './i18n';
 import type { WorkspaceLeaf } from 'obsidian';
-import type { ActionId, BaseId, Locale, NoteKind, NoteSummary, Section, SidebarHost, Snapshot } from './types';
-import { describeError, translate } from './i18n';
-import type { TranslationValues } from './i18n';
-import { safeTitle } from './model';
+import type { QuickKind } from './ai';
+import { QUICK_KINDS } from './quick-add';
+import type { ActionId, BaseId, Locale, NoteSummary, Section, SidebarHost, Snapshot } from './types';
 import { CapturePanel } from './capture-panel';
+import { JOURNAL_LABELS, JOURNAL_PERIODS } from './periodic-notes';
+import { AiPanel } from './ai-panel';
+import { SidebarUI, icon } from './ui';
 
 export const VIEW_TYPE = 'tangrow-sidebar';
 
 type ToolGroup = 'shortcuts' | 'create' | 'current' | 'workspace' | 'databases';
 const TOOL_GROUPS: { id: ToolGroup; label: string }[] = [
-  { id: 'shortcuts', label: 'Shortcuts' },
+  { id: 'shortcuts', label: 'Today' },
   { id: 'create', label: 'Create' },
   { id: 'current', label: 'Current file' },
   { id: 'workspace', label: 'Workspace' },
@@ -18,12 +21,13 @@ const TOOL_GROUPS: { id: ToolGroup; label: string }[] = [
 ];
 
 const SECTIONS: { id: Section; label: string; icon: string }[] = [
-  { id: 'tools', label: 'Tools', icon: 'sliders-horizontal' },
+  { id: 'tools', label: 'Home', icon: 'house' },
   { id: 'capture', label: 'Capture', icon: 'inbox' },
   { id: 'pins', label: 'Pins', icon: 'pin' },
   { id: 'studio', label: 'Studio', icon: 'pen-line' },
   { id: 'focus', label: 'Focus', icon: 'timer' },
-  { id: 'habits', label: 'Habits', icon: 'calendar-check' }
+  { id: 'habits', label: 'Habits', icon: 'calendar-check' },
+  { id: 'ai', label: 'Assistant', icon: 'sparkles' }
 ];
 
 const BASES: { id: BaseId; label: string; icon: string }[] = [
@@ -41,72 +45,6 @@ const BASES: { id: BaseId; label: string; icon: string }[] = [
   { id: 'focus', label: 'Focus sessions', icon: 'timer' },
   { id: 'habits', label: 'Habit history', icon: 'calendar-check' }
 ];
-
-function icon(parent: HTMLElement, name: string): HTMLElement {
-  const element = parent.createSpan({ cls: 'tangrow-icon' });
-  setIcon(element, name);
-  return element;
-}
-
-interface ButtonOptions {
-  icon?: string;
-  cls?: string;
-  disabled?: boolean;
-  title?: string;
-  pressed?: boolean;
-}
-
-class SidebarUI {
-  constructor(private readonly language: () => Locale) {}
-
-  t(source: string, values?: TranslationValues): string {
-    return translate(this.language(), source, values);
-  }
-
-  number(value: number): string { return value.toLocaleString(this.language()); }
-
-  paragraph(parent: HTMLElement, source: string, cls = 'tangrow-muted'): HTMLElement {
-    return parent.createEl('p', { text: this.t(source), cls });
-  }
-
-  sectionHeading(parent: HTMLElement, title: string, caption?: string): void {
-    parent.createEl('h3', { cls: 'tangrow-section-title', text: this.t(title) });
-    if (caption) this.paragraph(parent, caption, 'tangrow-section-caption');
-  }
-
-  button(parent: HTMLElement, source: string, onClick: () => void | Promise<void>, options: ButtonOptions = {}): HTMLButtonElement {
-    return this.userButton(parent, this.t(source), onClick, { ...options, title: options.title ? this.t(options.title) : undefined });
-  }
-
-  userButton(parent: HTMLElement, label: string, onClick: () => void | Promise<void>, options: ButtonOptions = {}): HTMLButtonElement {
-    const element = parent.createEl('button', {
-      cls: `tangrow-button ${options.cls ?? ''}`,
-      attr: { type: 'button', 'aria-label': label }
-    });
-    if (options.icon) icon(element, options.icon);
-    element.createSpan({ text: label });
-    element.disabled = options.disabled ?? false;
-    if (options.title) setTooltip(element, options.title);
-    if (options.pressed !== undefined) element.setAttribute('aria-pressed', String(options.pressed));
-    element.addEventListener('click', () => {
-      if (element.disabled || element.getAttribute('aria-busy') === 'true') return;
-      element.setAttribute('aria-busy', 'true');
-      Promise.resolve().then(onClick).catch((error: unknown) => {
-        new Notice(describeError(this.language(), error instanceof Error ? error : new Error('Tangrow could not complete this action.')));
-      }).finally(() => {
-        element.removeAttribute('aria-busy');
-      });
-    });
-    return element;
-  }
-
-  empty(parent: HTMLElement, title: string, detail: string, iconName = 'sprout'): void {
-    const box = parent.createDiv({ cls: 'tangrow-empty' });
-    icon(box, iconName);
-    box.createEl('strong', { text: this.t(title) });
-    this.paragraph(box, detail);
-  }
-}
 
 function wordCount(text: string, language: Locale): number {
   const segmenter = new Intl.Segmenter(language, { granularity: 'word' });
@@ -128,6 +66,10 @@ export class TangrowSidebar extends ItemView {
   private unsubscribeComposer?: () => void;
   private refreshSection: (state: Snapshot) => void = () => undefined;
   private capturePanel?: CapturePanel;
+  private readonly aiPanel: AiPanel;
+  private shellLabels: Array<{ element: HTMLElement; source: string; tooltip?: boolean }> = [];
+  private taskDraft = '';
+  private taskSaving = false;
   private recentOpenedLimit = 8;
   private scratch = '';
   private scratchRevision = 0;
@@ -158,6 +100,13 @@ export class TangrowSidebar extends ItemView {
     this.ui = new SidebarUI(() => this.host.settings.language);
     this.focusMinutes = host.settings.focusMinutes;
     this.focusDefaultMinutes = host.settings.focusMinutes;
+    this.aiPanel = new AiPanel(host, this);
+  }
+
+  /** Opens a workspace from a command or menu item. */
+  showSection(section: Section): void {
+    if (this.isMounted && this.section !== section) this.selectSection(section);
+    else this.section = section;
   }
 
   getViewType(): string { return VIEW_TYPE; }
@@ -211,9 +160,16 @@ export class TangrowSidebar extends ItemView {
       setTooltip(badge, this.ui.t('Your notes and companion data stay in this vault.'));
     }
     this.contentEl.querySelector('.tangrow-nav')?.setAttribute('aria-label', this.ui.t('Companion workspaces'));
+    for (const { element, source, tooltip } of this.shellLabels) {
+      const text = this.ui.t(source);
+      if (tooltip) { element.setAttribute('aria-label', text); setTooltip(element, text); }
+      else element.textContent = text;
+    }
     for (const item of SECTIONS) {
-      const label = this.navButtons.get(item.id)?.querySelector('.tangrow-nav-label');
+      const control = this.navButtons.get(item.id);
+      const label = control?.querySelector('.tangrow-nav-label');
       if (label) label.textContent = this.ui.t(item.label);
+      if (control) setTooltip(control, this.ui.t(item.label));
     }
     this.setupBanner.empty();
   }
@@ -226,9 +182,24 @@ export class TangrowSidebar extends ItemView {
     const brand = header.createDiv({ cls: 'tangrow-brand' });
     icon(brand, 'sprout');
     brand.createEl('strong', { text: 'Tangrow' });
-    const badge = header.createSpan({ cls: 'tangrow-local-badge', text: this.ui.t('LOCAL') });
+    this.shellLabels = [];
+    const headerTools = header.createDiv({ cls: 'tangrow-header-tools' });
+    const badge = headerTools.createSpan({ cls: 'tangrow-local-badge', text: this.ui.t('LOCAL') });
     setTooltip(badge, this.ui.t('Your notes and companion data stay in this vault.'));
+    const add = headerTools.createEl('button', { cls: 'tangrow-header-add', attr: { type: 'button', 'aria-label': this.ui.t('Quick add') } });
+    icon(add, 'plus');
+    setTooltip(add, this.ui.t('Quick add'));
+    add.addEventListener('click', () => this.host.openQuickAdd());
+    this.shellLabels.push({ element: add, source: 'Quick add', tooltip: true });
     this.noteLabel = this.contentEl.createDiv({ cls: 'tangrow-context', attr: { 'aria-live': 'polite' } });
+    const quick = this.contentEl.createDiv({ cls: 'tangrow-quickbar', attr: { role: 'group' } });
+    for (const kind of QUICK_KINDS) {
+      const control = quick.createEl('button', { cls: 'tangrow-quickbar-item', attr: { type: 'button' } });
+      icon(control, kind.icon);
+      const label = control.createSpan({ text: this.ui.t(kind.label) });
+      control.addEventListener('click', () => this.openCreate(kind.id));
+      this.shellLabels.push({ element: label, source: kind.label });
+    }
     const nav = this.contentEl.createDiv({ cls: 'tangrow-nav', attr: { role: 'tablist', 'aria-label': this.ui.t('Companion workspaces') } });
     for (const item of SECTIONS) {
       const itemButton = nav.createEl('button', {
@@ -237,6 +208,7 @@ export class TangrowSidebar extends ItemView {
       });
       icon(itemButton, item.icon);
       itemButton.createSpan({ cls: 'tangrow-nav-label', text: this.ui.t(item.label) });
+      setTooltip(itemButton, this.ui.t(item.label));
       itemButton.addEventListener('click', () => {
         if (this.section !== item.id) this.selectSection(item.id);
       });
@@ -263,6 +235,7 @@ export class TangrowSidebar extends ItemView {
     this.isMounted = false;
     this.capturePanel?.destroy();
     this.capturePanel = undefined;
+    this.aiPanel.destroy();
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     this.unsubscribeComposer?.();
@@ -275,6 +248,7 @@ export class TangrowSidebar extends ItemView {
   private selectSection(section: Section): void {
     this.capturePanel?.destroy();
     this.capturePanel = undefined;
+    this.aiPanel.destroy();
     this.section = section;
     for (const [id, item] of this.navButtons) {
       item.classList.toggle('is-active', id === section);
@@ -293,7 +267,7 @@ export class TangrowSidebar extends ItemView {
       case 'tools': {
         let signature = '';
         this.refreshSection = (snapshot) => {
-          const next = JSON.stringify([snapshot.active, snapshot.activePinned, snapshot.counts, snapshot.tasks, snapshot.widePage, this.host.settings.wideByDefault]);
+          const next = JSON.stringify([snapshot.active, snapshot.activePinned, snapshot.counts, snapshot.tasks, snapshot.widePage, this.host.settings.wideByDefault, snapshot.captures.filter((capture) => !capture.processed).length, new Date().toDateString(), this.taskSaving]);
           if (next === signature) return;
           signature = next;
           this.preserveFocus(() => this.renderTools(snapshot));
@@ -314,6 +288,16 @@ export class TangrowSidebar extends ItemView {
       case 'studio': this.mountStudio(); break;
       case 'focus': this.mountFocus(); break;
       case 'habits': this.mountHabits(); break;
+      case 'ai': {
+        this.aiPanel.mount(this.pane);
+        let signature = '';
+        this.refreshSection = (snapshot) => {
+          const next = JSON.stringify([snapshot.active?.path, this.host.aiReady(), this.host.agentStatus(), this.host.agentRun()]);
+          if (signature && next !== signature) this.aiPanel.refresh();
+          signature = next;
+        };
+        break;
+      }
     }
     this.refresh(state);
   }
@@ -343,39 +327,46 @@ export class TangrowSidebar extends ItemView {
 
   private renderTools(state: Snapshot): void {
     this.pane.empty();
-    const hero = this.pane.createDiv({ cls: 'tangrow-overview' });
-    const metrics = [
-      [this.ui.number(state.counts.notes), 'notes'],
-      [this.ui.number(state.counts.projects), 'project notes'],
-      [this.ui.number(state.counts.tasks), 'open tasks']
+    const language = this.host.settings.language;
+    const now = new Date();
+    const pending = state.captures.filter((capture) => !capture.processed).length;
+    const hero = this.pane.createDiv({ cls: 'tangrow-today' });
+    hero.createDiv({ cls: 'tangrow-today-date', text: now.toLocaleDateString(language, { month: 'long', day: 'numeric' }) });
+    hero.createDiv({ cls: 'tangrow-today-weekday', text: now.toLocaleDateString(language, { weekday: 'long' }) });
+    const metrics = this.pane.createDiv({ cls: 'tangrow-overview' });
+    const cards: [number, string, string, () => void | Promise<void>][] = [
+      [state.counts.tasks, 'open tasks', 'Open task overview', () => this.host.action('task-overview')],
+      [pending, 'to sort', 'Review pending captures', () => this.selectSection('capture')],
+      [state.counts.projects, 'project notes', 'Browse projects', () => this.host.openBase('projects')],
+      [state.counts.notes, 'notes', 'Browse all notes', () => this.host.openBase('notes')]
     ];
-    for (const [value, label] of metrics) {
-      const metric = hero.createDiv({ cls: 'tangrow-metric' });
-      metric.createEl('strong', { text: value });
-      metric.createSpan({ text: this.ui.t(label ?? '') });
+    for (const [value, label, title, open] of cards) {
+      const metric = this.ui.userButton(metrics, this.ui.t(label), open, { cls: 'tangrow-metric', title: this.ui.t(title) });
+      metric.setAttribute('aria-label', `${this.ui.t(title)} · ${this.ui.number(value)}`);
+      metric.createEl('strong', { text: this.ui.number(value) });
+      metric.prepend(metric.lastElementChild!);
     }
-    const filter = this.pane.createDiv({ cls: 'tangrow-tool-filter' });
-    const filterId = `${this.viewId}-tool-group`;
-    filter.createEl('label', { text: this.ui.t('Tool groups'), attr: { for: filterId } });
-    const select = filter.createEl('select', { attr: { id: filterId, 'aria-label': this.ui.t('Tool groups') } });
-    select.dataset.tangrowAction = 'tool-group';
-    for (const group of TOOL_GROUPS) select.createEl('option', { text: this.ui.t(group.label), value: group.id });
-    select.value = this.toolGroup;
-    select.addEventListener('change', () => {
-      this.toolGroup = select.value as ToolGroup;
-      this.preserveFocus(() => this.renderTools(this.host.snapshot()));
-    });
+    const groups = this.pane.createDiv({ cls: 'tangrow-chips tangrow-tool-groups', attr: { role: 'tablist', 'aria-label': this.ui.t('Tool groups') } });
+    for (const group of TOOL_GROUPS) {
+      const chip = groups.createEl('button', { cls: 'tangrow-chip', text: this.ui.t(group.label), attr: { type: 'button', role: 'tab', 'aria-selected': String(group.id === this.toolGroup), 'aria-label': this.ui.t(group.label) } });
+      chip.dataset.tangrowAction = `tool-group-${group.id}`;
+      chip.addEventListener('click', () => {
+        if (this.toolGroup === group.id) return;
+        this.toolGroup = group.id;
+        this.preserveFocus(() => this.renderTools(this.host.snapshot()));
+      });
+    }
     switch (this.toolGroup) {
       case 'shortcuts': {
-        this.ui.sectionHeading(this.pane, 'Quick actions', 'Choose the tools you need right now.');
+        this.renderTaskPreview(state);
+        this.ui.sectionHeading(this.pane, 'Quick actions');
         const shortcuts = this.pane.createDiv({ cls: 'tangrow-actions' });
-        this.actionButton(shortcuts, 'report', 'Open report', 'chart-no-axes-combined');
-        this.ui.button(shortcuts, 'New note', () => this.openCreate('note'), { icon: 'file-plus-2', cls: 'mod-cta' });
         this.actionButton(shortcuts, 'daily-note', "Today's journal", 'calendar-days');
-        this.actionButton(shortcuts, 'toggle-theme', 'Toggle light / dark', 'sun-moon');
+        this.actionButton(shortcuts, 'report', 'Open report', 'chart-no-axes-combined');
         this.actionButton(shortcuts, 'toggle-pin', state.activePinned ? 'Unpin note' : 'Pin note', 'pin', !this.isMarkdown(state), state.activePinned);
         this.actionButton(shortcuts, 'random-note', 'Rediscover a note', 'shuffle', state.counts.notes === 0);
-        this.renderTaskPreview(state);
+        this.ui.button(shortcuts, 'Vault workflows', () => this.selectSection('ai'), { icon: 'sparkles' });
+        this.actionButton(shortcuts, 'toggle-theme', 'Toggle light / dark', 'sun-moon');
         break;
       }
       case 'create': this.renderCreateActions(); break;
@@ -398,9 +389,17 @@ export class TangrowSidebar extends ItemView {
     this.ui.sectionHeading(this.pane, 'Make a little space', 'Start a note, return to today, or pick up a loose thread.');
     const create = this.pane.createDiv({ cls: 'tangrow-actions' });
     this.ui.button(create, 'New note', () => this.openCreate('note'), { icon: 'file-plus-2', cls: 'mod-cta' });
+    this.ui.button(create, 'New task', () => this.openCreate('task'), { icon: 'square-check-big' });
     this.ui.button(create, 'New project', () => this.openCreate('project'), { icon: 'folder-plus' });
+    this.ui.button(create, 'Quick capture', () => this.openCreate('capture'), { icon: 'inbox' });
     this.actionButton(create, 'daily-note', "Today's journal", 'calendar-days');
-    this.ui.button(create, 'Quick capture', () => this.selectSection('capture'), { icon: 'inbox' });
+    this.ui.button(create, 'Open capture window', () => this.host.openCaptureWindow(), { icon: 'external-link' });
+    this.ui.sectionHeading(this.pane, 'Periodic notes');
+    const periods = this.pane.createDiv({ cls: 'tangrow-chips' });
+    for (const period of JOURNAL_PERIODS) {
+      const chip = this.ui.button(periods, JOURNAL_LABELS[period], () => this.host.openPeriodicNote(period), { cls: 'tangrow-chip' });
+      chip.dataset.tangrowAction = `period-${period}`;
+    }
   }
 
   private renderCurrentActions(state: Snapshot): void {
@@ -438,16 +437,56 @@ export class TangrowSidebar extends ItemView {
 
   private renderTaskPreview(state: Snapshot): void {
     const taskSection = this.pane.createDiv({ cls: 'tangrow-task-preview' });
-    this.ui.sectionHeading(taskSection, 'A few open tasks', 'Checkboxes are read from notes; opening a row takes you to its source.');
-    this.actionButton(taskSection, 'task-overview', 'Open task overview', 'list-todo');
     const openTasks = state.tasks.filter((entry) => !entry.done);
+    const heading = taskSection.createDiv({ cls: 'tangrow-list-heading' });
+    heading.createEl('h3', { cls: 'tangrow-section-title', text: this.ui.t('Tasks') });
+    const overview = this.ui.userButton(heading, this.ui.t('View all · {count}', { count: this.ui.number(openTasks.length) }), () => this.host.action('task-overview'), { cls: 'tangrow-text-button' });
+    overview.dataset.tangrowAction = 'task-overview';
+    const form = taskSection.createEl('form', { cls: 'tangrow-task-add' });
+    icon(form, 'plus');
+    const input = form.createEl('input', { type: 'text', attr: { placeholder: this.ui.t('Add a task and press Enter'), 'aria-label': this.ui.t('New task'), maxlength: '240' } });
+    input.value = this.taskDraft;
+    input.disabled = this.taskSaving;
+    input.dataset.tangrowAction = 'task-add';
+    input.addEventListener('input', () => { this.taskDraft = input.value; });
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const text = this.taskDraft.trim();
+      if (!text || this.taskSaving) return;
+      this.taskSaving = true;
+      input.disabled = true;
+      void this.host.addTask(text).then(() => { if (this.taskDraft.trim() === text) this.taskDraft = ''; })
+        .catch((error: unknown) => new Notice(describeError(this.host.settings.language, error)))
+        .finally(() => {
+          this.taskSaving = false;
+          if (this.section !== 'tools' || this.toolGroup !== 'shortcuts') return;
+          this.renderTools(this.host.snapshot());
+          this.pane.querySelector<HTMLInputElement>('.tangrow-task-add input')?.focus({ preventScroll: true });
+        });
+    });
     if (!openTasks.length) {
       this.ui.empty(taskSection, 'A clear task list', 'Open checkboxes from your notes will appear here.', 'list-checks');
       return;
     }
-    for (const task of openTasks.slice(0, 4)) {
-      const row = this.ui.userButton(taskSection, task.text || this.ui.t('Untitled task'), () => this.host.openNote(task.path, task.line), { icon: 'square', cls: 'tangrow-task-row' });
-      setTooltip(row, task.path);
+    const list = taskSection.createDiv({ cls: 'tangrow-task-list' });
+    for (const task of openTasks.slice(0, 6)) {
+      const label = task.text || this.ui.t('Untitled task');
+      const row = list.createDiv({ cls: 'tangrow-task-item' });
+      const check = row.createEl('button', { cls: 'tangrow-task-check', attr: { type: 'button', 'aria-label': this.ui.t('Complete: {task}', { task: label }) } });
+      check.dataset.tangrowAction = `task-check-${task.path}:${task.line}`;
+      setTooltip(check, this.ui.t('Mark done in the note'));
+      check.addEventListener('click', () => {
+        if (check.disabled) return;
+        check.disabled = true;
+        row.addClass('is-completing');
+        void this.host.completeTask(task.path, task.line).catch((error: unknown) => {
+          check.disabled = false;
+          row.removeClass('is-completing');
+          new Notice(describeError(this.host.settings.language, error));
+        });
+      });
+      const open = this.ui.userButton(row, label, () => this.host.openNote(task.path, task.line), { cls: 'tangrow-task-row' });
+      setTooltip(open, task.path);
     }
   }
 
@@ -782,77 +821,5 @@ export class TangrowSidebar extends ItemView {
     }
   }
 
-  private openCreate(kind: NoteKind): void {
-    new CreateNoteModal(this.host, kind).open();
-  }
-}
-
-class CreateNoteModal extends Modal {
-  private readonly host: SidebarHost;
-  private readonly ui: SidebarUI;
-  private readonly kind: NoteKind;
-
-  constructor(host: SidebarHost, kind: NoteKind) {
-    super(host.app);
-    this.host = host;
-    this.ui = new SidebarUI(() => this.host.settings.language);
-    this.kind = kind;
-  }
-
-  onOpen(): void {
-    this.titleEl.setText(this.ui.t(this.kind === 'project' ? 'Start a project note' : 'Start a note'));
-    this.contentEl.addClass('tangrow-dialog');
-    const form = this.contentEl.createEl('form');
-    const input = form.createEl('input', { type: 'text', cls: 'tangrow-full-width', attr: { placeholder: this.ui.t('A useful title'), 'aria-label': this.ui.t('Note title'), maxlength: '140' } });
-    let projectSelect: HTMLSelectElement | undefined;
-    if (this.kind === 'project') {
-      this.ui.paragraph(form, 'Choose an existing project or create a folder inside your project directory.');
-      const field = form.createDiv({ cls: 'tangrow-project-location' });
-      const selectId = `tangrow-project-${crypto.randomUUID()}`;
-      field.createEl('label', { text: this.ui.t('Project location'), attr: { for: selectId } });
-      projectSelect = field.createEl('select', { cls: 'tangrow-full-width', attr: { id: selectId, 'aria-label': this.ui.t('Project location') } });
-      projectSelect.createEl('option', { text: this.ui.t('Create a project folder'), value: '' });
-      const root = this.host.settings.projectFolder;
-      for (const folder of this.host.snapshot().projectFolders.filter((path) => path.startsWith(`${root}/`))) {
-        projectSelect.createEl('option', { text: this.ui.t('Existing project: {folder}', { folder: folder.slice(root.length + 1) }), value: folder });
-      }
-      projectSelect.value = '';
-    }
-    const destination = form.createEl('p', { cls: 'tangrow-destination', attr: { 'aria-live': 'polite' } });
-    const validation = form.createDiv({ cls: 'tangrow-input-error', attr: { 'aria-live': 'polite' } });
-    const footer = form.createDiv({ cls: 'tangrow-dialog-actions' });
-    this.ui.button(footer, 'Cancel', () => this.close());
-    let saving = false;
-    const create = this.ui.button(footer, 'Create note', async () => {
-      if (saving) return;
-      saving = true;
-      updateDestination();
-      try {
-        await this.host.createNote(this.kind, input.value.trim(), projectSelect?.value || undefined);
-        this.close();
-      } finally {
-        saving = false;
-        updateDestination();
-      }
-    }, { icon: 'plus', cls: 'mod-cta', disabled: true });
-    const updateDestination = () => {
-      let title: string | null = null;
-      validation.textContent = '';
-      try { title = safeTitle(input.value); }
-      catch (error) { if (input.value.trim()) validation.textContent = describeError(this.host.settings.language, error); }
-      create.disabled = saving || title === null;
-      input.disabled = saving;
-      if (projectSelect) projectSelect.disabled = saving;
-      if (this.kind !== 'project') destination.textContent = this.ui.t('Destination: {path}', { path: this.host.settings.inboxFolder });
-      else if (projectSelect?.value) destination.textContent = this.ui.t('Destination: {path}', { path: projectSelect.value });
-      else destination.textContent = title ? this.ui.t('New project folder: {path}', { path: `${this.host.settings.projectFolder}/${title}` }) : this.ui.t('Enter a title to preview the new project folder.');
-    };
-    input.addEventListener('input', updateDestination);
-    projectSelect?.addEventListener('change', updateDestination);
-    form.addEventListener('submit', (event) => { event.preventDefault(); create.click(); });
-    updateDestination();
-    input.focus();
-  }
-
-  onClose(): void { this.contentEl.empty(); }
+  private openCreate(kind: QuickKind): void { this.host.openQuickAdd(kind); }
 }

@@ -1,3 +1,4 @@
+import { readAiModel } from './ai';
 import { DEFAULT_SETTINGS, type FocusSession, type Settings } from './types';
 
 export function safeFolder(value: string): string {
@@ -49,7 +50,7 @@ export function streak(days: ReadonlySet<string>, time = Date.now()): number {
 
 export function readSettings(value: unknown): Settings {
   const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
-  const result = { ...DEFAULT_SETTINGS, habits: [], reportExcludedFolders: [] } as Settings;
+  const result = { ...DEFAULT_SETTINGS, journalFormats: { ...DEFAULT_SETTINGS.journalFormats }, journalTemplates: { ...DEFAULT_SETTINGS.journalTemplates }, habits: [], reportExcludedFolders: [] } as Settings;
   if (raw.language === 'en' || raw.language === 'zh-CN') result.language = raw.language;
   const folders = ['supportFolder', 'inboxFolder', 'projectFolder', 'areaFolder', 'resourcesFolder', 'archiveFolder', 'journalFolder'] as const;
   for (const key of folders) {
@@ -60,9 +61,23 @@ export function readSettings(value: unknown): Settings {
     try { result.taskOverviewPath = safeFolder(raw.taskOverviewPath); } catch { /* Keep the existing Tasks note default. */ }
   }
   if (typeof raw.journalFormat === 'string' && raw.journalFormat.length < 100 && raw.journalFormat.length > 0) result.journalFormat = raw.journalFormat;
+  for (const key of Object.keys(result.journalFormats) as Array<keyof Settings['journalFormats']>) {
+    const value = (raw.journalFormats as Record<string, unknown> | undefined)?.[key];
+    if (typeof value === 'string' && value.trim() && value.length < 100) result.journalFormats[key] = value;
+  }
+  for (const key of Object.keys(result.journalTemplates) as Array<keyof Settings['journalTemplates']>) {
+    const value = (raw.journalTemplates as Record<string, unknown> | undefined)?.[key];
+    if (value === '') result.journalTemplates[key] = '';
+    else if (typeof value === 'string') {
+      try { result.journalTemplates[key] = safeFolder(value); } catch { /* Ignore unsafe template paths. */ }
+    }
+  }
   if (Number.isInteger(raw.focusMinutes) && Number(raw.focusMinutes) >= 1 && Number(raw.focusMinutes) <= 240) result.focusMinutes = Number(raw.focusMinutes);
   if (typeof raw.autoOpen === 'boolean') result.autoOpen = raw.autoOpen;
   if (typeof raw.wideByDefault === 'boolean') result.wideByDefault = raw.wideByDefault;
+  if (typeof raw.aiEnabled === 'boolean') result.aiEnabled = raw.aiEnabled;
+  result.aiModel = readAiModel(raw.aiModel);
+  if (typeof raw.aiApiKey === 'string' && raw.aiApiKey.length <= 400) result.aiApiKey = raw.aiApiKey.trim();
   if (typeof raw.trackEditingActivity === 'boolean') result.trackEditingActivity = raw.trackEditingActivity;
   if (Number.isInteger(raw.activityGoalMinutes) && Number(raw.activityGoalMinutes) >= 1 && Number(raw.activityGoalMinutes) <= 1440) result.activityGoalMinutes = Number(raw.activityGoalMinutes);
   if (Array.isArray(raw.reportExcludedFolders)) {

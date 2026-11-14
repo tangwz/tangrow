@@ -1,3 +1,5 @@
+import momentLibrary from 'moment';
+
 export const notices: string[] = [];
 export const Platform = { isDesktopApp: true };
 
@@ -11,6 +13,10 @@ class MockEvents {
   };
   trigger = (name: string, ...args: unknown[]): void => {
     for (const callback of this.listeners.get(name) ?? []) callback(...args);
+  };
+  offref = (ref: object): void => {
+    const { name, callback } = ref as { name: string; callback: (...args: unknown[]) => void };
+    this.listeners.get(name)?.delete(callback);
   };
 }
 
@@ -86,9 +92,11 @@ export class MockVault {
     this.seedFolder(path);
     this.createdPaths.push(path);
   }
-  async create(path: string, content: string): Promise<TFile> {
+  async create(path: string, content: string, options?: { ctime?: number; mtime?: number }): Promise<TFile> {
     if (this.failCreates > 0) { this.failCreates--; throw new Error('Simulated vault write failure'); }
     const file = this.seedFile(path, content);
+    if (options?.ctime !== undefined) file.stat.ctime = options.ctime;
+    if (options?.mtime !== undefined) file.stat.mtime = options.mtime;
     this.createdPaths.push(path);
     return file;
   }
@@ -222,6 +230,8 @@ export function createMockApp() {
     emitLayoutReady: (): void => { layoutCallbacks.splice(0).forEach((callback) => callback()); }
   };
   const metadataCache = {
+    offref: cacheEvents.offref,
+    getFirstLinkpathDest: (_linkpath: string, _sourcePath: string): TFile | null => null,
     getFileCache: (file: TFile) => {
       const frontmatter = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(file.content)?.[1];
       const listItems = file.content.split(/\r?\n/).flatMap((line, index) => {
@@ -235,7 +245,15 @@ export function createMockApp() {
   };
   const fileManager = {
     generateMarkdownLink: (file: TFile): string => `[[${file.path}]]`,
-    renameFile: (file: TFile | TFolder, path: string): Promise<void> => vault.rename(file, path)
+    renameFile: (file: TFile | TFolder, path: string): Promise<void> => vault.rename(file, path),
+    processFrontMatter: async (file: TFile, update: (fields: Record<string, unknown>) => void): Promise<void> => {
+      await vault.process(file, (content) => {
+        const info = getFrontMatterInfo(content);
+        const fields = info.exists ? parseYaml(info.frontmatter) : {};
+        update(fields);
+        return `---\n${stringifyYaml(fields)}---\n${info.exists ? content.slice(info.contentStart) : content}`;
+      });
+    }
   };
   return { vault, workspace, metadataCache, fileManager };
 }
@@ -267,6 +285,8 @@ export class Notice {
   constructor(text: string) { notices.push(text); }
 }
 export class Modal {}
+export class Menu {}
+export const MarkdownRenderer = { render: async (): Promise<void> => {} };
 export class MockView {
   containerEl = { toggleClass: (): void => {}, removeClass: (): void => {} };
   getViewType(): string { return 'unknown'; }
@@ -321,14 +341,7 @@ export class MarkdownView extends FileView {
 }
 export function setIcon(): void {}
 export function normalizePath(path: string): string { return path.replace(/\/+/g, '/').replace(/^\/+|\/+$/g, ''); }
-export function moment(input?: string | number | Date): { format(pattern: string): string } {
-  const date = input === undefined ? new Date(Date.now()) : new Date(input);
-  const parts: Record<string, string> = {
-    YYYY: String(date.getFullYear()), MM: String(date.getMonth() + 1).padStart(2, '0'), DD: String(date.getDate()).padStart(2, '0'),
-    HH: String(date.getHours()).padStart(2, '0'), mm: String(date.getMinutes()).padStart(2, '0'), ss: String(date.getSeconds()).padStart(2, '0'), Z: '+00:00'
-  };
-  return { format: (pattern) => pattern.replace(/\[[^\]]*\]|YYYY|MM|DD|HH|mm|ss|Z/g, (token) => token.startsWith('[') ? token.slice(1, -1) : parts[token]!) };
-}
+export const moment = momentLibrary;
 export function setTooltip(): void {}
 export function getFrontMatterInfo(content: string): { exists: boolean; frontmatter: string; from: number; to: number; contentStart: number } {
   const match = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(content);

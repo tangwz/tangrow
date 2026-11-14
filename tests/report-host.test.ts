@@ -120,7 +120,7 @@ test('editing activity counts focused eligible edits and stores only aggregate h
     plugin.onunload();
     await plugin.writes;
     const stored = plugin.savedData as { version: number; activity: EditingActivityState };
-    assert.equal(stored.version, 4);
+    assert.equal(stored.version, 5);
     assert.deepEqual(Object.keys(stored.activity).sort(), ['buckets', 'startedAt', 'version']);
     assert.ok(stored.activity.buckets.every((bucket) => Object.keys(bucket).sort().join(',') === 'ms,start'));
     assert.ok(!JSON.stringify(stored.activity).includes(file.path));

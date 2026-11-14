@@ -3,6 +3,14 @@ import type { ActivitySummary, EditingActivityState } from './activity';
 export type ReportRange = 1 | 7 | 30 | 60 | 90 | 180 | 365;
 export type ReportPage = 'overview' | 'actions' | 'tasks' | 'projects' | 'notes' | 'clips' | 'areas' | 'time';
 export type ReportStatus = 'open' | 'done' | 'archived' | 'unknown';
+export type EditableReportStatus = Exclude<ReportStatus, 'unknown'>;
+export type ReportTaskStatus = ' ' | '/' | 'x' | '-';
+
+export interface ReportStatusSource { path: string; revision: string }
+export type ReportStatusChange =
+  | { kind: 'note'; source: ReportStatusSource; status: EditableReportStatus }
+  | { kind: 'entity'; collection: 'projects' | 'areas'; path: string; sources: ReportStatusSource[]; status: EditableReportStatus }
+  | { kind: 'task'; task: ReportTask; status: ReportTaskStatus };
 
 export interface ReportPreferences {
   reportExcludedFolders: string[];

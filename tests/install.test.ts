@@ -9,7 +9,7 @@ import { promisify } from 'node:util';
 
 const execute = promisify(execFile);
 const installer = fileURLToPath(new URL('../scripts/install.mjs', import.meta.url));
-const installFiles = ['manifest.json', 'main.js', 'styles.css', 'LICENSE', 'THIRD_PARTY_NOTICES.md'];
+const installFiles = ['manifest.json', 'main.js', 'styles.css', 'LICENSE', 'NOTICE', 'LICENSE-MIT-LEGACY', 'THIRD_PARTY_NOTICES.md'];
 
 async function fixture(context: TestContext) {
   const directory = await realpath(await mkdtemp(path.join(tmpdir(), 'tangrow-installer-test-')));
@@ -52,7 +52,7 @@ async function seedExistingFiles(target: Fixture) {
   await writeFile(path.join(target.destination, 'data.json'), '{"scratch":"Keep this draft"}\n');
 }
 
-test('installation deploys both license notices and preserves existing plugin data', async context => {
+test('installation deploys GPL, additional permissions, legacy MIT and third-party notices without changing plugin data', async context => {
   const target = await fixture(context);
   const data = '{"scratch":"Keep this draft"}\n';
   await writeFile(path.join(target.destination, 'data.json'), data);
@@ -82,7 +82,7 @@ test('replacement backs up existing notices and lists them in the restore manife
   assert.equal(await readFile(path.join(target.destination, 'data.json'), 'utf8'), '{"scratch":"Keep this draft"}\n');
 });
 
-for (const missing of ['LICENSE', 'THIRD_PARTY_NOTICES.md']) {
+for (const missing of ['LICENSE', 'NOTICE', 'LICENSE-MIT-LEGACY', 'THIRD_PARTY_NOTICES.md']) {
   test(`missing ${missing} fails before changing the vault or creating backups`, async context => {
     const target = await fixture(context);
     await seedExistingFiles(target);
@@ -96,7 +96,7 @@ for (const missing of ['LICENSE', 'THIRD_PARTY_NOTICES.md']) {
   });
 }
 
-test('dry run includes both notices without changing installed files or creating backups', async context => {
+test('dry run includes all license notices without changing installed files or creating backups', async context => {
   const target = await fixture(context);
   await seedExistingFiles(target);
   const { stdout } = await install(target, '--enable', '--dry-run');
@@ -126,7 +126,7 @@ test('a symbolic link at a notice destination is rejected before deployment', as
   assert.deepEqual(await readdir(target.home), []);
 });
 
-test('a concurrent enabled-plugin update is retained after deploying all five files', async context => {
+test('a concurrent enabled-plugin update is retained after deploying all seven files', async context => {
   const target = await fixture(context);
   const concurrent = '["other-plugin","new-plugin"]\n';
   await appendFile(target.preload, `import fs from 'node:fs/promises';

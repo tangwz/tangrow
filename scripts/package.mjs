@@ -8,13 +8,21 @@ import { promisify } from 'node:util';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const manifest = JSON.parse(await readFile(path.join(root, 'manifest.json'), 'utf8'));
+const metadata = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 if (manifest.id !== 'tangrow' || !/^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(manifest.version)) {
   throw new Error('Unexpected plugin identity or version.');
 }
-const files = ['manifest.json', 'main.js', 'styles.css', 'LICENSE', 'THIRD_PARTY_NOTICES.md'];
+if (metadata.version !== manifest.version || metadata.license !== 'GPL-3.0-or-later') {
+  throw new Error('Package version or GPL license metadata does not match the release.');
+}
+const files = ['manifest.json', 'main.js', 'styles.css', 'LICENSE', 'NOTICE', 'LICENSE-MIT-LEGACY', 'THIRD_PARTY_NOTICES.md'];
 for (const name of files) {
   const stat = await lstat(path.join(root, name));
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Expected a regular build file: ${name}`);
+}
+const banner = `/* Tangrow ${manifest.version} | GPL-3.0-or-later |`;
+if (!(await readFile(path.join(root, 'main.js'), 'utf8')).startsWith(banner)) {
+  throw new Error('The production bundle has a stale version or license banner. Run npm run build before packaging.');
 }
 const dist = path.join(root, 'dist');
 try {

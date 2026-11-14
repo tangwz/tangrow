@@ -1,7 +1,7 @@
 import { hasValidSupportFolder } from './folders';
 import { dayKey, inFolder } from './model';
 import type { Settings } from './types';
-import type { CompletionSummary, ReportEntity, ReportPreferences, ReportRecord, ReportStatus, StreakSummary } from './report-contract';
+import type { CompletionSummary, ReportEntity, ReportPreferences, ReportRecord, ReportStatus, ReportStatusSource, StreakSummary } from './report-contract';
 
 export type NormalizedReportStatus = ReportStatus;
 
@@ -38,15 +38,15 @@ export function reportRecordStatus(record: MetricNote): NormalizedReportStatus {
   return explicitStatus(record.frontmatter).status;
 }
 
+export function reportStatusSource(record: MetricNote): ReportStatusSource {
+  return { path: record.path, revision: JSON.stringify([record.frontmatter?.tangrow_status ?? null, record.frontmatter?.status ?? null]) };
+}
+
+export function hasReportStatus(record: MetricNote): boolean { return explicitStatus(record.frontmatter).explicit; }
+
 export function canonicalEntityStatus(records: readonly MetricNote[], folder: string): NormalizedReportStatus {
-  const name = folder.split('/').at(-1)?.toLowerCase() ?? '';
-  const canonicalNames = new Set([name, 'readme', 'index', 'overview']);
   const statuses = new Set<NormalizedReportStatus>();
-  for (const record of records) {
-    const slash = record.path.lastIndexOf('/');
-    if (record.path.slice(0, slash) !== folder || !record.path.toLowerCase().endsWith('.md')) continue;
-    const basename = record.path.slice(slash + 1, -3).toLowerCase();
-    if (!canonicalNames.has(basename)) continue;
+  for (const record of canonicalEntityNotes(records, folder)) {
     const value = explicitStatus(record.frontmatter);
     if (value.explicit) statuses.add(value.status);
   }
@@ -166,12 +166,12 @@ function validCreated(value: number, now: number): number | null {
   return Number.isFinite(value) && value >= 0 && value <= now && !Number.isNaN(new Date(value).getTime()) ? value : null;
 }
 
-function canonicalDocuments(records: readonly ReportRecord[], folder: string): ReportRecord[] {
+export function canonicalEntityNotes<T extends MetricNote>(records: readonly T[], folder: string): T[] {
   const name = folder.split('/').at(-1)?.toLowerCase() ?? '';
   const names = [name, 'readme', 'index', 'overview'];
   return records.filter((record) => {
     const slash = record.path.lastIndexOf('/');
-    return record.path.slice(0, slash) === folder && names.includes(record.path.slice(slash + 1, -3).toLowerCase());
+    return record.path.slice(0, slash) === folder && record.path.toLowerCase().endsWith('.md') && names.includes(record.path.slice(slash + 1, -3).toLowerCase());
   }).sort((left, right) => {
     const leftName = left.path.slice(left.path.lastIndexOf('/') + 1, -3).toLowerCase();
     const rightName = right.path.slice(right.path.lastIndexOf('/') + 1, -3).toLowerCase();
@@ -193,7 +193,7 @@ export function collectReportEntities(records: readonly ReportRecord[], root: st
   }
   const entities: ReportEntity[] = [...children].map((folder) => {
     const notes = records.filter((record) => inFolder(record.path, folder));
-    const canonical = canonicalDocuments(notes, folder);
+    const canonical = canonicalEntityNotes(notes, folder);
     const canonicalCreated = canonical.map((record) => validCreated(record.created, now)).filter((value): value is number => value !== null);
     const childCreated = notes.map((record) => validCreated(record.created, now)).filter((value): value is number => value !== null);
     const candidates = canonicalCreated.length ? canonicalCreated : childCreated;
