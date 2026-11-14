@@ -821,7 +821,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     const leaf = candidate.view.getViewType() === CAPTURE_VIEW_TYPE ? this.app.workspace.getLeaf('tab') : candidate;
     await leaf.openFile(file, { active: true, eState: line === undefined ? undefined : { line } });
   }
-  async createNote(kind: NoteKind, title: string, projectFolder?: string): Promise<void> {
+  async createNote(kind: NoteKind, title: string, projectFolder?: string, body = ''): Promise<void> {
     const file = await this.exclusive(() => {
       let folder = this.settings.inboxFolder;
       if (kind === 'project') {
@@ -834,7 +834,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
           if (this.app.vault.getAbstractFileByPath(folder)) throw new Error('This project folder already exists. Choose it from the existing project list.');
         }
       }
-      return this.createUnique(folder, title, '', { tangrow_kind: kind, tangrow_status: 'open', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') });
+      return this.createUnique(folder, title, body, { tangrow_kind: kind, tangrow_status: 'open', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') });
     });
     await this.openNote(file.path);
   }

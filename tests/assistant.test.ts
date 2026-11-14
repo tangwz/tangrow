@@ -342,18 +342,19 @@ interface FakeClaudian {
   session: string | null;
   reply: string;
   status: SendStatus;
+  reads: string[];
   files: Map<string, string>;
   folders: Set<string>;
 }
 /** Installs a stand-in for Claudian's documented plugin API, its open command and the vault adapter. */
 function withClaudian(app: MockApp, version: unknown = 1): FakeClaudian {
-  const fake: FakeClaudian = { sent: [], commands: [], session: 'session-1', reply: 'Done.', status: 'started', files: new Map(), folders: new Set() };
+  const fake: FakeClaudian = { sent: [], commands: [], session: 'session-1', reply: 'Done.', status: 'started', reads: [], files: new Map(), folders: new Set() };
   const host = app as unknown as Record<string, unknown>;
   host.plugins = { getPlugin: (id: string) => id === CLAUDIAN_ID ? { api: {
     version,
     getActiveSessionId: () => fake.session,
     send: async (sessionId: string, options: { text?: string; mode?: string }) => { fake.sent.push({ sessionId, ...options }); return options.text ? fake.status : 'interrupted'; },
-    read: async () => fake.reply
+    read: async (sessionId: string) => { fake.reads.push(sessionId); return fake.reply; }
   } } : null };
   host.commands = { executeCommandById: (id: string) => { fake.commands.push(id); return true; } };
   (app.vault as unknown as Record<string, unknown>).adapter = {
@@ -386,24 +387,27 @@ test('workflow prompts name files by path, follow the configured folders and sta
   for (const item of WORKFLOWS) assert.equal(workflowPrompt(item.id, settings, context).includes('undefined'), false);
 });
 
-test('queued workflows never consume an earlier turn reply or interrupt it when dismissed', async () => {
-  const { plugin, app } = await loaded();
-  const fake = withClaudian(app);
-  fake.status = 'queued';
-  fake.reply = 'An earlier request finished.';
-  await plugin.runWorkflow('tasks');
-  assert.equal(plugin.agentRun()?.state, 'delegated');
-  await endTurn(app, 'session-1');
-  assert.equal(plugin.agentRun()?.state, 'delegated');
-  assert.equal(plugin.agentRun()?.reply, '');
-  fake.reply = 'Another queued request finished.';
-  await endTurn(app, 'session-1');
-  assert.equal(plugin.agentRun()?.state, 'delegated');
-  assert.equal(plugin.agentRun()?.reply, '');
-  await plugin.stopWorkflow();
-  assert.equal(plugin.agentRun(), null);
-  assert.equal(fake.sent.length, 1);
-});
+for (const status of ['queued', 'steered', 'uncertain'] as const) {
+  test(`${status} workflows never consume an earlier turn reply or interrupt it when dismissed`, async () => {
+    const { plugin, app } = await loaded();
+    const fake = withClaudian(app);
+    fake.status = status;
+    fake.reply = 'An earlier request finished.';
+    await plugin.runWorkflow('tasks');
+    assert.equal(plugin.agentRun()?.state, 'delegated');
+    await endTurn(app, 'session-1');
+    assert.equal(plugin.agentRun()?.state, 'delegated');
+    assert.equal(plugin.agentRun()?.reply, '');
+    fake.reply = 'Another queued request finished.';
+    await endTurn(app, 'session-1');
+    assert.equal(plugin.agentRun()?.state, 'delegated');
+    assert.equal(plugin.agentRun()?.reply, '');
+    assert.deepEqual(fake.reads, []);
+    await plugin.stopWorkflow();
+    assert.equal(plugin.agentRun(), null);
+    assert.equal(fake.sent.length, 1);
+  });
+}
 
 test('a queued workflow shows chat follow-up instead of completion or a stop control', async () => {
   const { plugin, app } = await loaded();

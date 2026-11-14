@@ -10,7 +10,7 @@ export const QUICK_KINDS: { id: QuickKind; label: string; icon: string; hint: st
   { id: 'capture', label: 'Capture', icon: 'inbox', hint: 'Saved to your inbox as it is. Sort it later.', placeholder: 'An idea, a question, a link...' },
   { id: 'note', label: 'Note', icon: 'file-plus-2', hint: 'The first line is the title. Anything below becomes the body.', placeholder: 'Title on the first line\nOptional body below' },
   { id: 'task', label: 'Task', icon: 'square-check-big', hint: 'One task per line.', placeholder: 'Something to do\nAnother thing to do' },
-  { id: 'project', label: 'Project', icon: 'folder-plus', hint: 'The first line names the project and its folder.', placeholder: 'Project name' }
+  { id: 'project', label: 'Project', icon: 'folder-plus', hint: 'The first line names the project and its folder. Anything below becomes the body.', placeholder: 'Project name\nOptional body below' }
 ];
 
 function offsetDay(days: number): string {
@@ -103,7 +103,7 @@ export class QuickAddModal extends Modal {
       });
     });
 
-    const editor = this.contentEl.createEl('textarea', { cls: 'tangrow-quick-input', attr: { rows: this.kind === 'project' ? '2' : '5', placeholder: this.ui.t(entry.placeholder), 'aria-label': this.ui.t(entry.label) } });
+    const editor = this.contentEl.createEl('textarea', { cls: 'tangrow-quick-input', attr: { rows: '5', placeholder: this.ui.t(entry.placeholder), 'aria-label': this.ui.t(entry.label) } });
     editor.value = this.text;
     this.contentEl.createEl('p', { cls: 'tangrow-muted tangrow-quick-hint', text: this.ui.t(entry.hint) });
 
@@ -195,8 +195,7 @@ export class QuickAddModal extends Modal {
       this.reason = result.reason || this.ui.t('Suggestion ready. Review it before saving.');
       this.kind = result.kind;
       if (result.kind === 'task') { this.text = result.title || source; this.due = result.due ?? ''; }
-      else if (result.kind === 'note') this.text = result.title ? `${result.title}\n${source}` : source;
-      else if (result.kind === 'project') this.text = result.title || source;
+      else if (result.kind === 'note' || result.kind === 'project') this.text = result.title ? `${result.title}\n${source}` : source;
       if (result.kind === 'project') this.projectFolder = '';
       this.render();
     } finally { this.suggesting = undefined; }
@@ -206,6 +205,7 @@ export class QuickAddModal extends Modal {
     if (this.saving || this.problem() !== null) return;
     const lines = this.lines();
     const first = lines[0] ?? '';
+    const body = this.text.slice(this.text.indexOf(first) + first.length).trim();
     this.saving = true;
     this.contentEl.querySelectorAll<HTMLButtonElement | HTMLTextAreaElement>('button, textarea').forEach((control) => { control.disabled = true; });
     try {
@@ -216,9 +216,8 @@ export class QuickAddModal extends Modal {
           await this.host.addTask(line, { due: this.due || undefined, target: this.target });
           this.text = this.text.split(/\r?\n/).filter((entry, index, all) => entry.trim() !== line || all.findIndex((other) => other.trim() === line) !== index).join('\n');
         }
-      } else if (this.kind === 'project') await this.host.createNote('project', first, this.projectFolder || undefined);
+      } else if (this.kind === 'project') await this.host.createNote('project', first, this.projectFolder || undefined, body);
       else {
-        const body = this.text.slice(this.text.indexOf(first) + first.length).trim();
         if (body) await this.host.createNoteWithBody(first, body);
         else await this.host.createNote('note', first);
       }

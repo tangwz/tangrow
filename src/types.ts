@@ -113,7 +113,7 @@ export interface SidebarHost {
   action(id: ActionId): Promise<void>;
   openNote(path: string, line?: number): Promise<void>;
   openBase(id: BaseId): Promise<void>;
-  createNote(kind: NoteKind, title: string, projectFolder?: string): Promise<void>;
+  createNote(kind: NoteKind, title: string, projectFolder?: string, body?: string): Promise<void>;
   addTask(text: string, options?: { due?: string; target?: 'overview' | 'daily' }): Promise<string>;
   completeTask(path: string, line: number): Promise<void>;
   openQuickAdd(kind?: QuickKind, text?: string): void;
