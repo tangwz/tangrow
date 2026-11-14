@@ -1,3 +1,4 @@
+/// <reference lib="es2024.promise" />
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import path from 'node:path';
@@ -5,13 +6,13 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { canonicalEntityNotes, reportStatusSource } from '../src/report-metrics';
-import type { ReportData, ReportEntity, ReportRecord, ReportSnapshot, ReportStatusChange, ReportTask, ReportTaskStatus } from '../src/report-contract';
+import type { ReportData, ReportEntity, ReportPage, ReportRange, ReportRecord, ReportSnapshot, ReportStatusChange, ReportTask, ReportTaskStatus } from '../src/report-contract';
 import type { Settings } from '../src/types';
 import type { MockApp, TFile as MockFile, createMockApp as AppFactory } from './obsidian-mock';
 
 interface ReportPlugin {
   settings: Settings;
-  loadReport(range: 30): Promise<ReportSnapshot>;
+  loadReport(range: ReportRange): Promise<ReportSnapshot>;
   updateReportStatus(change: ReportStatusChange): Promise<void>;
   subscribe(listener: () => void): () => void;
 }
@@ -24,6 +25,14 @@ interface ReportView {
   renderTasks(parent: Element, data: ReportData): void;
   renderClips(parent: Element, data: ReportData): void;
   noteStatus(parent: Element, note: ReportRecord): void;
+}
+interface RangeReportView extends ReportView {
+  readonly range: ReportRange;
+  snapshotRange: ReportRange;
+  loading: boolean;
+  contentEl: Element;
+  render(): void;
+  selectPage(page: ReportPage): void;
 }
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -251,27 +260,64 @@ test('excluded records, archived tasks and non-entity folders cannot be edited',
   assert.deepEqual(app.vault.processedPaths, []);
 });
 
+class ElementDocument {
+  readonly body = new Element('body', this);
+  activeElement = this.body;
+  createElementNS(_namespace: string, tag: string): Element { return new Element(tag, this); }
+}
+
 class Element extends EventTarget {
   children: Element[] = [];
   textContent = '';
   value = '';
+  type = '';
+  scrollTop = 0;
   disabled = false;
+  style: Record<string, string> = {};
   dataset: Record<string, string> = {};
   attributes = new Map<string, string>();
-  constructor(readonly tag = 'div') { super(); }
-  createEl(tag: string, options: { text?: string; value?: string; attr?: Record<string, string> } = {}): Element {
-    const child = new Element(tag);
+  constructor(readonly tag = 'div', readonly ownerDocument = new ElementDocument()) { super(); }
+  get tagName(): string { return this.tag.toUpperCase(); }
+  createEl(tag: string, options: { text?: string; value?: string; type?: string; cls?: string; attr?: Record<string, string> } = {}): Element {
+    const child = new Element(tag, this.ownerDocument);
     child.textContent = options.text ?? '';
     child.value = options.value ?? '';
+    child.type = options.type ?? '';
     child.attributes = new Map(Object.entries(options.attr ?? {}));
-    this.children.push(child);
+    if (options.cls) child.attributes.set('class', options.cls);
+    this.appendChild(child);
     return child;
   }
   createDiv(options = {}): Element { return this.createEl('div', options); }
   createSpan(options = {}): Element { return this.createEl('span', options); }
+  appendChild(child: Element): void { this.children.push(child); }
+  contains(element: Element | null): boolean { return this === element || this.children.some((child) => child.contains(element)); }
+  empty(): void {
+    if (this.children.some((child) => child.contains(this.ownerDocument.activeElement))) this.ownerDocument.activeElement = this.ownerDocument.body;
+    this.children = [];
+    this.textContent = '';
+  }
+  focus(): void { if (!this.disabled) this.ownerDocument.activeElement = this; }
+  scrollIntoView(): void {}
   setAttribute(key: string, value: string): void { this.attributes.set(key, value); }
   removeAttribute(key: string): void { this.attributes.delete(key); }
-  querySelectorAll(tag: string): Element[] { return this.children.flatMap((child) => [...(child.tag === tag ? [child] : []), ...child.querySelectorAll(tag)]); }
+  addClass(name: string): void { this.attributes.set('class', `${this.attributes.get('class') ?? ''} ${name}`.trim()); }
+  toggleClass(name: string, enabled: boolean): void {
+    const classes = new Set((this.attributes.get('class') ?? '').split(/\s+/).filter(Boolean));
+    if (enabled) classes.add(name);
+    else classes.delete(name);
+    this.attributes.set('class', [...classes].join(' '));
+  }
+  private matches(selector: string): boolean {
+    const data = /^\[data-([\w-]+)(?:="([^"]*)")?\]$/.exec(selector);
+    if (data) {
+      const key = data[1]!.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
+      return data[2] === undefined ? key in this.dataset : this.dataset[key] === data[2];
+    }
+    return this.tag === selector;
+  }
+  querySelectorAll(selector: string): Element[] { return this.children.flatMap((child) => [...(child.matches(selector) ? [child] : []), ...child.querySelectorAll(selector)]); }
+  querySelector(selector: string): Element | null { return this.querySelectorAll(selector)[0] ?? null; }
 }
 async function flush(): Promise<void> { await new Promise<void>((resolve) => setImmediate(resolve)); }
 function statusSelect(root: Element): Element { return root.querySelectorAll('select').find((select) => select.dataset.reportFocus?.startsWith('status-'))!; }
@@ -350,4 +396,159 @@ test('task status controls normalize uppercase completion for display while reta
   select.dispatchEvent(new Event('change'));
   await flush();
   assert.deepEqual(changes[0], { kind: 'task', task: snapshot.data.taskItems[0], status: '-' });
+});
+
+test('a late today load cannot replace overview data and each page restores its own range', async () => {
+  const { plugin } = setup();
+  const month = await plugin.loadReport(30);
+  const today = await plugin.loadReport(1);
+  const requests = deferReportLoads(plugin);
+  const view = mountReport(plugin, month);
+
+  view.selectPage('time');
+  await chooseRange(view, 1);
+  assert.equal(requests[0]!.range, 1);
+
+  view.selectPage('overview');
+  assert.equal(requests[1]!.range, 30);
+  requests[0]!.resolve(today);
+  await flush();
+  assert.equal(view.snapshot, month);
+  assert.equal(view.snapshot.data.trends.length, 30);
+  assert.equal(view.range, 30);
+  assert.equal(view.loading, true);
+  requests[1]!.resolve(month);
+  await flush();
+  assert.equal(view.loading, false);
+
+  view.selectPage('time');
+  assert.equal(requests[2]!.range, 1);
+  requests[2]!.resolve(today);
+  await flush();
+  assert.equal(view.snapshot.data.trends.length, 1);
+  assert.equal(view.snapshotRange, 1);
+
+  view.selectPage('overview');
+  assert.equal(requests[3]!.range, 30);
+  requests[3]!.resolve(month);
+  await flush();
+  assert.equal(view.snapshot.data.trends.length, 30);
+  assert.equal(view.snapshotRange, 30);
+  assert.equal(view.contentEl.querySelector('[data-report-focus="range-30"]')!.attributes.get('aria-pressed'), 'true');
+});
+
+function deferReportLoads(plugin: ReportPlugin) {
+  const requests: Array<{ range: ReportRange; resolve(snapshot: ReportSnapshot): void; reject(error: Error): void }> = [];
+  plugin.loadReport = (range) => {
+    const { promise, resolve, reject } = Promise.withResolvers<ReportSnapshot>();
+    requests.push({ range, resolve, reject });
+    return promise;
+  };
+  return requests;
+}
+
+function mountReport(plugin: ReportPlugin, snapshot: ReportSnapshot, page: ReportPage = 'overview'): RangeReportView {
+  const view = new harness.TangrowReport({}, plugin) as RangeReportView;
+  const doc = new ElementDocument();
+  Object.assign(view, { snapshot, snapshotRange: 30, mounted: true, page, contentEl: doc.body.createDiv() });
+  view.render();
+  return view;
+}
+
+async function chooseRange(view: RangeReportView, range: ReportRange): Promise<void> {
+  const button = view.contentEl.querySelector(`[data-report-focus="range-${range}"]`);
+  assert.ok(button, `Range ${range} must remain available`);
+  button.focus();
+  button.dispatchEvent(new Event('click'));
+  await flush();
+}
+
+test('returning to a cached range restarts an interrupted refresh and includes new notes', async () => {
+  const { app, plugin } = setup();
+  const original = await plugin.loadReport(30);
+  const oldToday = await plugin.loadReport(1);
+  const view = mountReport(plugin, original, 'time');
+  note(app, '40-Resources/New.md');
+  const updatedToday = await plugin.loadReport(1);
+  const updatedMonth = await plugin.loadReport(30);
+  const requests = deferReportLoads(plugin);
+
+  await chooseRange(view, 1);
+  const updating = view.refresh();
+  view.selectPage('overview');
+  assert.deepEqual(requests.map(({ range }) => range), [1, 1, 30]);
+
+  requests[1]!.resolve(updatedToday);
+  await updating;
+  assert.equal(view.snapshot, original);
+  assert.equal(view.loading, true);
+
+  requests[2]!.resolve(updatedMonth);
+  await flush();
+  requests[0]!.resolve(oldToday);
+  await flush();
+  assert.equal(view.snapshot, updatedMonth);
+  assert.equal(view.snapshot.data.counts.notes, 1);
+  assert.equal(view.snapshotRange, 30);
+  assert.equal(view.loading, false);
+
+  view.selectPage('tasks');
+  view.selectPage('overview');
+  assert.equal(requests.length, 3);
+});
+
+for (const page of ['overview', 'time'] as const) {
+  test(`${page} range controls retain focus during loading and after success or failure`, async () => {
+    const { plugin } = setup();
+    const month = await plugin.loadReport(30);
+    const range = page === 'time' ? 1 : 7;
+    const updated = await plugin.loadReport(range);
+    const view = mountReport(plugin, month, page);
+    const requests = deferReportLoads(plugin);
+    const assertFocus = (expectedRange: ReportRange): void => {
+      const active = view.contentEl.ownerDocument.activeElement;
+      assert.ok(view.contentEl.contains(active));
+      assert.equal(active.dataset.reportFocus, `range-${expectedRange}`);
+      assert.equal(active.attributes.get('aria-pressed'), 'true');
+    };
+
+    await chooseRange(view, range);
+    assert.equal(view.loading, true);
+    assertFocus(range);
+    assert.equal(view.contentEl.querySelector('svg'), null);
+    requests[0]!.resolve(updated);
+    await flush();
+    assert.equal(view.loading, false);
+    assertFocus(range);
+
+    await chooseRange(view, 90);
+    assertFocus(90);
+    requests[1]!.reject(new Error('Refresh failed'));
+    await flush();
+    assert.equal(view.loading, false);
+    assertFocus(90);
+    assert.ok(view.contentEl.querySelector('[data-report-focus="control-Retry report"]'));
+
+    await chooseRange(view, 30);
+    requests[2]!.resolve(month);
+    await flush();
+    assert.equal(view.snapshotRange, 30);
+    assertFocus(30);
+  });
+}
+
+test('completing a range refresh does not steal focus from another control', async () => {
+  const { plugin } = setup();
+  const month = await plugin.loadReport(30);
+  const week = await plugin.loadReport(7);
+  const view = mountReport(plugin, month);
+  const requests = deferReportLoads(plugin);
+  await chooseRange(view, 7);
+  const doc = view.contentEl.ownerDocument;
+  const outside = doc.body.createEl('button');
+  outside.focus();
+  requests[0]!.resolve(week);
+  await flush();
+  assert.equal(view.snapshotRange, 7);
+  assert.equal(doc.activeElement, outside);
 });

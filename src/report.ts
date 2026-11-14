@@ -9,7 +9,8 @@ import type { SidebarHost } from './types';
 
 export const REPORT_VIEW_TYPE = 'tangrow-report';
 const PAGE_SIZE = 20;
-const RANGES: ReportRange[] = [1, 7, 30, 60, 90, 180, 365];
+const RANGES: ReportRange[] = [7, 30, 60, 90, 180, 365];
+const TIME_RANGES: ReportRange[] = [1, ...RANGES];
 const PAGES: Array<{ id: ReportPage; label: string; icon: string }> = [
   { id: 'overview', label: 'Overview', icon: 'layout-dashboard' },
   { id: 'actions', label: 'Actions', icon: 'list-checks' },
@@ -40,7 +41,9 @@ export class TangrowReport extends ItemView {
   private loading = false;
   private snapshot?: ReportSnapshot;
   private page: ReportPage = 'overview';
-  private range: ReportRange = 30;
+  private overviewRange: ReportRange = 30;
+  private timeRange: ReportRange = 30;
+  private snapshotRange?: ReportRange;
   private query = '';
   private statusFilter: FilterStatus = 'all';
   private noteRole = 'all';
@@ -79,6 +82,7 @@ export class TangrowReport extends ItemView {
   private t(source: string, values?: TranslationValues): string { return translate(this.host.settings.language, source, values); }
   private number(value: number, decimals = 2): string { return value.toLocaleString(this.host.settings.language, { maximumFractionDigits: decimals }); }
   private date(value: number | null): string { return value !== null && Number.isFinite(value) ? new Date(value).toLocaleDateString(this.host.settings.language) : this.t('Unknown'); }
+  private get range(): ReportRange { return this.page === 'time' ? this.timeRange : this.overviewRange; }
   private scheduleRefresh(): void {
     window.clearTimeout(this.refreshTimer);
     this.refreshTimer = window.setTimeout(() => { void this.refresh(); }, 180);
@@ -87,11 +91,14 @@ export class TangrowReport extends ItemView {
   private async refresh(): Promise<void> {
     const revision = ++this.epoch;
     this.loading = true;
+    const range = this.range;
     if (!this.snapshot) this.contentEl.setText(this.t('Loading your local report...'));
+    else this.render();
     try {
-      const snapshot = await this.host.loadReport(this.range);
+      const snapshot = await this.host.loadReport(range);
       if (!this.mounted || revision !== this.epoch) return;
       this.snapshot = snapshot;
+      this.snapshotRange = range;
       const paths = new Set(snapshot.data.notes.map((note) => note.path));
       this.walkPaths = this.walkPaths.filter((path) => paths.has(path));
       this.walkIndex = Math.max(0, Math.min(this.walkIndex, this.walkPaths.length - 1));
@@ -174,7 +181,12 @@ export class TangrowReport extends ItemView {
     this.renderHeader(shell);
     const body = shell.createDiv({ cls: 'tangrow-report-page', attr: { role: 'tabpanel', id: `${this.instanceId}-pane`, 'aria-labelledby': `${this.instanceId}-${this.page}` } });
     const { data } = this.snapshot;
-    switch (this.page) {
+    if ((this.page === 'overview' || this.page === 'time') && this.snapshotRange !== this.range) {
+      const panel = this.page === 'overview' ? body.createEl('section', { cls: 'tangrow-report-panel' }) : body;
+      this.renderRangeHeading(panel);
+      this.caption(panel, 'Loading your local report...');
+      if (!this.loading) this.control(panel, 'Retry report', 'refresh-cw', () => this.refresh());
+    } else switch (this.page) {
       case 'overview': this.renderOverview(body, data); break;
       case 'actions': this.renderActions(body, data); break;
       case 'tasks': this.renderTasks(body, data); break;
@@ -234,10 +246,23 @@ export class TangrowReport extends ItemView {
         if (target) { this.selectPage(target.id); this.contentEl.querySelector<HTMLElement>(`[data-page="${target.id}"]`)?.focus(); }
       });
     }
+  }
+
+  private renderRangeHeading(parent: HTMLElement): void {
+    const heading = parent.createDiv({ cls: 'tangrow-report-panel-heading' });
+    heading.createEl('h2', { text: this.t(this.page === 'time' ? 'Editing activity' : 'Creation trends') });
+    this.renderRanges(heading);
+  }
+
+  private renderRanges(parent: HTMLElement): void {
     const ranges = parent.createDiv({ cls: 'tangrow-report-range', attr: { role: 'group', 'aria-label': this.t('Report date range') } });
-    for (const range of RANGES) {
+    for (const range of this.page === 'time' ? TIME_RANGES : RANGES) {
       const label = range === 1 ? this.t('Today') : this.t('Last {count} days', { count: range });
-      const button = this.control(ranges, label, '', async () => { this.range = range; await this.refresh(); }, undefined, true);
+      const button = this.control(ranges, label, '', async () => {
+        if (this.page === 'time') this.timeRange = range;
+        else this.overviewRange = range;
+        await this.refresh();
+      }, undefined, true);
       button.addClass('tangrow-report-range-button');
       button.toggleClass('is-active', this.range === range);
       button.setAttribute('aria-pressed', String(this.range === range));
@@ -247,13 +272,21 @@ export class TangrowReport extends ItemView {
   }
 
   private selectPage(page: ReportPage): void {
+    const previousRange = this.range;
     this.page = page;
+    const refreshInterrupted = previousRange !== this.range && this.loading;
+    if (previousRange !== this.range) {
+      this.epoch++;
+      this.loading = false;
+    }
     this.query = '';
     this.statusFilter = 'all';
     this.noteRole = 'all';
     this.listPage = 0;
     this.render();
     this.contentEl.querySelector<HTMLElement>(`[data-page="${page}"]`)?.focus({ preventScroll: true });
+    this.contentEl.querySelector<HTMLElement>(`[data-page="${page}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    if (refreshInterrupted || this.snapshotRange !== this.range) void this.refresh();
   }
 
   private renderOverview(parent: HTMLElement, data: ReportData): void {
@@ -306,7 +339,9 @@ export class TangrowReport extends ItemView {
   }
 
   private renderTrends(parent: HTMLElement, data: ReportData): void {
-    const panel = this.panel(parent, 'Creation trends', 'Current records grouped by creation day, not historical inventory snapshots.');
+    const panel = parent.createEl('section', { cls: 'tangrow-report-panel' });
+    this.renderRangeHeading(panel);
+    this.caption(panel, 'Current records grouped by creation day, not historical inventory snapshots.');
     const legend = panel.createDiv({ cls: 'tangrow-report-legend' });
     for (const series of SERIES) {
       const count = data.trends.reduce((sum, day) => sum + day[series.key], 0);
@@ -394,9 +429,11 @@ export class TangrowReport extends ItemView {
   }
   private randomOrphan(parent: HTMLElement, data: ReportData): void {
     const control = this.control(parent, 'Open a random orphan', 'shuffle', async () => {
-      const latest = await this.host.loadReport(this.range);
-      if (!this.mounted) return;
+      const range = this.range;
+      const latest = await this.host.loadReport(range);
+      if (!this.mounted || range !== this.range) return;
       this.snapshot = latest;
+      this.snapshotRange = range;
       if (!latest.quality.linksReady) { this.render(); return; }
       const note = sampleReportNotes(latest.data.orphanNotes, 1)[0];
       if (note) await this.host.openNote(note.path);
@@ -593,6 +630,7 @@ export class TangrowReport extends ItemView {
   }
 
   private renderTime(parent: HTMLElement): void {
+    this.renderRangeHeading(parent);
     const { activity, data } = this.snapshot!;
     const metrics = parent.createDiv({ cls: 'tangrow-report-metrics' });
     this.renderActivityMetric(metrics);
