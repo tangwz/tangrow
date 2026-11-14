@@ -22,7 +22,7 @@ export interface ClaudianAPI {
 export type AgentStatus = 'missing' | 'incompatible' | 'idle' | 'ready';
 export type WorkflowId = 'inbox' | 'weekly' | 'tasks' | 'project-brief' | 'project-plan' | 'connect';
 export interface Workflow { id: WorkflowId; label: string; description: string; icon: string; needsNote: boolean; writes: boolean }
-export interface WorkflowRun { workflow: WorkflowId; sessionId: string; state: 'running' | 'done'; reply: string }
+export interface WorkflowRun { workflow: WorkflowId; sessionId: string; state: 'running' | 'delegated' | 'done'; reply: string }
 export interface WorkflowContext { today: string; weeklyNote: string; activeNote?: string }
 
 export const WORKFLOWS: readonly Workflow[] = [

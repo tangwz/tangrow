@@ -1,4 +1,10 @@
-const OPEN_TASK = /^(\s*(?:[-*+]|\d+[.)])\s+\[)[ /](\]\s+)/;
+const OPEN_TASK = /^((?: {0,3}>[ \t]?)*[ \t]*(?:[-*+]|\d+[.)])[ \t]+\[)[ /](\](?:[ \t]+(.*))?)$/;
+
+/** Uses the same syntax for indexed labels and guarded checkbox edits, including quoted lists. */
+export function openTaskLabel(line: string): string | null {
+  const match = OPEN_TASK.exec(line.replace(/\r$/, ''));
+  return match ? match[3] ?? '' : null;
+}
 
 export function taskText(value: string): string {
   const text = value.replace(/\s*\r?\n\s*/g, ' ').trim();
@@ -22,9 +28,10 @@ export function appendTaskLine(content: string, line: string): string {
 export function completeTaskLine(content: string, lineIndex: number, label?: string): string {
   const lines = content.split('\n');
   const line = lines[lineIndex];
-  if (line === undefined || !OPEN_TASK.test(line) || (label !== undefined && line.replace(OPEN_TASK, '').replace(/\r$/, '') !== label)) {
+  const match = line === undefined ? null : OPEN_TASK.exec(line.replace(/\r$/, ''));
+  if (!match || (label !== undefined && (match[3] ?? '') !== label)) {
     throw new Error('This task changed in its note. Open the note to review it.');
   }
-  lines[lineIndex] = line.replace(OPEN_TASK, '$1x$2');
+  lines[lineIndex] = `${match[1]}x${match[2]}${line!.endsWith('\r') ? '\r' : ''}`;
   return lines.join('\n');
 }

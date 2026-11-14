@@ -227,6 +227,28 @@ test('a stale sidebar task cannot complete a different task whose label contains
   assert.equal(note.content, '# Plan\n- [ ] Call lawyer\n');
 });
 
+test('quoted sidebar tasks display their labels and complete without changing quote markers or line endings', async () => {
+  const { plugin, app } = await loaded();
+  const note = app.vault.seedFile('20-Project/Plan.md', '> [!todo] Next\r\n> - [ ] Call\r\n> > 1. [/] Call lawyer\r\n');
+  const getFileCache = app.metadataCache.getFileCache;
+  app.metadataCache.getFileCache = (file) => file === note ? { ...getFileCache(file), listItems: [
+    { task: ' ', position: { start: { line: 1 } } },
+    { task: '/', position: { start: { line: 2 } } }
+  ] } : getFileCache(file);
+  plugin.snapshot();
+  await flush();
+  const tasks = plugin.snapshot().tasks;
+  assert.deepEqual(tasks.map((task) => task.text), ['Call', 'Call lawyer']);
+  const task = tasks[1]!;
+  await plugin.completeTask(task.path, task.line);
+  assert.equal(note.content, '> [!todo] Next\r\n> - [ ] Call\r\n> > 1. [x] Call lawyer\r\n');
+});
+
+test('quoted task completion rejects a stale label even when the replacement contains it', () => {
+  assert.throws(() => completeTaskLine('> - [ ] Call lawyer\r\n', 0, 'Call'), /changed in its note/);
+  assert.equal(completeTaskLine('  > >\t2) [/] Call\r\n', 0, 'Call'), '  > >\t2) [x] Call\r\n');
+});
+
 test('nothing is sent until AI is enabled and a key exists', async () => {
   const { plugin, app, calls } = await loaded();
   assert.equal(plugin.aiReady(), false);
@@ -362,6 +384,43 @@ test('workflow prompts name files by path, follow the configured folders and sta
   assert.throws(() => workflowPrompt('project-plan', settings, { today: '2026-11-12', weeklyNote: 'w.md' }), /Markdown note/);
   assert.match(workflowPrompt('inbox', readSettings({}), context), /等我确认/);
   for (const item of WORKFLOWS) assert.equal(workflowPrompt(item.id, settings, context).includes('undefined'), false);
+});
+
+test('queued workflows never consume an earlier turn reply or interrupt it when dismissed', async () => {
+  const { plugin, app } = await loaded();
+  const fake = withClaudian(app);
+  fake.status = 'queued';
+  fake.reply = 'An earlier request finished.';
+  await plugin.runWorkflow('tasks');
+  assert.equal(plugin.agentRun()?.state, 'delegated');
+  await endTurn(app, 'session-1');
+  assert.equal(plugin.agentRun()?.state, 'delegated');
+  assert.equal(plugin.agentRun()?.reply, '');
+  fake.reply = 'Another queued request finished.';
+  await endTurn(app, 'session-1');
+  assert.equal(plugin.agentRun()?.state, 'delegated');
+  assert.equal(plugin.agentRun()?.reply, '');
+  await plugin.stopWorkflow();
+  assert.equal(plugin.agentRun(), null);
+  assert.equal(fake.sent.length, 1);
+});
+
+test('a queued workflow shows chat follow-up instead of completion or a stop control', async () => {
+  const { plugin, app } = await loaded();
+  plugin.settings.language = 'en';
+  const fake = withClaudian(app);
+  fake.status = 'queued';
+  await plugin.runWorkflow('tasks');
+  const panel = new harness.AiPanel(plugin, {});
+  const root = new Element();
+  panel.mount(root);
+  const labels = root.querySelectorAll('button').map((button) => button.getAttribute('aria-label'));
+  assert.ok(labels.includes('Continue in Claudian'));
+  assert.ok(labels.includes('Dismiss'));
+  assert.equal(labels.includes('Stop'), false);
+  assert.equal(labels.includes('Copy'), false);
+  assert.equal(root.querySelectorAll('span').some((element) => element.textContent === 'Latest reply'), false);
+  panel.destroy();
 });
 
 test('vault skills cover every workflow with valid front matter and no session-specific paths', () => {

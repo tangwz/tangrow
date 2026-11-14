@@ -56,7 +56,7 @@ function relativeDestination(link: string, sourcePath: string, targetPath: strin
   return `${relative}${path.endsWith('/') ? '/' : ''}${suffix < 0 ? '' : link.slice(suffix)}`;
 }
 
-/** Rebase Markdown destinations in copied text without rewriting labels, code, or the source note. */
+/** Rebase Markdown and wiki destinations without rewriting labels, code, or the source note. */
 export function rebaseMarkdownLinks(content: string, sourcePath: string, targetPath: string, resolve?: ResolveLink): string {
   if (sourcePath.substring(0, sourcePath.lastIndexOf('/')) === targetPath.substring(0, targetPath.lastIndexOf('/'))) return content;
   const edits: { start: number; end: number; text: string }[] = [];
@@ -122,6 +122,20 @@ export function rebaseMarkdownLinks(content: string, sourcePath: string, targetP
       while (closing >= 0 && (content[closing - 1] === '`' || content[closing + delimiter.length] === '`')) closing = content.indexOf(delimiter, closing + delimiter.length);
       cursor = closing < 0 ? end : closing + delimiter.length;
       continue;
+    }
+    if (content.startsWith('[[', cursor)) {
+      const wiki = /^\[\[([^\[\]\r\n]+)\]\]/.exec(content.slice(cursor));
+      if (wiki) {
+        const link = wiki[1]!;
+        const suffix = link.search(/#|\\?\|/);
+        const path = suffix < 0 ? link : link.slice(0, suffix);
+        const original = path && resolve?.(path, sourcePath);
+        if (original && original !== resolve?.(path, targetPath)) {
+          edits.push({ start: cursor + 2, end: cursor + 2 + path.length, text: original });
+        }
+        cursor += wiki[0].length;
+        continue;
+      }
     }
     if (character === '[') brackets++;
     if (character === ']' && brackets) {

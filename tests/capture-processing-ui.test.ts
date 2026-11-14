@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import type { CaptureRequest, CaptureSummary, Settings } from '../src/types';
 import { readSettings } from '../src/model';
+import type { CaptureSuggestion } from '../src/ai';
 import type { MockApp, createMockApp as MockAppFactory } from './obsidian-mock';
 
 class Element extends EventTarget {
@@ -56,6 +57,8 @@ interface Host {
   processCapture(path: string, request: CaptureRequest): Promise<string | null>;
   openNote(path: string): Promise<void>;
   aiReady(): boolean;
+  readCapture(path: string): Promise<string>;
+  suggestCapture(text: string, signal?: AbortSignal): Promise<CaptureSuggestion>;
 }
 interface Panel {
   root: Element;
@@ -71,6 +74,7 @@ interface Dialog {
   setTitle(title: string): void;
   close(): void;
   onOpen(): void;
+  onClose(): void;
 }
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const bundle = await build({
@@ -89,12 +93,103 @@ const harness = moduleObject.exports as {
   createMockApp: typeof MockAppFactory;
 };
 function host(): Host {
-  return { app: harness.createMockApp(), settings: readSettings({ language: 'en' }), processCapture: async () => null, openNote: async () => undefined, aiReady: () => false };
+  return {
+    app: harness.createMockApp(), settings: readSettings({ language: 'en' }), processCapture: async () => null,
+    openNote: async () => undefined, aiReady: () => false, readCapture: async () => 'Source body',
+    suggestCapture: async () => { throw new Error('Unexpected suggestion request'); }
+  };
 }
 function capture(name: string, fields: Partial<CaptureSummary> = {}): CaptureSummary {
   return { name, path: `00-Inbox/${name}.md`, folder: '00-Inbox', modified: 1, created: new Date(2026, 10, 9, 12).getTime(), ...fields };
 }
 async function flush(): Promise<void> { await new Promise<void>((resolve) => setImmediate(resolve)); }
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+async function suggestingDialog() {
+  const service = host();
+  const projectPath = service.app.vault.seedFile('20-Project/Launch/Launch.md', '# Launch').path;
+  const pending = deferred<CaptureSuggestion>();
+  service.aiReady = () => true;
+  service.suggestCapture = () => pending.promise;
+  const dialog = new harness.CaptureProcessingModal(service, capture('Source'));
+  Object.assign(dialog, { contentEl: new Element(), setTitle: () => undefined, close: () => dialog.onClose() });
+  dialog.onOpen();
+  const form = dialog.contentEl.querySelector('form')!;
+  const [action, project] = form.querySelectorAll('select') as [Element, Element];
+  const title = form.querySelector('input')!;
+  const suggest = form.querySelector('.tangrow-capture-suggest')!;
+  suggest.dispatchEvent(new Event('click'));
+  await flush();
+  const suggestion: CaptureSuggestion = { kind: 'task', title: 'Suggested task', project: null, due: null, reason: 'Suggested reason' };
+  return { service, dialog, form, action, project, title, suggest, pending, suggestion, projectPath };
+}
+
+test('an AI suggestion updates an untouched processing form', async () => {
+  const context = await suggestingDialog();
+  context.pending.resolve(context.suggestion);
+  await flush();
+  assert.equal(context.action.value, 'task');
+  assert.equal(context.title.value, 'Suggested task');
+  assert.equal(context.form.querySelector('.tangrow-quick-suggestion')!.textContent, 'Suggested reason');
+  assert.equal(context.suggest.disabled, false);
+});
+
+for (const field of ['title', 'action', 'project', 'reverted title'] as const) {
+  test(`a late AI suggestion preserves a manually edited ${field}`, async () => {
+    const context = await suggestingDialog();
+    if (field === 'action') {
+      context.action.value = 'done';
+      context.action.dispatchEvent(new Event('change'));
+    } else if (field === 'project') {
+      context.project.value = context.projectPath;
+      context.project.dispatchEvent(new Event('change'));
+    } else {
+      context.title.value = 'My title';
+      context.title.dispatchEvent(new Event('input'));
+      if (field === 'reverted title') {
+        context.title.value = 'Source';
+        context.title.dispatchEvent(new Event('input'));
+      }
+    }
+    const expected = [context.action.value, context.title.value, context.project.value];
+    context.pending.resolve(context.suggestion);
+    await flush();
+    assert.deepEqual([context.action.value, context.title.value, context.project.value], expected);
+    assert.equal(context.form.querySelector('.tangrow-quick-suggestion')!.textContent, '');
+    assert.equal(context.suggest.disabled, false);
+  });
+}
+
+test('a suggestion finishing during submission cannot change the saved form', async () => {
+  const context = await suggestingDialog();
+  const saving = deferred<string | null>();
+  const requests: CaptureRequest[] = [];
+  context.service.processCapture = async (_path, request) => { requests.push(request); return saving.promise; };
+  context.form.dispatchEvent(new Event('submit', { cancelable: true }));
+  context.pending.resolve(context.suggestion);
+  await flush();
+  assert.deepEqual(requests, [{ action: 'note', title: 'Source' }]);
+  assert.equal(context.action.value, 'note');
+  assert.equal(context.title.value, 'Source');
+  assert.equal(context.suggest.disabled, true);
+  saving.resolve('00-Inbox/Source note.md');
+  await flush();
+});
+
+test('closing the dialog invalidates a pending AI suggestion', async () => {
+  const context = await suggestingDialog();
+  context.dialog.close();
+  context.pending.resolve(context.suggestion);
+  await flush();
+  assert.equal(context.dialog.contentEl.children.length, 0);
+  assert.equal(context.action.value, 'note');
+  assert.equal(context.title.value, 'Source');
+});
 
 test('the capture timeline defaults to pending, exposes resumable actions and intersects status with the date', () => {
   const panel = new harness.CapturePanel(host());

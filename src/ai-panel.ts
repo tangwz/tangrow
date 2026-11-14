@@ -83,7 +83,7 @@ export class AiPanel {
     const heading = card.createDiv({ cls: 'tangrow-ai-output-heading' });
     icon(heading, run.state === 'running' ? 'loader' : 'sparkles');
     heading.createEl('strong', { text: this.ui.t(item?.label ?? 'Workflow') });
-    heading.createSpan({ cls: 'tangrow-muted', text: this.ui.t(run.state === 'running' ? 'Running in Claudian' : 'Latest reply') });
+    heading.createSpan({ cls: 'tangrow-muted', text: this.ui.t(run.state === 'running' ? 'Running in Claudian' : run.state === 'delegated' ? 'Continue in Claudian' : 'Latest reply') });
     const body = card.createDiv({ cls: 'tangrow-ai-output-body' });
     const footer = card.createDiv({ cls: 'tangrow-ai-output-actions' });
     if (run.state === 'running') {
@@ -91,6 +91,12 @@ export class AiPanel {
       body.textContent = this.ui.t('Claudian is working. Answer its questions and permission requests in the chat; its reply appears here when the turn ends.');
       this.ui.button(footer, 'Open Claudian', () => this.host.openAgent(), { icon: 'bot' });
       this.ui.button(footer, 'Stop', () => this.host.stopWorkflow(), { icon: 'circle-stop' });
+      return;
+    }
+    if (run.state === 'delegated') {
+      body.textContent = this.ui.t('Follow this workflow and read its reply in Claudian.');
+      this.ui.button(footer, 'Continue in Claudian', () => this.host.openAgent(), { icon: 'bot' });
+      this.ui.button(footer, 'Dismiss', () => this.host.stopWorkflow(), { icon: 'x' });
       return;
     }
     const text = run.reply;

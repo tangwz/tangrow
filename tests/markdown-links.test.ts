@@ -77,6 +77,31 @@ test('a shortest link that resolves differently at the destination is made expli
     '[Plan](../../00-Inbox/Plan%20draft.md#Next)');
 });
 
+test('wiki links and embeds keep their resolved files, headings, block references and aliases', () => {
+  const resolve = (linkpath: string, sourcePath: string): string | null => {
+    if (['Plan', 'Plan.md', './Plan', 'sketch.png'].includes(linkpath)) {
+      const name = linkpath === 'sketch.png' ? linkpath : 'Plan.md';
+      return `${sourcePath === SOURCE ? '00-Inbox' : '20-Project/Launch'}/${name}`;
+    }
+    return linkpath === 'Unique' ? '40-Resources/Unique.md' : null;
+  };
+  const content = '[[Plan]] [[Plan.md#Next|Read this]] ![[Plan#^block]] ![[sketch.png|240]] [[./Plan]]\r\n[[Unique]] [[Missing]] [[#Local]] [[#^local]]';
+  assert.equal(rebaseMarkdownLinks(content, SOURCE, TARGET, resolve),
+    '[[00-Inbox/Plan.md]] [[00-Inbox/Plan.md#Next|Read this]] ![[00-Inbox/Plan.md#^block]] ![[00-Inbox/sketch.png|240]] [[00-Inbox/Plan.md]]\r\n[[Unique]] [[Missing]] [[#Local]] [[#^local]]');
+});
+
+test('wiki links are left alone in code, escaped text and comments', () => {
+  const content = [
+    '`[[Plan]]` [[Plan]]', '\\[[Plan]]', '<!-- ![[Plan]] -->',
+    '```md', '[[Plan]]', '```', '~~~', '![[Plan]]', '~~~',
+    '> ```md', '> [[Plan]]', '> ```', '    [[Plan]]', '\t![[Plan]]',
+    '- Item', '  ```md', '  [[Plan]]', '  ```', '> [[Plan]]'
+  ].join('\n');
+  const resolve = (_linkpath: string, sourcePath: string): string => sourcePath === SOURCE ? '00-Inbox/Plan.md' : '20-Project/Launch/Plan.md';
+  assert.equal(rebaseMarkdownLinks(content, SOURCE, TARGET, resolve),
+    content.replace('`[[Plan]]` [[Plan]]', '`[[Plan]]` [[00-Inbox/Plan.md]]').replace(/> \[\[Plan\]\]$/, '> [[00-Inbox/Plan.md]]'));
+});
+
 test('folder names are encoded before they are inserted into Markdown destinations', () => {
   assert.equal(rebaseMarkdownLinks('[plan](./Plan.md#Next)', 'Inbox ideas (old)/Capture.md', TARGET),
     '[plan](../../Inbox%20ideas%20%28old%29/Plan.md#Next)');

@@ -12,7 +12,7 @@ import { AI_SECRET_ID, agentGuide, buildSuggestionPrompt, parseSuggestion, readA
 import { CLAUDIAN_OPEN_COMMAND, CLAUDIAN_TURN_ENDED, WORKFLOWS, claudianApi, skillFiles, workflowPrompt, type AgentStatus, type ClaudianAPI, type WorkflowId, type WorkflowRun } from './claudian';
 import { runPrompt } from './ai-client';
 import { QuickAddModal } from './quick-add';
-import { appendTaskLine, completeTaskLine, taskLine } from './task-tools';
+import { appendTaskLine, completeTaskLine, openTaskLabel, taskLine } from './task-tools';
 import { findSubmittedNote, readDraftSubmissions, type DraftSubmission, type DraftSubmissions, type SubmissionKind } from './draft-submissions';
 import { JOURNAL_PERIODS, JOURNAL_LABELS, defaultJournal, journalInterval, journalPath, journalTemplate, type JournalPeriod } from './periodic-notes';
 import { ImmersiveCapture, NoteImmersion } from './immersive';
@@ -644,8 +644,8 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     void this.app.vault.cachedRead(file).then((content) => {
       const lines = new Map<number, string>();
       content.split(/\r?\n/).forEach((line, index) => {
-        const match = /^\s*(?:[-*+]|\d+[.)])\s+\[[ /]\]\s+(.*)$/.exec(line);
-        if (match?.[1]) lines.set(index, match[1]);
+        const label = openTaskLabel(line);
+        if (label !== null) lines.set(index, label);
       });
       this.taskLabels.set(path, { mtime, lines });
     }).catch(() => {
@@ -963,7 +963,9 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     const text = workflowPrompt(id, this.settings, { today, weeklyNote, ...(note ? { activeNote: note.path } : {}) });
     const status = await api.send(sessionId, { text });
     if (!this.alive) return;
-    this.workflow = { workflow: id, sessionId, state: 'running', reply: '' };
+    // Session-only turn events cannot identify a queued request behind other user inputs.
+    // Track replies only when this send starts a new turn; otherwise follow it in Claudian.
+    this.workflow = { workflow: id, sessionId, state: status === 'started' ? 'running' : 'delegated', reply: '' };
     this.notify();
     new Notice(this.t(status === 'queued' ? 'Queued in Claudian. It starts when the current work finishes.' : 'Sent to Claudian.'));
     try { await this.openAgent(); } catch { /* The job is already running; the chat can be opened by hand. */ }

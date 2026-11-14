@@ -5,6 +5,7 @@ import { safeTitle } from './model';
 import type { CaptureRequest, CaptureSummary, SidebarHost } from './types';
 
 export class CaptureProcessingModal extends Modal {
+  private suggestionController: AbortController | null = null;
   constructor(private readonly host: SidebarHost, private readonly capture: CaptureSummary) { super(host.app); }
 
   onOpen(): void {
@@ -32,14 +33,21 @@ export class CaptureProcessingModal extends Modal {
       project.createEl('option', { value: file.path, text: file.path });
     }
     const advice = form.createDiv({ cls: 'tangrow-quick-suggestion', attr: { 'aria-live': 'polite' } });
+    let saving = false;
+    let suggestButton: HTMLButtonElement | undefined;
     if (this.host.aiReady()) {
       const suggest = form.createEl('button', { cls: 'tangrow-button tangrow-capture-suggest', text: t('Suggest with AI'), attr: { type: 'button' } });
+      suggestButton = suggest;
       suggest.addEventListener('click', () => {
         if (suggest.disabled) return;
+        const controller = new AbortController();
+        this.suggestionController = controller;
+        const current = (): boolean => this.suggestionController === controller && !controller.signal.aborted;
         suggest.disabled = true;
         suggest.textContent = t('Thinking...');
         error.textContent = '';
-        void this.host.readCapture(this.capture.path).then((content) => this.host.suggestCapture(content)).then((result) => {
+        void this.host.readCapture(this.capture.path).then((content) => current() ? this.host.suggestCapture(content, controller.signal) : null).then((result) => {
+          if (!result || !current()) return;
           // A project or an unsorted idea both map to keeping a note; the user still chooses.
           action.value = result.kind === 'task' ? 'task' : result.kind === 'capture' ? 'done' : 'note';
           if (result.title) title.value = result.title;
@@ -47,9 +55,11 @@ export class CaptureProcessingModal extends Modal {
           advice.textContent = result.reason;
           update();
         }).catch((failure: unknown) => {
-          error.textContent = describeError(this.host.settings.language, failure);
+          if (current()) error.textContent = describeError(this.host.settings.language, failure);
         }).finally(() => {
-          suggest.disabled = false;
+          if (this.suggestionController !== controller) return;
+          this.suggestionController = null;
+          suggest.disabled = saving;
           suggest.textContent = t('Suggest with AI');
         });
       });
@@ -60,13 +70,13 @@ export class CaptureProcessingModal extends Modal {
     const cancel = footer.createEl('button', { text: t('Cancel'), attr: { type: 'button' } });
     cancel.addEventListener('click', () => this.close());
     const save = footer.createEl('button', { cls: 'mod-cta', attr: { type: 'submit' } });
-    let saving = false;
     const update = (): void => {
       const mode = action.value;
       titleField.hidden = mode !== 'note' && mode !== 'task';
       projectField.hidden = mode !== 'note' && mode !== 'project';
       save.textContent = t(saving ? 'Processing capture...' : 'Process capture');
       action.disabled = title.disabled = project.disabled = saving;
+      if (suggestButton) suggestButton.disabled = saving || this.suggestionController !== null;
       let valid = true;
       error.textContent = '';
       try {
@@ -81,7 +91,11 @@ export class CaptureProcessingModal extends Modal {
         : mode === 'note' ? translate(this.host.settings.language, 'Destination: {path}', { path: folder })
         : t(mode === 'project' ? 'Link the original capture without moving it.' : 'Keep the original capture and mark it processed.');
     };
-    for (const control of [action, title, project]) control.addEventListener(control === title ? 'input' : 'change', update);
+    for (const control of [action, title, project]) control.addEventListener(control === title ? 'input' : 'change', () => {
+      // Aborting also invalidates replies from providers that finish after cancellation.
+      this.suggestionController?.abort();
+      update();
+    });
     form.addEventListener('submit', (event) => {
       event.preventDefault();
       if (saving || save.disabled) return;
@@ -89,6 +103,7 @@ export class CaptureProcessingModal extends Modal {
         : action.value === 'task' ? { action: 'task', title: title.value }
         : action.value === 'project' ? { action: 'project', projectPath: project.value } : { action: 'done' };
       saving = true;
+      this.suggestionController?.abort();
       update();
       void this.host.processCapture(this.capture.path, request).then((result) => {
         if (!result) { this.close(); return; }
@@ -112,5 +127,9 @@ export class CaptureProcessingModal extends Modal {
     title.select();
   }
 
-  onClose(): void { this.contentEl.empty(); }
+  onClose(): void {
+    this.suggestionController?.abort();
+    this.suggestionController = null;
+    this.contentEl.empty();
+  }
 }

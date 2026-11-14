@@ -125,6 +125,26 @@ test('project conversion respects Obsidian vault-root and shortest-path resoluti
   assert.equal(body(source), original);
 });
 
+test('project conversion preserves wiki link and embed targets despite duplicate names', async () => {
+  const { app, plugin, source } = setup();
+  const project = app.vault.seedFile('20-Project/Launch/Launch.md', '# Launch');
+  const near = app.vault.seedFile('00-Inbox/Plan.md', '# Inbox plan');
+  const other = app.vault.seedFile('20-Project/Launch/Plan.md', '# Project plan');
+  app.metadataCache.getFirstLinkpathDest = (linkpath, sourcePath) => linkpath === 'Plan'
+    ? sourcePath === source.path ? near : other
+    : app.vault.getAbstractFileByPath(linkpath) as MockFile | null;
+  source.content += '\r\n[[Plan#Next|The plan]]\r\n![[Plan#^block]]\r\n';
+  const original = body(source);
+  await plugin.processCapture(source.path, { action: 'note', title: 'Linked insight', projectPath: project.path });
+  const result = notes(app)[0]!;
+  assert.match(body(result), /\[\[00-Inbox\/Plan.md#Next\|The plan\]\]/);
+  assert.match(body(result), /!\[\[00-Inbox\/Plan.md#\^block\]\]/);
+  assert.equal(app.metadataCache.getFirstLinkpathDest('00-Inbox/Plan.md', result.path), near);
+  assert.equal(body(source), original);
+  assert.equal(near.content, '# Inbox plan');
+  assert.equal(other.content, '# Project plan');
+});
+
 test('task conversion appends a single checkbox and source link without rewriting existing queries', async () => {
   const { app, plugin, source } = setup();
   const content = '---\ncustom: "keep"\n---\n\n# Existing tasks\n\n```tasks\nnot done\n```\n';
