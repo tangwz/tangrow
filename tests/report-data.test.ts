@@ -158,6 +158,83 @@ test('project and area entity totals count immediate folders including empty fol
   assert.equal(report.completion.areas.rate, 1);
 });
 
+test('resource entries use configured direct folders and root notes once, preserving exclusions and archived notes', () => {
+  const settings = {
+    ...DEFAULT_SETTINGS,
+    resourcesFolder: 'Library',
+    supportFolder: 'Library/Support',
+    archiveFolder: 'Library/Archive',
+    reportExcludedFolders: ['Library/Private', 'Library/Alpha/Excluded']
+  };
+  const deep = record('Library/Alpha/Deep/Topic.md');
+  const rows = [
+    record('Library/Alpha/README.md'),
+    deep,
+    record('Library/Standalone.md'),
+    { ...deep, modified: NOW - 500 },
+    record('Library/Archive/Archived.md', { status: 'archived', source: 'https://example.com/archive' }),
+    record('Library/Support/Internal.md'),
+    record('Library/Private/Hidden.md'),
+    record('Library/Alpha/Excluded/Hidden.md'),
+    record('Library/Private-Other/Visible.md'),
+    record('Library-Old/Outside.md', { source: 'https://example.com/outside' }),
+    record('00-Inbox/Clip.md', { tangrow_kind: 'clip' })
+  ];
+  const before = structuredClone(rows);
+  const report = aggregateReport(rows, settings, NOW, {
+    folders: ['Library', 'Library/Alpha', 'Library/Alpha/Deep', 'Library/Empty', 'Library/Archive', 'Library/Support', 'Library/Private', 'Library/Alpha/Excluded', 'Library/Private-Other']
+  });
+  assert.deepEqual(report.resources.map((entry) => entry.path), [
+    'Library/Alpha', 'Library/Archive', 'Library/Empty', 'Library/Private-Other', 'Library/Standalone.md'
+  ]);
+  assert.deepEqual(report.resources.find((entry) => entry.path === 'Library/Alpha'), {
+    path: 'Library/Alpha', name: 'Alpha', notePath: 'Library/Alpha/README.md',
+    noteCount: 2, created: NOW - 1000, modified: NOW - 500
+  });
+  assert.deepEqual(report.resources.find((entry) => entry.path === 'Library/Empty'), {
+    path: 'Library/Empty', name: 'Empty', notePath: null, noteCount: 0, created: null, modified: null
+  });
+  assert.equal(report.resources.find((entry) => entry.path === 'Library/Standalone.md')?.notePath, 'Library/Standalone.md');
+  assert.equal(report.resources.find((entry) => entry.path === 'Library/Archive')?.noteCount, 1);
+  assert.equal(report.counts.resourceNotes, 5);
+  assert.equal(report.resources.reduce((total, entry) => total + entry.noteCount, 0), report.counts.resourceNotes);
+  assert.equal(report.counts.notes, 7);
+  assert.deepEqual(report.clips.map((clip) => clip.path), [
+    'Library/Archive/Archived.md', 'Library-Old/Outside.md', '00-Inbox/Clip.md'
+  ]);
+  assert.deepEqual(rows, before);
+});
+
+test('resource note gains use a fixed 90 local-day window rather than entry dates or the selected range', () => {
+  const firstDay = new Date(2026, 10, 8 - 89, 0).getTime();
+  const beforeWindow = new Date(2026, 10, 8 - 90, 23, 59, 59, 999).getTime();
+  const settings = {
+    ...DEFAULT_SETTINGS,
+    resourcesFolder: 'Library',
+    supportFolder: 'Library/Support',
+    archiveFolder: 'Library/Archive',
+    reportExcludedFolders: ['Library/Private']
+  };
+  const recent = { ...record('Library/Topic/Deep/Recent.md'), created: firstDay };
+  const rows = [
+    { ...record('Library/Topic/README.md'), created: beforeWindow },
+    recent,
+    { ...recent },
+    { ...record('Library/Today.md'), created: NOW },
+    record('Library/Archive/Archived.md', { status: 'archived' }),
+    ...[NaN, Infinity, -1, NOW + 1].map((created, index) => ({ ...record(`Library/Invalid-${index}.md`), created })),
+    record('Library/Support/Internal.md'),
+    record('Library/Private/Hidden.md'),
+    record('00-Inbox/Other.md')
+  ];
+  const report = aggregateReport(rows, settings, NOW, { range: 1 });
+  assert.equal(report.trends.length, 1);
+  assert.equal(report.gains90.resourceNotes, 3);
+  assert.equal(report.gains90.notes, 4);
+  assert.equal(report.counts.resourceNotes, 8);
+  assert.equal(report.resources.find((entry) => entry.path === 'Library/Topic')?.created, beforeWindow);
+});
+
 test('clip detection distinguishes external sources and clip tags from internal related-note links', () => {
   const rows: ReportRecord[] = [
     record('00-Inbox/URL.md', { source: 'https://example.com', status: 'done' }),

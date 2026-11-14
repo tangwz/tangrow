@@ -1,20 +1,18 @@
-import { ItemView, Notice, setTooltip } from 'obsidian';
+import { ItemView, Notice, Platform, Scope, setTooltip } from 'obsidian';
 import { describeError } from './i18n';
 import type { WorkspaceLeaf } from 'obsidian';
 import type { QuickKind } from './ai';
 import { QUICK_KINDS } from './quick-add';
 import type { ActionId, BaseId, Locale, NoteSummary, Section, SidebarHost, Snapshot } from './types';
 import { CapturePanel } from './capture-panel';
-import { JOURNAL_LABELS, JOURNAL_PERIODS } from './periodic-notes';
 import { AiPanel } from './ai-panel';
 import { SidebarUI, icon } from './ui';
 
 export const VIEW_TYPE = 'tangrow-sidebar';
 
-type ToolGroup = 'shortcuts' | 'create' | 'current' | 'workspace' | 'databases';
+type ToolGroup = 'shortcuts' | 'current' | 'workspace' | 'databases';
 const TOOL_GROUPS: { id: ToolGroup; label: string }[] = [
   { id: 'shortcuts', label: 'Today' },
-  { id: 'create', label: 'Create' },
   { id: 'current', label: 'Current file' },
   { id: 'workspace', label: 'Workspace' },
   { id: 'databases', label: 'Databases' }
@@ -63,6 +61,7 @@ export class TangrowSidebar extends ItemView {
   private setupBanner!: HTMLElement;
   private navButtons = new Map<Section, HTMLButtonElement>();
   private unsubscribe?: () => void;
+  private dismissCreateMenu?: (restoreFocus?: boolean) => void;
   private unsubscribeComposer?: () => void;
   private refreshSection: (state: Snapshot) => void = () => undefined;
   private capturePanel?: CapturePanel;
@@ -124,6 +123,7 @@ export class TangrowSidebar extends ItemView {
 
   refreshLanguage(): void {
     if (!this.isMounted) return;
+    this.dismissCreateMenu?.(true);
     const active = this.contentEl.ownerDocument.activeElement;
     const inputs = [this.scratchEditor, this.scratchTitleInput, this.habitInput];
     const focusedInput = inputs.findIndex((input) => input === active);
@@ -175,6 +175,7 @@ export class TangrowSidebar extends ItemView {
   }
 
   private renderShell(): void {
+    this.dismissCreateMenu?.();
     this.contentEl.empty();
     this.navButtons.clear();
     this.contentEl.addClass('tangrow-sidebar');
@@ -186,20 +187,25 @@ export class TangrowSidebar extends ItemView {
     const headerTools = header.createDiv({ cls: 'tangrow-header-tools' });
     const badge = headerTools.createSpan({ cls: 'tangrow-local-badge', text: this.ui.t('LOCAL') });
     setTooltip(badge, this.ui.t('Your notes and companion data stay in this vault.'));
-    const add = headerTools.createEl('button', { cls: 'tangrow-header-add', attr: { type: 'button', 'aria-label': this.ui.t('Quick add') } });
+    const add = headerTools.createEl('button', {
+      cls: 'tangrow-header-add mod-cta',
+      attr: { type: 'button', 'aria-label': this.ui.t('New'), 'aria-haspopup': 'menu', 'aria-expanded': 'false', 'aria-controls': `${this.viewId}-create-menu` }
+    });
     icon(add, 'plus');
-    setTooltip(add, this.ui.t('Quick add'));
-    add.addEventListener('click', () => this.host.openQuickAdd());
-    this.shellLabels.push({ element: add, source: 'Quick add', tooltip: true });
+    const addLabel = add.createSpan({ text: this.ui.t('New') });
+    add.createSpan({ text: '▾', attr: { 'aria-hidden': 'true' } });
+    setTooltip(add, this.ui.t('New'));
+    add.addEventListener('click', () => {
+      if (this.dismissCreateMenu) this.dismissCreateMenu(true);
+      else this.openCreateMenu(add);
+    });
+    add.addEventListener('keydown', (event) => {
+      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+      event.preventDefault();
+      this.openCreateMenu(add, event.key === 'ArrowUp');
+    });
+    this.shellLabels.push({ element: add, source: 'New', tooltip: true }, { element: addLabel, source: 'New' });
     this.noteLabel = this.contentEl.createDiv({ cls: 'tangrow-context', attr: { 'aria-live': 'polite' } });
-    const quick = this.contentEl.createDiv({ cls: 'tangrow-quickbar', attr: { role: 'group' } });
-    for (const kind of QUICK_KINDS) {
-      const control = quick.createEl('button', { cls: 'tangrow-quickbar-item', attr: { type: 'button' } });
-      icon(control, kind.icon);
-      const label = control.createSpan({ text: this.ui.t(kind.label) });
-      control.addEventListener('click', () => this.openCreate(kind.id));
-      this.shellLabels.push({ element: label, source: kind.label });
-    }
     const nav = this.contentEl.createDiv({ cls: 'tangrow-nav', attr: { role: 'tablist', 'aria-label': this.ui.t('Companion workspaces') } });
     for (const item of SECTIONS) {
       const itemButton = nav.createEl('button', {
@@ -231,8 +237,88 @@ export class TangrowSidebar extends ItemView {
     this.selectSection(this.section);
   }
 
+  private openCreateMenu(trigger: HTMLButtonElement, selectLast = false): void {
+    this.dismissCreateMenu?.();
+    const doc = trigger.ownerDocument;
+    const win = doc.defaultView ?? window;
+    const menu = doc.body.createDiv({
+      cls: 'tangrow-create-menu',
+      attr: { id: `${this.viewId}-create-menu`, role: 'menu', 'aria-label': this.ui.t('Quick add') }
+    });
+    // Menu's scope is not public, so keep these shortcuts in our own temporary scope.
+    const scope = new Scope();
+    const controls: HTMLButtonElement[] = [];
+    const choose = (kind: QuickKind) => {
+      this.dismissCreateMenu?.(true);
+      this.host.openQuickAdd(kind);
+    };
+    for (const [index, kind] of QUICK_KINDS.entries()) {
+      const shortcut = `${Platform.isMacOS ? '⌘' : 'Ctrl+'}${index + 1}`;
+      const control = menu.createEl('button', {
+        cls: 'tangrow-create-menu-item',
+        attr: { type: 'button', role: 'menuitem', tabindex: '-1', 'aria-label': this.ui.t(kind.label) }
+      });
+      icon(control, kind.icon);
+      control.createSpan({ cls: 'tangrow-create-menu-label', text: this.ui.t(kind.label) });
+      control.createEl('kbd', { cls: 'tangrow-create-menu-shortcut', text: shortcut, attr: { 'aria-hidden': 'true' } });
+      control.addEventListener('click', (event) => { event.stopPropagation(); choose(kind.id); });
+      controls.push(control);
+      scope.register(['Mod'], String(index + 1), (event) => { event.stopPropagation(); choose(kind.id); return false; });
+    }
+    const focus = (index: number) => controls[(index + controls.length) % controls.length]?.focus({ preventScroll: true });
+    for (const [key, step] of [['ArrowDown', 1], ['ArrowUp', -1]] as const) {
+      scope.register([], key, () => {
+        const index = controls.findIndex((control) => control === doc.activeElement);
+        focus(index < 0 ? (step > 0 ? 0 : controls.length - 1) : index + step);
+        return false;
+      });
+    }
+    scope.register([], 'Home', () => { focus(0); return false; });
+    scope.register([], 'End', () => { focus(controls.length - 1); return false; });
+    scope.register([], 'Escape', () => { this.dismissCreateMenu?.(true); return false; });
+    for (const modifiers of [[], ['Shift']] as const) {
+      scope.register([...modifiers], 'Tab', () => { this.dismissCreateMenu?.(true); });
+    }
+    const position = () => {
+      const anchor = trigger.getBoundingClientRect();
+      const bounds = menu.getBoundingClientRect();
+      menu.style.left = `${Math.max(8, Math.min(anchor.right - bounds.width, win.innerWidth - bounds.width - 8))}px`;
+      menu.style.top = `${Math.max(8, Math.min(anchor.bottom + 4, win.innerHeight - bounds.height - 8))}px`;
+    };
+    const outsidePointer = (event: PointerEvent) => {
+      const path = event.composedPath();
+      if (!path.includes(menu) && !path.includes(trigger)) this.dismissCreateMenu?.();
+    };
+    const outsideFocus = () => {
+      if (!menu.contains(doc.activeElement) && doc.activeElement !== trigger) this.dismissCreateMenu?.();
+    };
+    const blur = () => this.dismissCreateMenu?.();
+    this.dismissCreateMenu = (restoreFocus = false) => {
+      this.dismissCreateMenu = undefined;
+      this.host.app.keymap.popScope(scope);
+      doc.removeEventListener('pointerdown', outsidePointer, true);
+      doc.removeEventListener('focusin', outsideFocus);
+      doc.removeEventListener('scroll', position, true);
+      win.removeEventListener('resize', position);
+      win.removeEventListener('blur', blur);
+      menu.remove();
+      trigger.setAttribute('aria-expanded', 'false');
+      if (restoreFocus && trigger.isConnected) trigger.focus({ preventScroll: true });
+    };
+    trigger.setAttribute('aria-expanded', 'true');
+    this.host.app.keymap.pushScope(scope);
+    doc.addEventListener('pointerdown', outsidePointer, true);
+    doc.addEventListener('focusin', outsideFocus);
+    doc.addEventListener('scroll', position, true);
+    win.addEventListener('resize', position);
+    win.addEventListener('blur', blur);
+    position();
+    focus(selectLast ? controls.length - 1 : 0);
+  }
+
   async onClose(): Promise<void> {
     this.isMounted = false;
+    this.dismissCreateMenu?.();
     this.capturePanel?.destroy();
     this.capturePanel = undefined;
     this.aiPanel.destroy();
@@ -246,6 +332,7 @@ export class TangrowSidebar extends ItemView {
   }
 
   private selectSection(section: Section): void {
+    this.dismissCreateMenu?.();
     this.capturePanel?.destroy();
     this.capturePanel = undefined;
     this.aiPanel.destroy();
@@ -359,17 +446,20 @@ export class TangrowSidebar extends ItemView {
     switch (this.toolGroup) {
       case 'shortcuts': {
         this.renderTaskPreview(state);
+        this.ui.sectionHeading(this.pane, 'Periodic notes');
+        const periods = this.pane.createDiv({ cls: 'tangrow-chips' });
+        for (const [period, label] of [['daily', 'Today'], ['weekly', 'This week'], ['monthly', 'This month'], ['quarterly', 'This quarter'], ['yearly', 'This year']] as const) {
+          const chip = this.ui.button(periods, label, () => this.host.openPeriodicNote(period), { cls: 'tangrow-chip' });
+          chip.dataset.tangrowAction = `period-${period}`;
+        }
         this.ui.sectionHeading(this.pane, 'Quick actions');
         const shortcuts = this.pane.createDiv({ cls: 'tangrow-actions' });
-        this.actionButton(shortcuts, 'daily-note', "Today's journal", 'calendar-days');
         this.actionButton(shortcuts, 'report', 'Open report', 'chart-no-axes-combined');
-        this.actionButton(shortcuts, 'toggle-pin', state.activePinned ? 'Unpin note' : 'Pin note', 'pin', !this.isMarkdown(state), state.activePinned);
+        this.actionButton(shortcuts, 'toggle-pin', state.activePinned ? 'Unpin current note' : 'Pin current note', 'pin', !this.isMarkdown(state), state.activePinned);
         this.actionButton(shortcuts, 'random-note', 'Rediscover a note', 'shuffle', state.counts.notes === 0);
-        this.ui.button(shortcuts, 'Vault workflows', () => this.selectSection('ai'), { icon: 'sparkles' });
         this.actionButton(shortcuts, 'toggle-theme', 'Toggle light / dark', 'sun-moon');
         break;
       }
-      case 'create': this.renderCreateActions(); break;
       case 'current': this.renderCurrentActions(state); break;
       case 'workspace': this.renderWorkspaceActions(); break;
       case 'databases': {
@@ -383,23 +473,6 @@ export class TangrowSidebar extends ItemView {
 
   private isMarkdown(state: Snapshot): boolean {
     return state.active?.path.toLowerCase().endsWith('.md') ?? false;
-  }
-
-  private renderCreateActions(): void {
-    this.ui.sectionHeading(this.pane, 'Make a little space', 'Start a note, return to today, or pick up a loose thread.');
-    const create = this.pane.createDiv({ cls: 'tangrow-actions' });
-    this.ui.button(create, 'New note', () => this.openCreate('note'), { icon: 'file-plus-2', cls: 'mod-cta' });
-    this.ui.button(create, 'New task', () => this.openCreate('task'), { icon: 'square-check-big' });
-    this.ui.button(create, 'New project', () => this.openCreate('project'), { icon: 'folder-plus' });
-    this.ui.button(create, 'Quick capture', () => this.openCreate('capture'), { icon: 'inbox' });
-    this.actionButton(create, 'daily-note', "Today's journal", 'calendar-days');
-    this.ui.button(create, 'Open capture window', () => this.host.openCaptureWindow(), { icon: 'external-link' });
-    this.ui.sectionHeading(this.pane, 'Periodic notes');
-    const periods = this.pane.createDiv({ cls: 'tangrow-chips' });
-    for (const period of JOURNAL_PERIODS) {
-      const chip = this.ui.button(periods, JOURNAL_LABELS[period], () => this.host.openPeriodicNote(period), { cls: 'tangrow-chip' });
-      chip.dataset.tangrowAction = `period-${period}`;
-    }
   }
 
   private renderCurrentActions(state: Snapshot): void {
@@ -821,5 +894,4 @@ export class TangrowSidebar extends ItemView {
     }
   }
 
-  private openCreate(kind: QuickKind): void { this.host.openQuickAdd(kind); }
 }

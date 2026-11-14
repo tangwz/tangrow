@@ -1,7 +1,7 @@
 import { hasValidSupportFolder } from './folders';
 import { dayKey, inFolder } from './model';
 import type { Settings } from './types';
-import type { CompletionSummary, ReportEntity, ReportPreferences, ReportRecord, ReportStatus, ReportStatusSource, StreakSummary } from './report-contract';
+import type { CompletionSummary, ReportEntity, ReportPreferences, ReportRecord, ReportResource, ReportStatus, ReportStatusSource, StreakSummary } from './report-contract';
 
 export type NormalizedReportStatus = ReportStatus;
 
@@ -211,6 +211,56 @@ export function collectReportEntities(records: readonly ReportRecord[], root: st
     entities.push({ path: record.path, name: record.name, notePath: record.path, noteCount: 1, created: validCreated(record.created, now), status: reportRecordStatus(record) });
   }
   return entities.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
+}
+
+export function collectReportResources(records: readonly ReportRecord[], root: string, folders: readonly string[] = [], now = Date.now()): ReportResource[] {
+  const groups = new Map<string, ReportRecord[]>();
+  for (const folder of folders) {
+    if (!inFolder(folder, root)) continue;
+    const path = `${root}/${folder.slice(root.length + 1).split('/')[0]}`;
+    if (!groups.has(path)) groups.set(path, []);
+  }
+  for (const record of records) {
+    if (!inFolder(record.path, root)) continue;
+    const relative = record.path.slice(root.length + 1);
+    const slash = relative.indexOf('/');
+    const path = slash < 0 ? record.path : `${root}/${relative.slice(0, slash)}`;
+    const notes = groups.get(path);
+    if (notes) notes.push(record);
+    else groups.set(path, [record]);
+  }
+  const resources: ReportResource[] = [];
+  for (const [path, notes] of groups) {
+    const canonical = canonicalEntityNotes(notes, path);
+    let created: number | null = null;
+    for (const record of canonical) {
+      const value = validCreated(record.created, now);
+      if (value !== null && (created === null || value < created)) created = value;
+    }
+    const useChildCreated = created === null;
+    let modified: number | null = null;
+    let latest: ReportRecord | undefined;
+    for (const record of notes) {
+      if (useChildCreated) {
+        const value = validCreated(record.created, now);
+        if (value !== null && (created === null || value < created)) created = value;
+      }
+      const value = validCreated(record.modified, now);
+      if (!latest || (value ?? -Infinity) > (modified ?? -Infinity) || (value === modified && record.path < latest.path)) {
+        latest = record;
+        modified = value;
+      }
+    }
+    resources.push({
+      path,
+      name: notes[0]?.path === path ? notes[0].name : path.split('/').at(-1) ?? path,
+      notePath: canonical[0]?.path ?? latest?.path ?? null,
+      noteCount: notes.length,
+      created,
+      modified
+    });
+  }
+  return resources.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
 }
 
 export function reportCompletion(statuses: readonly ReportStatus[]): CompletionSummary {

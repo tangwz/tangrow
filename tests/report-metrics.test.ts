@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canonicalEntityStatus, collectReportEntities, findOrphanNotes, isClipRecord, normalizeReportStatus, reportCompletion, reportJournalDay, reportRecordStatus, reportStreak, sampleReportNotes } from '../src/report-metrics';
+import { canonicalEntityStatus, collectReportEntities, collectReportResources, findOrphanNotes, isClipRecord, normalizeReportStatus, reportCompletion, reportJournalDay, reportRecordStatus, reportStreak, sampleReportNotes } from '../src/report-metrics';
 import type { ReportRecord } from '../src/report-contract';
 import { DEFAULT_SETTINGS } from '../src/types';
 
@@ -36,6 +36,52 @@ test('entity creation and canonical open-note choice are deterministic without i
   assert.equal(entities.find((entity) => entity.name === 'Alpha')?.notePath, '20-Project/Alpha/Alpha.md');
   assert.equal(entities.find((entity) => entity.name === 'Empty')?.created, null);
   assert.deepEqual(rows, before);
+});
+
+test('resource dates reuse canonical creation while opening canonical or latest valid modified notes', () => {
+  const old = new Date(2024, 0, 1, 12).getTime();
+  const rows = [
+    { ...record('Library/Canonical/README.md'), created: NOW - 7000, modified: -1 },
+    { ...record('Library/Canonical/Canonical.md'), created: NOW - 5000, modified: NOW - 10000 },
+    { ...record('Library/Canonical/Deep/Old.md'), created: old, modified: NOW - 1000 },
+    { ...record('Library/Canonical/index.md'), created: NOW + 1, modified: NOW + 1 },
+    { ...record('Library/Latest/Zed.md'), created: old, modified: NOW - 1000 },
+    { ...record('Library/Latest/Alpha.md'), modified: NOW - 1000 },
+    { ...record('Library/Latest/Future.md'), modified: NOW + 1 },
+    { ...record('Library/Latest/Invalid.md'), modified: Infinity },
+    { ...record('Library/Fallback/README.md'), created: NaN, modified: NaN },
+    { ...record('Library/Fallback/Topic.md'), created: old, modified: -1 },
+    { ...record('Library/Invalid/Zed.md'), created: NOW + 1, modified: NOW + 1 },
+    { ...record('Library/Invalid/Alpha.md'), created: -1, modified: NaN },
+    { ...record('Library/Epoch.md'), created: 0, modified: 0 },
+    { ...record('Library/Future.md'), created: NOW + 1, modified: NOW + 1 }
+  ];
+  const resources = collectReportResources(rows, 'Library', ['Library/Empty/Deep'], NOW);
+  const canonical = resources.find((entry) => entry.path === 'Library/Canonical')!;
+  assert.equal(canonical.created, NOW - 7000);
+  assert.equal(canonical.modified, NOW - 1000);
+  assert.equal(canonical.notePath, 'Library/Canonical/Canonical.md');
+  const latest = resources.find((entry) => entry.path === 'Library/Latest')!;
+  assert.equal(latest.created, old);
+  assert.equal(latest.modified, NOW - 1000);
+  assert.equal(latest.notePath, 'Library/Latest/Alpha.md');
+  const fallback = resources.find((entry) => entry.path === 'Library/Fallback')!;
+  assert.equal(fallback.created, old);
+  assert.equal(fallback.modified, null);
+  assert.equal(fallback.notePath, 'Library/Fallback/README.md');
+  const invalid = resources.find((entry) => entry.path === 'Library/Invalid')!;
+  assert.equal(invalid.created, null);
+  assert.equal(invalid.modified, null);
+  assert.equal(invalid.notePath, 'Library/Invalid/Alpha.md');
+  assert.deepEqual(resources.find((entry) => entry.path === 'Library/Empty'), {
+    path: 'Library/Empty', name: 'Empty', notePath: null, noteCount: 0, created: null, modified: null
+  });
+  assert.deepEqual(resources.find((entry) => entry.path === 'Library/Epoch.md'), {
+    path: 'Library/Epoch.md', name: 'Epoch', notePath: 'Library/Epoch.md', noteCount: 1, created: 0, modified: 0
+  });
+  assert.deepEqual(resources.find((entry) => entry.path === 'Library/Future.md'), {
+    path: 'Library/Future.md', name: 'Future', notePath: 'Library/Future.md', noteCount: 1, created: null, modified: null
+  });
 });
 
 test('clip records require web URLs, explicit clip kinds, or clip tags', () => {

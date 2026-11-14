@@ -1,7 +1,7 @@
 import { captureCreated } from './capture-data';
 import { hasValidSupportFolder } from './folders';
 import { dayKey, inFolder, recentDays } from './model';
-import { collectReportEntities, findOrphanNotes, isClipRecord, reportCompletion, reportRecordStatus, reportJournalDay, reportStreak } from './report-metrics';
+import { collectReportEntities, collectReportResources, findOrphanNotes, isClipRecord, reportCompletion, reportRecordStatus, reportJournalDay, reportStreak } from './report-metrics';
 import type { AggregateReportOptions, CompletionSummary, DailyTrend, ReportData, ReportPreferences, ReportRecord, ReportStatus } from './report-contract';
 import type { Settings } from './types';
 
@@ -33,6 +33,7 @@ export function aggregateReport(records: readonly ReportRecord[], settings: Sett
   const folders = (options.folders ?? []).filter((path) => !excluded(path));
   const projects = collectReportEntities(notes, settings.projectFolder, folders, now);
   const areas = collectReportEntities(notes, settings.areaFolder, folders, now);
+  const resources = collectReportResources(notes, settings.resourcesFolder, folders, now);
   const clips = notes.filter(isClipRecord);
   const clipPaths = new Set(clips.map((record) => record.path));
   const orphans = findOrphanNotes(notes, settings);
@@ -41,7 +42,7 @@ export function aggregateReport(records: readonly ReportRecord[], settings: Sett
   const dayTrends = new Map(trends.map((entry) => [entry.day, entry]));
   const today = dayKey(now);
   const gainDays = new Set(recentDays(90, now));
-  const gains90 = { notes: 0, projects: 0, areas: 0, clips: 0, captures: 0 };
+  const gains90 = { notes: 0, projects: 0, areas: 0, resourceNotes: 0, clips: 0, captures: 0 };
   const seenFocus = new Set<string>();
   const seenHabits = new Set<string>();
   const activeHabitIds = new Set(settings.habits.map((habit) => habit.id));
@@ -70,7 +71,10 @@ export function aggregateReport(records: readonly ReportRecord[], settings: Sett
     const trend = created === null ? undefined : dayTrends.get(dayKey(created));
     if (created !== null) {
       if (trend) trend.notes++;
-      if (gainDays.has(dayKey(created))) gains90.notes++;
+      if (gainDays.has(dayKey(created))) {
+        gains90.notes++;
+        if (inFolder(record.path, settings.resourcesFolder)) gains90.resourceNotes++;
+      }
       if (clipPaths.has(record.path)) {
         if (trend) trend.clips++;
         if (gainDays.has(dayKey(created))) gains90.clips++;
@@ -138,7 +142,7 @@ export function aggregateReport(records: readonly ReportRecord[], settings: Sett
       const rightTime = Number.isFinite(right.modified) ? right.modified : -Infinity;
       return rightTime - leftTime || (left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
     }).slice(0, 8),
-    notes, projects, areas, clips, taskItems, orphanNotes: orphans, trends, gains90,
+    notes, projects, areas, resources, clips, taskItems, orphanNotes: orphans, trends, gains90,
     completion: {
       tasks: taskCompletion(counts.openTasks, counts.completedTasks, counts.cancelledTasks, unknownTasks),
       projects: reportCompletion(projects.map((entity) => entity.status)),

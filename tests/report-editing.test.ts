@@ -24,6 +24,7 @@ interface ReportView {
   renderEntities(parent: Element, entities: ReportEntity[], collection: 'projects' | 'areas'): void;
   renderTasks(parent: Element, data: ReportData): void;
   renderClips(parent: Element, data: ReportData): void;
+  renderResources(parent: Element, data: ReportData): void;
   noteStatus(parent: Element, note: ReportRecord): void;
 }
 interface RangeReportView extends ReportView {
@@ -396,6 +397,29 @@ test('task status controls normalize uppercase completion for display while reta
   select.dispatchEvent(new Event('change'));
   await flush();
   assert.deepEqual(changes[0], { kind: 'task', task: snapshot.data.taskItems[0], status: '-' });
+});
+
+test('resource updates are relative to the report snapshot while empty folders keep unknown dates', async () => {
+  const { app, plugin } = setup();
+  const now = Date.now();
+  note(app, '40-Resources/Recent.md').stat.mtime = now - 2 * 86_400_000;
+  note(app, '40-Resources/Topic/Notes.md').stat.mtime = now - 65 * 86_400_000;
+  app.vault.seedFolder('40-Resources/Empty');
+  const snapshot = await plugin.loadReport(30);
+  snapshot.generatedAt = now;
+  const view = new harness.TangrowReport({}, plugin);
+  Object.assign(view, { snapshot, mounted: true, page: 'resources' });
+  const root = new Element();
+  view.renderResources(root, snapshot.data);
+  const rows = new Map(root.querySelectorAll('tbody')[0]!.children.map((row) => {
+    const cells = row.children.map((cell) => cell.textContent + cell.querySelectorAll('span').map((span) => span.textContent).join(''));
+    return [cells[0], cells];
+  }));
+  assert.equal(rows.get('Recent.md')?.[2], '2 days ago');
+  assert.equal(rows.get('Topic')?.[2], '2 months ago');
+  assert.deepEqual(rows.get('Empty')?.slice(1, 4), ['0', 'Unknown', 'Unknown']);
+  const emptyLink = root.querySelectorAll('button').find((button) => button.dataset.reportFocus === 'resource-40-Resources/Empty');
+  assert.equal(emptyLink?.disabled, true);
 });
 
 test('a late today load cannot replace overview data and each page restores its own range', async () => {
