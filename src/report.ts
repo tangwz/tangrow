@@ -375,19 +375,31 @@ export class TangrowReport extends ItemView {
     svg.setAttribute('aria-label', this.t('Creation trends'));
     const selected = SERIES.filter(({ key }) => this.visibleSeries.has(key));
     const maximum = Math.max(1, ...data.trends.flatMap((day) => selected.map(({ key }) => day[key])));
+    const y = (value: number): number => 170 - value / maximum * 155;
+    for (let tick = 0; tick <= 4; tick++) {
+      const gridline = panel.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'line');
+      const position = String(y(maximum * tick / 4));
+      gridline.addClass('tangrow-report-gridline');
+      gridline.setAttribute('x1', '10');
+      gridline.setAttribute('x2', '590');
+      gridline.setAttribute('y1', position);
+      gridline.setAttribute('y2', position);
+      gridline.setAttribute('aria-hidden', 'true');
+      svg.appendChild(gridline);
+    }
     for (const series of selected) {
       const line = panel.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'polyline');
       line.addClass('tangrow-report-series');
       line.dataset.series = series.key;
       line.setAttribute('fill', 'none');
-      line.setAttribute('points', data.trends.map((day, index) => `${data.trends.length === 1 ? 300 : 10 + index / (data.trends.length - 1) * 580},${170 - day[series.key] / maximum * 155}`).join(' '));
+      line.setAttribute('points', data.trends.map((day, index) => `${data.trends.length === 1 ? 300 : 10 + index / (data.trends.length - 1) * 580},${y(day[series.key])}`).join(' '));
       svg.appendChild(line);
       if (data.trends.length === 1) {
         const point = panel.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'circle');
         point.addClass('tangrow-report-series');
         point.dataset.series = series.key;
         point.setAttribute('cx', '300');
-        point.setAttribute('cy', String(170 - data.trends[0]![series.key] / maximum * 155));
+        point.setAttribute('cy', String(y(data.trends[0]![series.key])));
         point.setAttribute('r', '3');
         svg.appendChild(point);
       }

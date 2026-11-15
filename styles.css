@@ -599,7 +599,8 @@
 .tangrow-report-panel { border: 1px solid var(--tangrow-report-line); border-radius: 10px; padding: 20px; margin-bottom: 20px; min-width: 0; background: var(--background-primary); }
 .tangrow-report-trend-wrap { position: relative; margin: 18px 0 12px; }
 .tangrow-report-trend-max { position: absolute; left: 0; top: calc(100% * 15 / 180); transform: translateY(-100%); padding-bottom: 2px; color: var(--text-muted); font-size: 10px; line-height: 1; font-variant-numeric: tabular-nums; pointer-events: none; }
-.tangrow-report-trend { display: block; width: 100%; height: 210px; min-width: 0; overflow: visible; background: repeating-linear-gradient(to top, var(--tangrow-report-line) 0 1px, transparent 1px 25%); }
+.tangrow-report-trend { display: block; width: 100%; height: 210px; min-width: 0; overflow: visible; }
+.tangrow-report-gridline { stroke: var(--tangrow-report-line); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .tangrow-report-series { fill: none; stroke: var(--tangrow-report-series-color, var(--interactive-accent)); stroke-width: 2.3; vector-effect: non-scaling-stroke; stroke-linecap: round; stroke-linejoin: round; }
 .tangrow-report-series[data-series="tasks"] { stroke-dasharray: 6 3; }
 .tangrow-report-series[data-series="projects"] { stroke-dasharray: 2 3; }
