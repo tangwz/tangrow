@@ -83,6 +83,10 @@ export class CapturePanel {
         this.saveButton?.click();
       }
     });
+    if (!this.options.composerOnly && this.options.allowPopout !== false) {
+      composer.addClass('tangrow-composer-with-popout');
+      this.button(composer, 'Open capture window', () => this.host.openCaptureWindow(), 'external-link', 'tangrow-capture-icon-button tangrow-capture-popout');
+    }
     const composerFooter = composer.createDiv({ cls: 'tangrow-composer-footer' });
     this.count = composerFooter.createSpan({ cls: 'tangrow-muted' });
     if (!this.options.composerOnly) this.button(composerFooter, 'Immersive capture', () => this.host.openImmersiveCapture(), 'expand', 'tangrow-capture-icon-button');
@@ -97,10 +101,6 @@ export class CapturePanel {
       this.refresh();
       return;
     }
-    if (this.options.allowPopout !== false) {
-      this.button(this.root, 'Open capture window', () => this.host.openCaptureWindow(), 'external-link', 'tangrow-full-width tangrow-capture-popout');
-    }
-
     const calendar = this.root.createEl('section', { cls: 'tangrow-capture-calendar' });
     const calendarHeader = calendar.createDiv({ cls: 'tangrow-capture-calendar-heading' });
     this.button(calendarHeader, 'Previous month', () => this.moveMonth(-1), 'chevron-left', 'tangrow-capture-icon-button');

@@ -34,7 +34,6 @@
   "There are no unfinished checkboxes in the indexed notes.": "当前索引的笔记中没有未完成任务。",
   "{count} pending": "待办 {count} 条",
   "Browse the companion Bases": "浏览补充数据库",
-  "These views query notes in their current locations.": "这些视图直接查询现有位置中的笔记。",
   "Focus minutes come from saved sessions, not keyboard or editing activity.": "专注分钟来自已保存的计时记录，不统计键盘或编辑活动。",
-  "Refreshed at {time}": "刷新时间：{time}"
+  "Refreshed at {time}": "{time} 更新"
 }

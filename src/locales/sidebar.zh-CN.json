@@ -29,8 +29,7 @@
   "notes": "笔记",
   "project notes": "项目笔记",
   "open tasks": "待办任务",
-  "Make a little space": "从这里开始",
-  "Start a note, return to today, or pick up a loose thread.": "新建笔记、打开今日日记，或回顾一篇旧笔记。",
+  "New": "新建",
   "New note": "新建笔记",
   "New project": "新建项目笔记",
   "Today's journal": "今日日记",
@@ -139,7 +138,6 @@
   "Cancel": "取消",
   "Create note": "创建笔记",
   "Shortcuts": "快捷",
-  "Create": "新建",
   "Current note": "当前笔记",
   "Databases": "数据库",
   "Tool groups": "工具分组",
@@ -177,5 +175,9 @@
   "Show more opened notes": "查看更多最近打开",
   "Return to a recent file": "回到最近打开的文件",
   "Files you open will appear here.": "打开过的文件会按最近访问顺序显示在这里。",
-  "Show more opened files": "查看更多最近打开"
+  "Show more opened files": "查看更多最近打开",
+  "This week": "本周",
+  "This month": "本月",
+  "This quarter": "本季",
+  "This year": "今年"
 }

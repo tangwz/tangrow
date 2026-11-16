@@ -1,7 +1,7 @@
 import type { ActivitySummary, EditingActivityState } from './activity';
 
-export type ReportRange = 1 | 7 | 30 | 60 | 90 | 180 | 365;
-export type ReportPage = 'overview' | 'actions' | 'tasks' | 'projects' | 'notes' | 'clips' | 'areas' | 'time';
+export type ReportRange = 1 | 7 | 30 | 90 | 180 | 365;
+export type ReportPage = 'overview' | 'actions' | 'tasks' | 'projects' | 'notes' | 'resources' | 'areas' | 'time';
 export type ReportStatus = 'open' | 'done' | 'archived' | 'unknown';
 export type EditableReportStatus = Exclude<ReportStatus, 'unknown'>;
 export type ReportTaskStatus = ' ' | '/' | 'x' | '-';
@@ -47,6 +47,15 @@ export interface ReportEntity {
   noteCount: number;
   created: number | null;
   status: ReportStatus;
+}
+
+export interface ReportResource {
+  path: string;
+  name: string;
+  notePath: string | null;
+  noteCount: number;
+  created: number | null;
+  modified: number | null;
 }
 
 export interface CompletionSummary {
@@ -103,11 +112,12 @@ export interface ReportData {
   notes: ReportRecord[];
   projects: ReportEntity[];
   areas: ReportEntity[];
+  resources: ReportResource[];
   clips: ReportRecord[];
   taskItems: ReportTask[];
   orphanNotes: ReportRecord[];
   trends: DailyTrend[];
-  gains90: { notes: number; projects: number; areas: number; clips: number; captures: number };
+  gains90: { notes: number; projects: number; areas: number; resourceNotes: number; clips: number; captures: number };
   completion: { tasks: CompletionSummary; projects: CompletionSummary; areas: CompletionSummary; clips: CompletionSummary };
   streaks: { journal: StreakSummary; captures: StreakSummary };
   habits: {

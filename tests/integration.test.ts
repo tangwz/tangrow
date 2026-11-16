@@ -63,7 +63,7 @@ interface Harness {
   FileView: typeof MockFileView;
   ItemView: typeof MockItemView;
   notices: string[];
-  Platform: { isDesktopApp: boolean };
+  Platform: { isDesktopApp: boolean; isMacOS: boolean };
   openCaptureWindow(app: unknown, host: unknown): Promise<void>;
 }
 

@@ -9,16 +9,16 @@ import type { SidebarHost } from './types';
 
 export const REPORT_VIEW_TYPE = 'tangrow-report';
 const PAGE_SIZE = 20;
-const RANGES: ReportRange[] = [7, 30, 60, 90, 180, 365];
+const RANGES: ReportRange[] = [7, 30, 90, 180, 365];
 const TIME_RANGES: ReportRange[] = [1, ...RANGES];
-const PAGES: Array<{ id: ReportPage; label: string; icon: string }> = [
+const PAGES: Array<{ id: ReportPage; label: string; icon: string; groupStart?: boolean }> = [
   { id: 'overview', label: 'Overview', icon: 'layout-dashboard' },
-  { id: 'actions', label: 'Actions', icon: 'list-checks' },
+  { id: 'actions', label: 'Actions', icon: 'list-checks', groupStart: true },
   { id: 'tasks', label: 'Tasks', icon: 'square-check' },
-  { id: 'projects', label: 'Projects', icon: 'folder-kanban' },
-  { id: 'notes', label: 'Notes', icon: 'files' },
-  { id: 'clips', label: 'Clips', icon: 'bookmark' },
+  { id: 'projects', label: 'Projects', icon: 'folder-kanban', groupStart: true },
   { id: 'areas', label: 'Areas', icon: 'layers' },
+  { id: 'resources', label: 'Resources', icon: 'library' },
+  { id: 'notes', label: 'Notes', icon: 'files', groupStart: true },
   { id: 'time', label: 'Time', icon: 'clock' }
 ];
 const SERIES = [
@@ -28,6 +28,8 @@ const SERIES = [
 ] as const;
 type SeriesKey = typeof SERIES[number]['key'];
 type FilterStatus = ReportStatus | 'cancelled' | 'all';
+type ResourceTab = 'items' | 'clips';
+type ResourceSort = 'modified' | 'notes' | 'name';
 const RECORD_STATUSES = [['open', 'Open'], ['done', 'Done'], ['archived', 'Archived']] as const;
 const TASK_STATUSES = [[' ', 'Open'], ['/', 'In progress'], ['x', 'Done'], ['-', 'Cancelled']] as const;
 
@@ -44,6 +46,8 @@ export class TangrowReport extends ItemView {
   private overviewRange: ReportRange = 30;
   private timeRange: ReportRange = 30;
   private snapshotRange?: ReportRange;
+  private resourceTab: ResourceTab = 'items';
+  private resourceSort: ResourceSort = 'modified';
   private query = '';
   private statusFilter: FilterStatus = 'all';
   private noteRole = 'all';
@@ -149,23 +153,31 @@ export class TangrowReport extends ItemView {
     card.createEl('strong', { text: typeof value === 'number' ? this.number(value) : value });
     return card;
   }
-  private detail(parent: HTMLElement, source: string, values?: TranslationValues): void {
-    parent.createEl('p', { cls: 'tangrow-report-metric-detail', text: this.t(source, values) });
+  private detail(parent: HTMLElement, source: string, values?: TranslationValues): HTMLElement {
+    return parent.createEl('p', { cls: 'tangrow-report-metric-detail', text: this.t(source, values) });
+  }
+  private hint(target: HTMLElement, source: string, values?: TranslationValues): void {
+    setTooltip(target, this.t(source, values));
   }
   private progress(parent: HTMLElement, ratio: number, label: string): void {
     parent.createEl('progress', { attr: { max: '1', value: String(Math.max(0, Math.min(1, ratio))), 'aria-label': label } });
   }
-  private completion(parent: HTMLElement, summary: CompletionSummary): void {
-    if (summary.rate === null) this.detail(parent, 'No known completion state');
-    else {
+  private completion(parent: HTMLElement, summary: CompletionSummary, rateInHeading = false): void {
+    const excluded = [
+      summary.unknown ? this.t('{count} unknown states excluded', { count: this.number(summary.unknown) }) : '',
+      summary.archived ? this.t('{count} archived excluded', { count: this.number(summary.archived) }) : '',
+      summary.cancelled ? this.t('{count} cancelled excluded', { count: this.number(summary.cancelled) }) : ''
+    ].filter(Boolean).join('\n');
+    let line: HTMLElement | undefined;
+    if (summary.rate === null) {
+      if (!rateInHeading) line = this.detail(parent, 'No known completion state');
+    } else {
       const percent = this.number(summary.rate * 100, 1);
-      this.detail(parent, 'Completion: {percent}%', { percent });
+      const ratio = `${this.number(summary.done)} / ${this.number(summary.done + summary.open)}`;
+      line = parent.createEl('p', { cls: 'tangrow-report-metric-detail', text: rateInHeading ? ratio : `${percent}% · ${ratio}` });
       this.progress(parent, summary.rate, this.t('Completion: {percent}%', { percent }));
     }
-    if (summary.unknown) this.detail(parent, '{count} unknown states excluded', { count: this.number(summary.unknown) });
-    if (summary.archived) this.detail(parent, '{count} archived excluded', { count: this.number(summary.archived) });
-    if (summary.cancelled) this.detail(parent, '{count} cancelled excluded', { count: this.number(summary.cancelled) });
-    this.detail(parent, 'Known: {done} done, {open} open', { done: this.number(summary.done), open: this.number(summary.open) });
+    if (line && excluded) setTooltip(line, excluded);
   }
 
   private render(): void {
@@ -192,13 +204,11 @@ export class TangrowReport extends ItemView {
       case 'tasks': this.renderTasks(body, data); break;
       case 'projects': this.renderEntities(body, data.projects, 'projects'); break;
       case 'notes': this.renderNotes(body, data); break;
-      case 'clips': this.renderClips(body, data); break;
+      case 'resources': this.renderResources(body, data); break;
       case 'areas': this.renderEntities(body, data.areas, 'areas'); break;
       case 'time': this.renderTime(body); break;
     }
     const footer = shell.createDiv({ cls: 'tangrow-report-footer' });
-    footer.createSpan({ text: this.t('All metrics query current files; notes are never relocated.') });
-    footer.createSpan({ text: this.t('Refreshed at {time}', { time: new Date(this.snapshot.generatedAt).toLocaleTimeString(this.host.settings.language) }) });
     if (this.snapshot.quality.unreadable) this.caption(footer, '{count} notes could not be read; word totals may be incomplete.', { count: this.number(this.snapshot.quality.unreadable) });
     if (!this.snapshot.quality.linksReady) this.caption(footer, 'Link indexing is still in progress; orphan results may change.');
     this.contentEl.scrollTop = scrollTop;
@@ -221,13 +231,17 @@ export class TangrowReport extends ItemView {
     const intro = header.createDiv();
     intro.createSpan({ cls: 'tangrow-report-eyebrow', text: this.t('LOCAL REPORT') });
     intro.createEl('h1', { text: this.t('Vault overview') });
-    this.caption(intro, 'Browse your notes and update statuses in their source files.');
     const toolbar = header.createDiv({ cls: 'tangrow-report-toolbar' });
+    toolbar.createSpan({ cls: 'tangrow-report-updated', text: this.t('Refreshed at {time}', { time: new Date(this.snapshot!.generatedAt).toLocaleTimeString(this.host.settings.language, { hour: '2-digit', minute: '2-digit' }) }) });
     const refresh = this.control(toolbar, this.loading ? 'Updating report...' : 'Refresh report', 'refresh-cw', () => this.refresh());
     refresh.disabled = this.loading;
     refresh.dataset.reportFocus = 'refresh';
+    refresh.addClass('tangrow-report-refresh');
+    refresh.setAttribute('aria-busy', String(this.loading));
+    setTooltip(refresh, this.t(this.loading ? 'Updating report...' : 'Refresh report'));
     const nav = parent.createDiv({ cls: 'tangrow-report-nav', attr: { role: 'tablist', 'aria-label': this.t('Report pages') } });
     for (const [index, page] of PAGES.entries()) {
+      if (page.groupStart) nav.createSpan({ cls: 'tangrow-report-nav-separator', attr: { 'aria-hidden': 'true' } });
       const button = this.control(nav, page.label, page.icon, () => this.selectPage(page.id));
       button.addClass('tangrow-report-nav-item');
       button.toggleClass('is-active', this.page === page.id);
@@ -255,25 +269,26 @@ export class TangrowReport extends ItemView {
   }
 
   private renderRanges(parent: HTMLElement): void {
-    const ranges = parent.createDiv({ cls: 'tangrow-report-range', attr: { role: 'group', 'aria-label': this.t('Report date range') } });
+    const ranges = parent.createDiv({ cls: 'tangrow-report-range', attr: { role: 'group', 'aria-label': this.t(this.page === 'time' ? 'Editing activity date range' : 'Overview date range') } });
     for (const range of this.page === 'time' ? TIME_RANGES : RANGES) {
       const label = range === 1 ? this.t('Today') : this.t('Last {count} days', { count: range });
-      const button = this.control(ranges, label, '', async () => {
+      const button = this.control(ranges, range === 365 ? this.t('1 year') : range === 1 ? label : this.t('{count} days', { count: range }), '', async () => {
         if (this.page === 'time') this.timeRange = range;
         else this.overviewRange = range;
         await this.refresh();
       }, undefined, true);
+      button.setAttribute('aria-label', label);
       button.addClass('tangrow-report-range-button');
       button.toggleClass('is-active', this.range === range);
       button.setAttribute('aria-pressed', String(this.range === range));
       button.dataset.reportFocus = `range-${range}`;
     }
-    this.caption(parent, 'The range controls charts and editing activity. Totals and 90-day gains use their own periods.');
   }
 
-  private selectPage(page: ReportPage): void {
+  private selectPage(page: ReportPage, resourceTab: ResourceTab = 'items'): void {
     const previousRange = this.range;
     this.page = page;
+    if (page === 'resources') this.resourceTab = resourceTab;
     const refreshInterrupted = previousRange !== this.range && this.loading;
     if (previousRange !== this.range) {
       this.epoch++;
@@ -308,7 +323,6 @@ export class TangrowReport extends ItemView {
     this.renderActivityMetric(grid);
     const words = this.metric(grid, 'Word and character totals', this.t('{count} words', { count: this.number(data.counts.words) }), 'text');
     this.detail(words, '{count} characters excluding whitespace', { count: this.number(data.counts.characters) });
-    this.detail(words, 'Support records and configured report exclusions are omitted.');
     const journal = this.metric(grid, 'Journal streak', this.t('{count} consecutive days', { count: this.number(data.streaks.journal.current) }), 'calendar-days');
     this.heatmap(journal, data.streaks.journal.days);
     const captures = this.metric(grid, 'Saved captures', data.counts.captures, 'inbox');
@@ -319,7 +333,7 @@ export class TangrowReport extends ItemView {
     this.heatmap(habits, data.habits.days.map(({ day, completed, target }) => ({ day, count: completed, target })));
     if (!data.habits.target) this.detail(habits, 'No active habits configured');
     const orphans = this.metric(grid, 'Orphan notes', this.snapshot!.quality.linksReady ? data.counts.orphans : this.t('Indexing links...'), 'unlink');
-    this.detail(orphans, 'No incoming or outgoing resolved note links.');
+    this.hint(orphans, 'No incoming or outgoing resolved note links.');
     this.randomOrphan(orphans, data);
     this.renderWalk(this.metric(grid, 'Random walk', Math.min(10, this.walkPaths.length), 'shuffle'), data);
   }
@@ -341,7 +355,6 @@ export class TangrowReport extends ItemView {
   private renderTrends(parent: HTMLElement, data: ReportData): void {
     const panel = parent.createEl('section', { cls: 'tangrow-report-panel' });
     this.renderRangeHeading(panel);
-    this.caption(panel, 'Current records grouped by creation day, not historical inventory snapshots.');
     const legend = panel.createDiv({ cls: 'tangrow-report-legend' });
     for (const series of SERIES) {
       const count = data.trends.reduce((sum, day) => sum + day[series.key], 0);
@@ -362,30 +375,41 @@ export class TangrowReport extends ItemView {
     svg.setAttribute('aria-label', this.t('Creation trends'));
     const selected = SERIES.filter(({ key }) => this.visibleSeries.has(key));
     const maximum = Math.max(1, ...data.trends.flatMap((day) => selected.map(({ key }) => day[key])));
+    const y = (value: number): number => 170 - value / maximum * 155;
+    for (let tick = 0; tick <= 4; tick++) {
+      const gridline = panel.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'line');
+      const position = String(y(maximum * tick / 4));
+      gridline.addClass('tangrow-report-gridline');
+      gridline.setAttribute('x1', '10');
+      gridline.setAttribute('x2', '590');
+      gridline.setAttribute('y1', position);
+      gridline.setAttribute('y2', position);
+      gridline.setAttribute('aria-hidden', 'true');
+      svg.appendChild(gridline);
+    }
     for (const series of selected) {
       const line = panel.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'polyline');
       line.addClass('tangrow-report-series');
       line.dataset.series = series.key;
       line.setAttribute('fill', 'none');
-      line.setAttribute('points', data.trends.map((day, index) => `${data.trends.length === 1 ? 300 : 10 + index / (data.trends.length - 1) * 580},${170 - day[series.key] / maximum * 155}`).join(' '));
+      line.setAttribute('points', data.trends.map((day, index) => `${data.trends.length === 1 ? 300 : 10 + index / (data.trends.length - 1) * 580},${y(day[series.key])}`).join(' '));
       svg.appendChild(line);
       if (data.trends.length === 1) {
         const point = panel.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'circle');
         point.addClass('tangrow-report-series');
         point.dataset.series = series.key;
         point.setAttribute('cx', '300');
-        point.setAttribute('cy', String(170 - data.trends[0]![series.key] / maximum * 155));
+        point.setAttribute('cy', String(y(data.trends[0]![series.key])));
         point.setAttribute('r', '3');
         svg.appendChild(point);
       }
     }
-    panel.appendChild(svg);
+    const chart = panel.createDiv({ cls: 'tangrow-report-trend-wrap' });
+    chart.createSpan({ cls: 'tangrow-report-trend-max', text: this.number(maximum), attr: { 'aria-hidden': 'true' } });
+    chart.appendChild(svg);
     const axis = panel.createDiv({ cls: 'tangrow-report-chart-axis' });
     axis.createSpan({ text: data.trends[0]?.day ?? '' });
-    axis.createSpan({ text: `0–${this.number(maximum)}` });
     axis.createSpan({ text: data.trends.at(-1)?.day ?? '' });
-    this.caption(panel, 'Task points count current checkboxes by the source note creation day.');
-    this.caption(panel, 'Dates use available metadata and file timestamps; importing or restoring notes can change file dates.');
     const details = panel.createEl('details', { cls: 'tangrow-report-chart-data' });
     details.createEl('summary', { text: this.t('View chart values') });
     const body = this.table(details, ['Day', ...SERIES.map(({ label }) => label)], 'Creation trends');
@@ -400,10 +424,9 @@ export class TangrowReport extends ItemView {
     const activity = this.snapshot!.activity;
     const best = activity.hours.reduce((winner, hour) => hour.minutes > (winner?.minutes ?? 0) ? hour : winner, undefined as typeof activity.hours[number] | undefined);
     const card = this.metric(parent, 'Most active hour', best?.minutes ? `${String(best.hour).padStart(2, '0')}:00–${String((best.hour + 1) % 24).padStart(2, '0')}:00` : this.t('No editing activity recorded yet'), 'clock');
-    this.detail(card, '{count} active minutes', { count: this.number(activity.minutes) });
     const goal = this.host.settings.activityGoalMinutes * this.range;
-    this.detail(card, '{done} / {target} active minutes', { done: this.number(activity.minutes), target: this.number(goal) });
-    this.detail(card, 'Daily target: {count} active minutes', { count: this.number(this.host.settings.activityGoalMinutes) });
+    this.hint(this.detail(card, '{done} / {target} active minutes', { done: this.number(activity.minutes), target: this.number(goal) }),
+      'Daily target: {count} active minutes', { count: this.number(this.host.settings.activityGoalMinutes) });
     this.progress(card, activity.minutes / Math.max(1, goal), this.t('Period activity target'));
     if (!this.host.settings.trackEditingActivity) this.detail(card, 'Editing activity is disabled');
   }
@@ -414,7 +437,6 @@ export class TangrowReport extends ItemView {
   }
   private renderWalk(parent: HTMLElement, data: ReportData): void {
     const current = data.notes.find((note) => note.path === this.walkPaths[this.walkIndex]);
-    this.caption(parent, 'A queue of up to 10 notes from your existing folders.');
     const title = parent.createDiv({ cls: 'tangrow-report-walk-current', text: current?.name ?? this.t('No notes to revisit') });
     if (current) setTooltip(title, current.path);
     this.detail(parent, '{index} / {total} notes', { index: current ? this.walkIndex + 1 : 0, total: this.walkPaths.length });
@@ -442,25 +464,26 @@ export class TangrowReport extends ItemView {
   }
 
   private renderActions(parent: HTMLElement, data: ReportData): void {
-    const panel = this.panel(parent, 'Actions', 'Actions use your configured folders and existing notes.');
+    const panel = this.panel(parent, 'Actions');
     const grid = panel.createDiv({ cls: 'tangrow-report-base-grid' });
     this.control(grid, 'Review unfinished tasks', 'square', () => { this.selectPage('tasks'); this.statusFilter = 'open'; this.render(); });
     this.control(grid, 'Review orphan notes', 'unlink', () => { this.selectPage('notes'); this.noteRole = 'orphans'; this.render(); });
     this.control(grid, 'Review saved captures', 'inbox', () => { this.selectPage('notes'); this.noteRole = 'captures'; this.render(); });
-    for (const [page, label] of [['projects', 'Review projects'], ['areas', 'Review areas'], ['clips', 'Review clips']] as const) this.control(grid, label, 'arrow-right', () => this.selectPage(page));
+    for (const [page, label] of [['projects', 'Review projects'], ['areas', 'Review areas']] as const) this.control(grid, label, 'arrow-right', () => this.selectPage(page));
+    this.control(grid, 'Review clips', 'arrow-right', () => this.selectPage('resources', 'clips'));
     this.control(grid, 'Open existing task overview', 'list-checks', () => this.host.action('task-overview'));
     this.control(grid, "Open today's journal", 'calendar-days', () => this.host.action('daily-note'));
     this.control(grid, 'Open shared capture window', 'external-link', () => this.host.openCaptureWindow());
     this.randomOrphan(panel, data);
     this.renderWalk(this.panel(parent, 'Random walk'), data);
-    const databases = this.panel(parent, 'Browse the companion Bases', 'These views query notes in their current locations.');
+    const databases = this.panel(parent, 'Browse the companion Bases');
     const bases = databases.createDiv({ cls: 'tangrow-report-base-grid' });
     for (const definition of baseDefinitions(this.host.settings)) this.control(bases, definition.name, 'table', () => this.host.openBase(definition.id), undefined, true);
   }
 
-  private filters(parent: HTMLElement, status = false, roles = false): void {
+  private filters(parent: HTMLElement, status = false, roles = false, searchHint = 'Search names, paths or task text'): HTMLElement {
     const controls = parent.createDiv({ cls: 'tangrow-report-filters' });
-    const search = controls.createEl('input', { cls: 'tangrow-report-search', type: 'search', value: this.query, attr: { placeholder: this.t('Search names, paths or task text'), 'aria-label': this.t('Search report records') } });
+    const search = controls.createEl('input', { cls: 'tangrow-report-search', type: 'search', value: this.query, attr: { placeholder: this.t(searchHint), 'aria-label': this.t('Search report records') } });
     search.dataset.reportFocus = 'search';
     const updateQuery = (): void => { this.query = search.value; this.listPage = 0; this.render(); };
     search.addEventListener('compositionstart', () => { this.composing = true; });
@@ -471,6 +494,7 @@ export class TangrowReport extends ItemView {
       this.page === 'tasks' ? ['cancelled', 'Cancelled'] : ['archived', 'Archived'], ['unknown', 'Unknown']
     ], (value) => { this.statusFilter = value as FilterStatus; this.listPage = 0; this.render(); }, 'status');
     if (roles) this.select(controls, 'Note role', this.noteRole, [['all', 'All note roles'], ['pins', 'Pinned only'], ['orphans', 'Orphans only'], ['journals', 'Journals only'], ['captures', 'Captures only']], (value) => { this.noteRole = value; this.listPage = 0; this.render(); }, 'role');
+    return controls;
   }
   private select(parent: HTMLElement, label: string, value: string, options: string[][], change: (value: string) => void, key: string): void {
     const wrapper = parent.createEl('label', { text: this.t(label) });
@@ -544,9 +568,8 @@ export class TangrowReport extends ItemView {
   private taskStatus(task: ReportTask): FilterStatus { return task.status === ' ' || task.status === '/' ? 'open' : task.status.toLowerCase() === 'x' ? 'done' : task.status === '-' ? 'cancelled' : 'unknown'; }
 
   private renderTasks(parent: HTMLElement, data: ReportData): void {
-    const panel = this.panel(parent, 'Tasks', 'Checkboxes are counted in their source notes; support and archive folders are excluded.');
+    const panel = this.panel(parent, 'Tasks');
     this.completion(panel, data.completion.tasks);
-    this.caption(panel, 'Completion excludes cancelled and unknown states.');
     this.filters(panel, true);
     const records = data.taskItems.filter((task) => (this.statusFilter === 'all' || this.taskStatus(task) === this.statusFilter) && this.matches(task.name, task.path, task.text));
     const visible = this.paginate(panel, records);
@@ -556,15 +579,13 @@ export class TangrowReport extends ItemView {
       this.control(row.createEl('td'), task.text || task.name, 'arrow-up-right', () => this.host.openNote(task.path, task.line), undefined, true).dataset.reportFocus = `task-${task.path}-${task.line}`;
       this.statusEditor(row.createEl('td'), `task-${task.path}-${task.line}`, task.text || task.name, task.status === 'X' ? 'x' : task.status, TASK_STATUSES,
         (status) => ({ kind: 'task', task, status: status as ReportTaskStatus }), this.t('Update the checkbox in {path}, line {line}.', { path: task.path, line: task.line + 1 }));
-      const source = row.createEl('td', { text: task.path });
-      this.caption(source, 'Source note · line {line}', { line: task.line + 1 });
+      row.createEl('td', { text: `${task.path}:${task.line + 1}` });
     }
   }
 
   private renderEntities(parent: HTMLElement, entities: ReportEntity[], kind: 'projects' | 'areas'): void {
-    const panel = this.panel(parent, kind === 'projects' ? 'Project entities' : 'Area entities', 'Folders count once; root-level Markdown files count as individual entities.');
+    const panel = this.panel(parent, kind === 'projects' ? 'Project entities' : 'Area entities');
     this.completion(panel, this.snapshot!.data.completion[kind]);
-    this.caption(panel, 'Entity status comes from its canonical note; missing or conflicting states remain unknown.');
     this.filters(panel, true);
     const records = entities.filter((entity) => (this.statusFilter === 'all' || entity.status === this.statusFilter) && this.matches(entity.name, entity.path));
     const body = this.table(panel, ['Name', 'Status', 'Notes', 'Created', 'Location'], kind === 'projects' ? 'Projects' : 'Areas');
@@ -589,9 +610,8 @@ export class TangrowReport extends ItemView {
       this.activityState.scrollPositions = {};
       this.render();
     });
-    const panel = this.panel(parent, 'Notes', 'Support records and configured report exclusions are omitted.');
-    this.caption(panel, '{count} words', { count: this.number(data.counts.words) });
-    this.caption(panel, '{count} characters excluding whitespace', { count: this.number(data.counts.characters) });
+    const panel = this.panel(parent, 'Notes');
+    panel.createEl('p', { cls: 'tangrow-report-caption', text: `${this.t('{count} words', { count: this.number(data.counts.words) })} · ${this.t('{count} characters excluding whitespace', { count: this.number(data.counts.characters) })}` });
     this.filters(panel, true, true);
     if (this.noteRole === 'orphans' && !this.snapshot!.quality.linksReady) {
       this.caption(panel, 'Link indexing is still in progress; orphan results may change.');
@@ -613,19 +633,106 @@ export class TangrowReport extends ItemView {
     this.renderExclusions(parent);
   }
 
+  private renderResources(parent: HTMLElement, data: ReportData): void {
+    const metrics = parent.createDiv({ cls: 'tangrow-report-metrics tangrow-report-resource-metrics' });
+    const entries = this.metric(metrics, 'Resource entries', data.resources.length, 'library');
+    this.hint(entries, 'Direct child folders and root-level Markdown in {folder}.', { folder: this.host.settings.resourcesFolder });
+    const notes = this.metric(metrics, 'Resource notes', data.counts.resourceNotes, 'files');
+    this.detail(notes, 'Created in the last 90 days: +{count}', { count: this.number(data.gains90.resourceNotes) });
+    const clips = this.metric(metrics, 'Clips total', data.counts.clips, 'bookmark');
+    const outside = data.clips.reduce((count, note) => count + Number(!inFolder(note.path, this.host.settings.resourcesFolder)), 0);
+    if (outside) this.detail(clips, '{count} clips are outside the resource folder.', { count: this.number(outside) });
+    const summary = data.completion.clips;
+    const completion = this.metric(metrics, 'Clip completion rate', summary.rate === null ? this.t('No known completion state') : `${this.number(summary.rate * 100, 1)}%`, 'circle-check');
+    this.completion(completion, summary, true);
+
+    const tabs = parent.createDiv({ cls: 'tangrow-report-subtabs', attr: { role: 'tablist', 'aria-label': this.t('Resource views') } });
+    const choices: Array<{ id: ResourceTab; label: string; count: number }> = [
+      { id: 'items', label: 'Resource entries', count: data.resources.length },
+      { id: 'clips', label: 'Clips', count: data.clips.length }
+    ];
+    const selectTab = (tab: ResourceTab): void => {
+      this.resourceTab = tab;
+      this.query = '';
+      this.statusFilter = 'all';
+      this.listPage = 0;
+      this.render();
+      this.contentEl.querySelector<HTMLElement>(`[data-resource-tab="${tab}"]`)?.focus({ preventScroll: true });
+    };
+    for (const [index, choice] of choices.entries()) {
+      const button = this.control(tabs, `${this.t(choice.label)} · ${this.number(choice.count)}`, '', () => selectTab(choice.id), undefined, true);
+      button.dataset.resourceTab = choice.id;
+      button.dataset.reportFocus = `resource-tab-${choice.id}`;
+      button.id = `${this.instanceId}-resource-${choice.id}`;
+      button.setAttribute('role', 'tab');
+      button.setAttribute('aria-selected', String(this.resourceTab === choice.id));
+      button.setAttribute('aria-controls', `${this.instanceId}-resource-pane`);
+      button.tabIndex = this.resourceTab === choice.id ? 0 : -1;
+      button.addEventListener('keydown', (event) => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? choices.length - 1 : (index + 1) % choices.length;
+        selectTab(choices[next]!.id);
+      });
+    }
+    const content = parent.createDiv({ attr: { role: 'tabpanel', id: `${this.instanceId}-resource-pane`, 'aria-labelledby': `${this.instanceId}-resource-${this.resourceTab}` } });
+    if (this.resourceTab === 'clips') {
+      this.renderClips(content, data);
+      return;
+    }
+    const panel = this.panel(content, 'Resource entries');
+    const filters = this.filters(panel, false, false, 'Search names or paths');
+    const sort = filters.createDiv({ cls: 'tangrow-report-resource-sort', attr: { role: 'group', 'aria-label': this.t('Sort resources') } });
+    for (const [key, label] of [['modified', 'Last updated'], ['notes', 'Note count'], ['name', 'Name']] as const) {
+      const button = this.control(sort, label, '', () => { this.resourceSort = key; this.listPage = 0; this.render(); });
+      button.dataset.reportFocus = `resource-sort-${key}`;
+      button.setAttribute('aria-pressed', String(this.resourceSort === key));
+    }
+    const records = data.resources.filter((entry) => this.matches(entry.name, entry.path));
+    records.sort((left, right) => {
+      const primary = this.resourceSort === 'modified' ? (right.modified ?? -1) - (left.modified ?? -1)
+        : this.resourceSort === 'notes' ? right.noteCount - left.noteCount : left.name.localeCompare(right.name, this.host.settings.language);
+      return primary || (left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
+    });
+    const visible = this.paginate(panel, records);
+    const body = this.table(panel, ['Name', 'Notes', 'Last updated', 'Created', 'Location'], 'Resource entries');
+    const relativeTime = new Intl.RelativeTimeFormat(this.host.settings.language, { numeric: 'auto' });
+    for (const entry of visible) {
+      const row = body.createEl('tr');
+      const standalone = entry.notePath === entry.path;
+      const name = standalone ? entry.path.slice(entry.path.lastIndexOf('/') + 1) : entry.name;
+      const button = this.control(row.createEl('td'), name, standalone ? 'file-text' : 'library', () => entry.notePath ? this.host.openNote(entry.notePath) : undefined, undefined, true);
+      button.dataset.reportFocus = `resource-${entry.path}`;
+      button.disabled = !entry.notePath;
+      if (!entry.notePath) setTooltip(button, this.t('This resource folder has no notes to open.'));
+      row.createEl('td', { text: this.number(entry.noteCount) });
+      let updated = this.t('Unknown');
+      if (entry.modified !== null) {
+        const days = Math.floor((this.snapshot!.generatedAt - entry.modified) / 86_400_000);
+        const unit = days < 7 ? 'day' : days < 30 ? 'week' : days < 365 ? 'month' : 'year';
+        const count = unit === 'day' ? days : Math.floor(days / (unit === 'week' ? 7 : unit === 'month' ? 30 : 365));
+        updated = relativeTime.format(-count, unit);
+      }
+      const modified = row.createEl('td', { text: updated });
+      if (entry.modified !== null) setTooltip(modified, new Date(entry.modified).toLocaleString(this.host.settings.language));
+      row.createEl('td', { text: this.date(entry.created) });
+      row.createEl('td', { text: entry.path });
+    }
+  }
+
   private renderClips(parent: HTMLElement, data: ReportData): void {
-    const panel = this.panel(parent, 'Clips', 'Clip recognition uses external HTTP(S) sources or explicit clip metadata.');
+    const panel = this.panel(parent, 'Clips');
     this.completion(panel, data.completion.clips);
-    this.caption(panel, 'Internal related-note links do not identify a clip.');
     this.filters(panel, true);
     const records = data.clips.filter((note) => (this.statusFilter === 'all' || reportRecordStatus(note) === this.statusFilter) && this.matches(note.name, note.path, String(note.frontmatter?.source ?? '')));
-    const body = this.table(panel, ['Name', 'Status', 'Source', 'Created'], 'Clips');
+    const body = this.table(panel, ['Name', 'Status', 'Source', 'Created', 'Location'], 'Clips');
     for (const note of this.paginate(panel, records)) {
       const row = body.createEl('tr');
       this.control(row.createEl('td'), note.name, 'bookmark', () => this.host.openNote(note.path), undefined, true).dataset.reportFocus = `clip-${note.path}`;
       this.noteStatus(row.createEl('td'), note);
       row.createEl('td', { text: String(note.frontmatter?.source ?? '') });
       row.createEl('td', { text: this.date(note.created) });
+      row.createEl('td', { text: note.path });
     }
   }
 
@@ -635,9 +742,8 @@ export class TangrowReport extends ItemView {
     const metrics = parent.createDiv({ cls: 'tangrow-report-metrics' });
     this.renderActivityMetric(metrics);
     this.metric(metrics, 'Focus timer minutes', data.counts.focusMinutes, 'timer');
-    const notes = this.panel(parent, 'Editing activity', 'Collection begins with this version; earlier activity is unavailable.');
+    const notes = this.panel(parent, 'Editing activity');
     this.caption(notes, 'Recording since {date}', { date: this.date(activity.startedAt) });
-    this.caption(notes, 'Only editing event times are counted. Note text and keyboard contents are not stored.');
     this.renderActivitySettings(notes);
     const daily = this.panel(parent, 'Daily editing minutes');
     const dayTable = this.table(daily, ['Day', 'Editing activity'], 'Daily editing minutes');
@@ -657,7 +763,7 @@ export class TangrowReport extends ItemView {
       slot.createSpan({ text: this.number(hour.minutes) });
       setTooltip(slot, label);
     }
-    const focus = this.panel(parent, 'Focus timer minutes', 'Saved focus sessions are separate from editing activity.');
+    const focus = this.panel(parent, 'Focus timer minutes');
     this.control(focus, 'Browse saved focus records', 'table', () => this.host.openBase('focus'));
   }
 
@@ -668,6 +774,7 @@ export class TangrowReport extends ItemView {
     enabled.checked = this.host.settings.trackEditingActivity;
     enabled.dataset.reportFocus = 'tracking';
     label.createSpan({ text: this.t('Enable local editing activity') });
+    this.hint(label, 'Only editing event times are counted. Note text and keyboard contents are not stored.');
     enabled.addEventListener('change', () => { void this.host.updateReportSettings({ trackEditingActivity: enabled.checked }).then(() => this.refresh()).catch((error: unknown) => { enabled.checked = this.host.settings.trackEditingActivity; new Notice(describeError(this.host.settings.language, error)); }); });
     const targetLabel = form.createEl('label', { text: this.t('Daily activity target') });
     const goal = targetLabel.createEl('input', { type: 'number', value: this.goalDraft ?? String(this.host.settings.activityGoalMinutes), attr: { min: '1', max: '1440', step: '1', 'aria-label': this.t('Daily activity target') } });
@@ -685,9 +792,7 @@ export class TangrowReport extends ItemView {
   }
 
   private renderExclusions(parent: HTMLElement): void {
-    const panel = this.panel(parent, 'Report definitions', 'Support records and configured report exclusions are omitted.');
-    this.caption(panel, 'Exclusions change this report only; they never move or edit notes.');
-    this.caption(panel, 'Pinned notes and saved focus or habit records retain their own scope.');
+    const panel = this.panel(parent, 'Report exclusions');
     const label = panel.createEl('label', { text: this.t('Excluded folders, one per line') });
     const editor = label.createEl('textarea', { cls: 'tangrow-textarea', attr: { rows: '3', 'aria-label': this.t('Excluded folders, one per line') } });
     editor.value = this.exclusionsDraft ?? this.host.settings.reportExcludedFolders.join('\n');
@@ -702,7 +807,5 @@ export class TangrowReport extends ItemView {
       if (this.exclusionsDraft === submittedDraft) this.exclusionsDraft = undefined;
       await this.refresh();
     });
-    this.caption(panel, 'A streak may continue from yesterday when today has no record yet.');
-    this.caption(panel, 'Completion excludes cancelled and unknown states.');
   }
 }

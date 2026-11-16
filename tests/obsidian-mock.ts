@@ -1,7 +1,8 @@
 import momentLibrary from 'moment';
+import type { KeymapContext, KeymapEventListener, Modifier } from 'obsidian';
 
 export const notices: string[] = [];
-export const Platform = { isDesktopApp: true };
+export const Platform = { isDesktopApp: true, isMacOS: process.platform === 'darwin' };
 
 class MockEvents {
   private listeners = new Map<string, Set<(...args: unknown[]) => void>>();
@@ -148,8 +149,52 @@ interface MockNavigationLeaf {
   openFile(file: TFile): Promise<void>;
 }
 
+interface MockKeymapHandler {
+  scope: Scope;
+  modifiers: string | null;
+  key: string | null;
+}
+
+export class Scope {
+  private handlers = new Map<MockKeymapHandler, KeymapEventListener>();
+  constructor(private readonly parent?: Scope) {}
+  register(modifiers: Modifier[] | null, key: string | null, callback: KeymapEventListener): MockKeymapHandler {
+    const handler = { scope: this, modifiers: modifiers?.join(',') ?? null, key };
+    this.handlers.set(handler, callback);
+    return handler;
+  }
+  unregister(handler: MockKeymapHandler): void { this.handlers.delete(handler); }
+  handleEvent(event: KeyboardEvent): boolean {
+    const pressed = [event.ctrlKey ? 'Ctrl' : '', event.metaKey ? 'Meta' : '', event.altKey ? 'Alt' : '', event.shiftKey ? 'Shift' : ''].filter(Boolean);
+    for (const [handler, callback] of this.handlers) {
+      if (handler.key !== null && handler.key.toLowerCase() !== event.key.toLowerCase()) continue;
+      if (handler.modifiers !== null) {
+        const expected = new Set(handler.modifiers.split(',').filter(Boolean).map((modifier) => modifier === 'Mod' ? Platform.isMacOS ? 'Meta' : 'Ctrl' : modifier));
+        if (expected.size !== pressed.length || pressed.some((modifier) => !expected.has(modifier))) continue;
+      }
+      const context: KeymapContext = { modifiers: handler.modifiers, key: handler.key, vkey: event.key };
+      if (callback(event, context) === false) event.preventDefault();
+      return true;
+    }
+    return this.parent?.handleEvent(event) ?? false;
+  }
+}
+
+export class Keymap {
+  private scopes: Scope[];
+  constructor(root: Scope) { this.scopes = [root]; }
+  pushScope(scope: Scope): void { this.scopes.push(scope); }
+  popScope(scope: Scope): void {
+    const index = this.scopes.lastIndexOf(scope);
+    if (index >= 0) this.scopes.splice(index, 1);
+  }
+  handleEvent(event: KeyboardEvent): boolean { return this.scopes.at(-1)?.handleEvent(event) ?? false; }
+}
+
 export function createMockApp() {
   const vault = new MockVault();
+  const scope = new Scope();
+  const keymap = new Keymap(scope);
   let activeFile: TFile | null = null;
   let activeView: MarkdownView | null = null;
   let mostRecentLeaf: { view: MockView } | null = null;
@@ -255,7 +300,7 @@ export function createMockApp() {
       });
     }
   };
-  return { vault, workspace, metadataCache, fileManager };
+  return { vault, workspace, metadataCache, fileManager, scope, keymap };
 }
 export type MockApp = ReturnType<typeof createMockApp>;
 
