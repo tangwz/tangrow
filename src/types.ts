@@ -9,7 +9,7 @@ import type { AgentStatus, WorkflowId, WorkflowRun } from './claudian';
 export type Locale = 'zh-CN' | 'en';
 export type Section = 'tools' | 'capture' | 'pins' | 'studio' | 'focus' | 'habits' | 'ai';
 export type NoteKind = 'note' | 'project' | 'draft' | 'card';
-export interface CardSource { path: string; anchor?: string }
+export interface CardSource { path: string; anchor?: string; includeLink?: boolean }
 export type ActionId = 'copy-link' | 'copy-path' | 'file-location' | 'fold' | 'unfold' | 'page-width' | 'all-width' | 'refresh' | 'cover' | 'timestamp' | 'toggle-pin' | 'settings' | 'appearance' | 'file-list' | 'stack-tabs' | 'hide-panel' | 'random-note' | 'daily-note' | 'report' | 'title-date' | 'toggle-theme' | 'task-overview';
 export type BaseId = 'notes' | 'recent' | 'projects' | 'areas' | 'resources' | 'inbox' | 'sources' | 'captures' | 'pins' | 'drafts' | 'focus' | 'habits' | 'tasks';
 

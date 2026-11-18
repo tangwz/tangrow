@@ -847,9 +847,11 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     let suffix = 2;
     while (this.app.vault.getAbstractFileByPath(path)) path = `${folder}/${title} (${suffix++}).md`;
     if (source) {
-      const file = this.app.vault.getAbstractFileByPath(source.path);
-      if (!(file instanceof TFile) || file.extension !== 'md') throw new Error('The card source no longer exists.');
-      fields.tangrow_sources = [this.app.fileManager.generateMarkdownLink(file, path, source.anchor)];
+      if (source.includeLink !== false) {
+        const file = this.app.vault.getAbstractFileByPath(source.path);
+        if (!(file instanceof TFile) || file.extension !== 'md') throw new Error('The card source no longer exists.');
+        fields.tangrow_sources = [this.app.fileManager.generateMarkdownLink(file, path, source.anchor)];
+      }
       body = rebaseMarkdownLinks(body, source.path, path, (link, from) => this.app.metadataCache.getFirstLinkpathDest(link, from)?.path ?? null);
     }
     const content = `---\n${stringifyYaml(fields)}---\n\n# ${title}\n\n${body.trim()}\n`;

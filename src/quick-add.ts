@@ -39,7 +39,7 @@ export class QuickAddModal extends Modal {
   private reason = '';
   private includeSource = true;
 
-  constructor(private readonly host: SidebarHost, kind: QuickKind = 'capture', text = '', private readonly source?: CardSource) {
+  constructor(private readonly host: SidebarHost, kind: QuickKind = 'capture', text = '', private source?: CardSource) {
     super(host.app);
     this.ui = new SidebarUI(() => this.host.settings.language);
     this.kind = kind === 'card' && !host.settings.knowledgeEnabled ? 'capture' : kind;
@@ -231,8 +231,10 @@ export class QuickAddModal extends Modal {
           this.text = this.text.split(/\r?\n/).filter((entry, index, all) => entry.trim() !== line || all.findIndex((other) => other.trim() === line) !== index).join('\n');
         }
       } else if (this.kind === 'project') await this.host.createNote('project', first, this.projectFolder || undefined, body);
-      else if (this.kind === 'card') await this.host.createCard(first, body, this.includeSource ? this.source : undefined);
-      else {
+      else if (this.kind === 'card') {
+        const source = this.source && { ...this.source, includeLink: this.includeSource };
+        await this.host.createCard(first, body, source);
+      } else {
         if (body) await this.host.createNoteWithBody(first, body);
         else await this.host.createNote('note', first);
       }
@@ -240,7 +242,7 @@ export class QuickAddModal extends Modal {
       this.original = null;
       this.reason = '';
       this.saving = false;
-      if (this.source && this.kind === 'card') this.includeSource = false;
+      this.source = undefined;
       if (this.keepOpen) this.render();
       else this.close();
     } catch (error) {
