@@ -170,9 +170,10 @@ test('a project suggestion without a title preserves the source heading and body
 
 test('extracted cards rebase copied links when the source property is unchecked', async () => {
   const reference = '40-Resources/Reference.md';
-  const selection = '[details](./Details.md)';
+  const selection = '[details](./Details.md) and [heading](#Details) and [[#^part|original block]]';
+  const sourceBody = `${selection}\n\n## Details\n\nSource passage. ^part\n`;
   const { app, dialog, isClosed } = setup(`Extracted card\n${selection}`, 'card', { path: reference });
-  const source = app.vault.seedFile(reference, selection);
+  const source = app.vault.seedFile(reference, sourceBody);
   app.vault.seedFile('40-Resources/Details.md', '# Details\n');
   const checkbox = dialog.contentEl.querySelector('.tangrow-quick-row')!.querySelector('input')!;
   assert.equal(checkbox.checked, true);
@@ -182,16 +183,16 @@ test('extracted cards rebase copied links when the source property is unchecked'
   await dialog.save();
 
   const card = app.vault.getAbstractFileByPath('50-Zettel/Extracted card.md') as TFile;
-  assert.ok(card.content.endsWith('# Extracted card\n\n[details](../40-Resources/Details.md)\n'));
+  assert.ok(card.content.endsWith('# Extracted card\n\n[details](../40-Resources/Details.md) and [heading](../40-Resources/Reference.md#Details) and [[40-Resources/Reference.md#^part|original block]]\n'));
   assert.equal(app.metadataCache.getFileCache(card).frontmatter?.tangrow_sources, undefined);
-  assert.equal(source.content, selection);
+  assert.equal(source.content, sourceBody);
   assert.equal(isClosed(), true);
 });
 
 test('keeping the card dialog open drops the extraction context after saving', async () => {
   const reference = '40-Resources/Reference.md';
-  const { app, dialog, isClosed } = setup('Extracted card\nCopied content.', 'card', { path: reference });
-  app.vault.seedFile(reference, '# Reference\n');
+  const { app, dialog, isClosed } = setup('Extracted card\nCopied [[#Details|details]].', 'card', { path: reference });
+  app.vault.seedFile(reference, '# Reference\n\n## Details\n');
   const keepOpen = dialog.contentEl.querySelector('.tangrow-quick-keep')!.querySelector('input')!;
   keepOpen.checked = true;
   keepOpen.dispatchEvent(new Event('change'));
@@ -200,16 +201,17 @@ test('keeping the card dialog open drops the extraction context after saving', a
 
   const firstCard = app.vault.getAbstractFileByPath('50-Zettel/Extracted card.md') as TFile;
   assert.deepEqual(app.metadataCache.getFileCache(firstCard).frontmatter?.tangrow_sources, [`[[${reference}]]`]);
+  assert.ok(firstCard.content.endsWith('# Extracted card\n\nCopied [[40-Resources/Reference.md#Details|details]].\n'));
   assert.equal(isClosed(), false);
   assert.equal(dialog.contentEl.querySelector('.tangrow-quick-row'), null);
 
   app.vault.seedFile('50-Zettel/Local.md', '# Local card\n');
   const editor = dialog.contentEl.querySelector('textarea')!;
-  editor.value = 'Next card\n[local card](./Local.md)';
+  editor.value = 'Next card\n[local card](./Local.md) [[#Next card]]';
   editor.dispatchEvent(new Event('input'));
   await dialog.save();
 
   const nextCard = app.vault.getAbstractFileByPath('50-Zettel/Next card.md') as TFile;
-  assert.ok(nextCard.content.endsWith('# Next card\n\n[local card](./Local.md)\n'));
+  assert.ok(nextCard.content.endsWith('# Next card\n\n[local card](./Local.md) [[#Next card]]\n'));
   assert.equal(app.metadataCache.getFileCache(nextCard).frontmatter?.tangrow_sources, undefined);
 });

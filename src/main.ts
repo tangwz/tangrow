@@ -557,8 +557,16 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       if (existing && !rebuild) return existing;
       if (existing) {
         const completed = new Set(existing.completed);
-        const completedIds = new Set(existing.entries.filter((entry) => entry.id && completed.has(entry.path)).map((entry) => entry.id));
-        candidate.completed = candidate.entries.filter((entry) => completed.has(entry.path) || (entry.id && completedIds.has(entry.id))).map((entry) => entry.path);
+        candidate.completed = candidate.entries.filter((entry) => {
+          const atPath = existing.entries.find((previous) => previous.path === entry.path);
+          if (atPath && atPath.id === entry.id) return completed.has(atPath.path);
+          if (!entry.id) return false;
+
+          const byId = existing.entries.filter((previous) => previous.id === entry.id);
+          if (!byId.length) return !!atPath && !atPath.id && completed.has(atPath.path);
+          if (byId.length !== 1 || !completed.has(byId[0]!.path)) return false;
+          return !candidate.entries.some((other) => other !== entry && other.id === entry.id);
+        }).map((entry) => entry.path);
       }
       await this.replaceCardReview(candidate);
       this.notify();
@@ -852,7 +860,8 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
         if (!(file instanceof TFile) || file.extension !== 'md') throw new Error('The card source no longer exists.');
         fields.tangrow_sources = [this.app.fileManager.generateMarkdownLink(file, path, source.anchor)];
       }
-      body = rebaseMarkdownLinks(body, source.path, path, (link, from) => this.app.metadataCache.getFirstLinkpathDest(link, from)?.path ?? null);
+      body = rebaseMarkdownLinks(body, source.path, path,
+        (link, from) => this.app.metadataCache.getFirstLinkpathDest(link, from)?.path ?? null, { sourceLocalAnchors: true });
     }
     const content = `---\n${stringifyYaml(fields)}---\n\n# ${title}\n\n${body.trim()}\n`;
     try { return await this.app.vault.create(path, content); }

@@ -385,7 +385,10 @@ export class TangrowReport extends ItemView {
     const location = { path: this.host.settings.resourcesFolder };
     this.countLink(this.detail(resources, ''), this.t('{count} resource notes', { count: this.number(data.counts.resourceNotes) }), 'Resource notes', () => this.selectPage('notes', { location }));
     this.gain(resources, data.gains90.resourceNotes, 'notes', { location });
-    this.metric(inventory, 'Manuscripts', data.counts.drafts, 'file-pen-line', () => this.selectPage('notes', { noteTab: 'drafts' }));
+    this.metric(inventory, 'Manuscripts', data.counts.drafts, 'file-pen-line', () => {
+      this.knowledge.resetDraftFilters();
+      this.selectPage('notes', { noteTab: 'drafts' });
+    });
     const words = this.metric(inventory, 'Word and character totals', this.t('{count} words', { count: this.number(data.counts.words) }), 'text', () => this.selectPage('notes'));
     this.detail(words, '{count} characters excluding whitespace', { count: this.number(data.counts.characters) });
 

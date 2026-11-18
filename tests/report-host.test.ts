@@ -20,7 +20,7 @@ interface ReportPlugin extends MockPlugin {
   loadReport(range: ReportRange): Promise<ReportSnapshot>;
   updateReportSettings(patch: Partial<ReportPreferences>): Promise<void>;
   loadCardReview(day: string): CardReviewQueue | null;
-  saveCardReview(queue: CardReviewQueue): Promise<CardReviewQueue>;
+  saveCardReview(queue: CardReviewQueue, rebuild?: boolean): Promise<CardReviewQueue>;
   markCardReviewed(path: string, day: string, entryPath: string): Promise<void>;
   addWritingMaterial(draftPath: string, sourcePath: string): Promise<void>;
   openReport(): Promise<void>;
@@ -133,6 +133,47 @@ test('card review retries persist progress without changing the first explicit r
     assert.equal(app.metadataCache.getFileCache(file).frontmatter?.tangrow_reviewed_at, firstReview);
     assert.deepEqual(plugin.loadCardReview(day)?.completed, [file.path]);
     assert.ok(file.content.endsWith('\n# Viewpoint\n'));
+  });
+});
+
+test('rebuilding a card review preserves a renamed card’s progress and excludes its replacement', async () => {
+  await withEnvironment(async () => {
+    const app = harness.createMockApp();
+    const originalPath = '50-Zettel/Viewpoint.md';
+    const renamedPath = '50-Zettel/Renamed.md';
+    const card = app.vault.seedFile(originalPath, '---\ntangrow_kind: card\ntangrow_id: original\n---\n\n# Viewpoint\n');
+    const plugin = new harness.TangrowPlugin(app);
+    const day = dayKey();
+    await plugin.saveCardReview({ day, entries: [{ path: originalPath, id: 'original', reason: 'sample' }], completed: [] });
+    await plugin.markCardReviewed(originalPath, day, originalPath);
+    await app.vault.rename(card, renamedPath);
+    const replacement = app.vault.seedFile(originalPath, '---\ntangrow_kind: card\ntangrow_id: replacement\n---\n\n# Replacement\n');
+
+    const rebuilt = await plugin.saveCardReview({ day, entries: [
+      { path: originalPath, id: 'replacement', reason: 'sample' },
+      { path: renamedPath, id: 'original', reason: 'sample' }
+    ], completed: [] }, true);
+
+    assert.deepEqual(rebuilt.completed, [renamedPath]);
+    assert.deepEqual(plugin.loadCardReview(day), rebuilt);
+    await plugin.markCardReviewed(originalPath, day, originalPath);
+    assert.equal(app.metadataCache.getFileCache(replacement).frontmatter?.tangrow_reviewed_at, new Date(Date.now()).toISOString());
+  });
+});
+
+test('rebuilding a card review keeps legacy path matches and requires an unambiguous ID for moves', async () => {
+  await withEnvironment(async () => {
+    const plugin = new harness.TangrowPlugin(harness.createMockApp());
+    const day = dayKey();
+    const legacy = { path: '50-Zettel/Legacy.md', reason: 'sample' as const };
+    const original = { path: '50-Zettel/Original.md', id: 'original', reason: 'sample' as const };
+    const renamed = { ...original, path: '50-Zettel/Renamed.md' };
+    const duplicate = { ...original, path: '50-Zettel/Duplicate.md' };
+    await plugin.saveCardReview({ day, entries: [legacy, original], completed: [legacy.path, original.path] });
+
+    const rebuilt = await plugin.saveCardReview({ day, entries: [legacy, renamed, duplicate], completed: [] }, true);
+
+    assert.deepEqual(rebuilt.completed, [legacy.path]);
   });
 });
 

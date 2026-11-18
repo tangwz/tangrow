@@ -274,6 +274,8 @@ class Element extends EventTarget {
   textContent = '';
   value = '';
   type = '';
+  selectionStart: number | null = null;
+  selectionEnd: number | null = null;
   scrollTop = 0;
   disabled = false;
   checked = false;
@@ -304,6 +306,7 @@ class Element extends EventTarget {
     this.textContent = '';
   }
   focus(): void { if (!this.disabled) this.ownerDocument.activeElement = this; }
+  setSelectionRange(start: number, end: number): void { this.selectionStart = start; this.selectionEnd = end; }
   scrollIntoView(): void {}
   setText(text: string): void { this.textContent = text; }
   getAttribute(key: string): string | null { return this.attributes.get(key) ?? null; }
@@ -602,6 +605,73 @@ test('returning to card trends preserves focus across the range load and zero gr
   await flush();
   assert.equal(view.contentEl.querySelector('[data-report-focus="card-filter"]')?.value, 'period');
   assert.equal(view.contentEl.querySelectorAll('p').find((element) => element.getAttribute('role') === 'status')?.textContent, '0 cards');
+});
+
+test('material filters, page, and search focus survive report refreshes and IME composition', async () => {
+  const { app, plugin } = setup();
+  const query = '\u8d44\u6599';
+  const matches = Array.from({ length: 21 }, (_, index) => `${query} ${String(index).padStart(2, '0')}`);
+  const materials = new Map([...matches, 'Other', `${query} Uncovered`].map((name) => {
+    const file = note(app, `40-Resources/${name}.md`);
+    return [file.path, file];
+  }));
+  app.metadataCache.getFirstLinkpathDest = (link) => materials.get(link) ?? null;
+  Object.assign(app.metadataCache, { resolvedLinks: {} });
+  note(app, 'Card.md', { tangrow_kind: 'card', tangrow_sources: [...matches, 'Other'].map((name) => `[[40-Resources/${name}.md]]`) });
+  const view = mountReport(plugin, await plugin.loadReport(30), 'resources');
+  await clickReportControl(view, 'resource-tab-materials');
+  await clickReportControl(view, 'material-coverage');
+  const search = () => view.contentEl.querySelector('[data-report-focus="material-search"]')!;
+  const hasButton = (label: string) => view.contentEl.querySelectorAll('button').some((button) => button.getAttribute('aria-label') === label);
+  const input = search();
+  input.focus();
+  input.dispatchEvent(new Event('compositionstart'));
+  input.value = 'zi';
+  input.dispatchEvent(new Event('input'));
+  await view.refresh();
+  assert.equal(search(), input);
+  assert.ok(hasButton('Other'));
+
+  input.value = query;
+  input.dispatchEvent(new Event('compositionend'));
+  assert.equal(hasButton('Other'), false);
+  const next = view.contentEl.querySelectorAll('button').find((button) => button.getAttribute('aria-label') === 'Next page')!;
+  next.dispatchEvent(new Event('click'));
+  await flush();
+  assert.ok(hasButton(matches[20]!));
+  assert.equal(hasButton(`${query} Uncovered`), false);
+
+  search().focus();
+  search().setSelectionRange(1, 2);
+  await view.refresh();
+  assert.equal(search().value, query);
+  assert.equal(view.contentEl.ownerDocument.activeElement, search());
+  assert.deepEqual([search().selectionStart, search().selectionEnd], [1, 2]);
+  assert.equal(view.contentEl.querySelector('[data-report-focus="material-coverage"]')?.getAttribute('aria-pressed'), 'true');
+  assert.ok(hasButton(matches[20]!));
+  assert.equal(hasButton(matches[0]!), false);
+  assert.equal(hasButton(`${query} Uncovered`), false);
+});
+
+test('manuscript stage stays selected across report refreshes', async () => {
+  const { app, plugin } = setup();
+  note(app, 'Manuscript.md', { tangrow_kind: 'draft', tangrow_writing_stage: 'drafting' });
+  note(app, 'Later.md', { tangrow_kind: 'draft', tangrow_writing_stage: 'outline' });
+  const view = mountReport(plugin, await plugin.loadReport(30), 'notes');
+  await clickReportControl(view, 'note-tab-drafts');
+  const stage = () => view.contentEl.querySelector('[data-report-focus="draft-stage"]')!;
+  stage().value = 'drafting';
+  stage().dispatchEvent(new Event('change'));
+  await view.refresh();
+  assert.equal(stage().value, 'drafting');
+  const names = view.contentEl.querySelectorAll('button').map((button) => button.getAttribute('aria-label'));
+  assert.ok(names.includes('Manuscript'));
+  assert.equal(names.includes('Later'), false);
+
+  view.navigate({ page: 'overview' });
+  await clickReportControl(view, 'count-Manuscripts');
+  assert.equal(stage().value, '');
+  assert.ok(view.contentEl.querySelectorAll('button').some((button) => button.getAttribute('aria-label') === 'Later'));
 });
 
 test('today habit check-ins can be recorded from the overview count', async () => {

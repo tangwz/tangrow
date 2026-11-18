@@ -1,10 +1,19 @@
 interface Destination { start: number; end: number; after: number }
+interface RebaseOptions { sourceLocalAnchors?: boolean }
 type ResolveLink = (linkpath: string, sourcePath: string) => string | null;
 const INLINE_LINK_END = /^[ \t\r\n]*(?:(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\((?:\\.|[^)\\])*\))[ \t\r\n]*)?\)/;
 
 function pathSegments(path: string): string[] {
   return path.split('/').map((segment) => encodeURIComponent(segment)
     .replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`));
+}
+
+function relativePath(segments: readonly string[], targetPath: string): string {
+  const targetFolder = pathSegments(targetPath).slice(0, -1);
+  let common = 0;
+  while (common < targetFolder.length && targetFolder[common] === segments[common]) common++;
+  const relative = [...targetFolder.slice(common).map(() => '..'), ...segments.slice(common)].join('/') || '.';
+  return relative.startsWith('.') ? relative : `./${relative}`;
 }
 
 function destinationAt(text: string, offset: number): Destination | null {
@@ -60,24 +69,24 @@ function relativeDestination(link: string, sourcePath: string, targetPath: strin
       } else if (segment && segment !== '.') resolved.push(segment);
     }
   }
-  const targetFolder = pathSegments(targetPath).slice(0, -1);
-  let common = 0;
-  while (common < targetFolder.length && targetFolder[common] === resolved[common]) common++;
-  let relative = [...targetFolder.slice(common).map(() => '..'), ...resolved.slice(common)].join('/') || '.';
-  if (!relative.startsWith('.')) relative = `./${relative}`;
+  const relative = relativePath(resolved, targetPath);
   return `${relative}${path.endsWith('/') ? '/' : ''}${suffix < 0 ? '' : link.slice(suffix)}`;
 }
 
 /** Rebase Markdown and wiki destinations without rewriting labels, code, or the source note. */
-export function rebaseMarkdownLinks(content: string, sourcePath: string, targetPath: string, resolve?: ResolveLink): string {
-  if (sourcePath.substring(0, sourcePath.lastIndexOf('/')) === targetPath.substring(0, targetPath.lastIndexOf('/'))) return content;
+export function rebaseMarkdownLinks(content: string, sourcePath: string, targetPath: string, resolve?: ResolveLink, options: RebaseOptions = {}): string {
+  const sameFolder = sourcePath.slice(0, sourcePath.lastIndexOf('/') + 1) === targetPath.slice(0, targetPath.lastIndexOf('/') + 1);
+  if (sourcePath === targetPath || (sameFolder && !options.sourceLocalAnchors)) return content;
+  const relativeSource = options.sourceLocalAnchors ? relativePath(pathSegments(sourcePath), targetPath) : undefined;
   const edits: { start: number; end: number; text: string }[] = [];
   const listIndents: number[] = [];
   let brackets = 0;
   let fence: { character: string; length: number } | null = null;
   const record = (destination: Destination): void => {
     const original = content.slice(destination.start, destination.end);
-    const text = relativeDestination(original, sourcePath, targetPath, resolve);
+    const text = relativeSource && original.startsWith('#')
+      ? `${relativeSource}${original}`
+      : sameFolder ? original : relativeDestination(original, sourcePath, targetPath, resolve);
     if (text !== original) edits.push({ start: destination.start, end: destination.end, text });
   };
   for (let cursor = 0; cursor < content.length;) {
@@ -141,9 +150,13 @@ export function rebaseMarkdownLinks(content: string, sourcePath: string, targetP
         const link = wiki[1]!;
         const suffix = link.search(/#|\\?\|/);
         const path = suffix < 0 ? link : link.slice(0, suffix);
-        const original = path && resolve?.(path, sourcePath);
-        if (original && original !== resolve?.(path, targetPath)) {
-          edits.push({ start: cursor + 2, end: cursor + 2 + path.length, text: original });
+        if (options.sourceLocalAnchors && link.startsWith('#')) {
+          edits.push({ start: cursor + 2, end: cursor + 2, text: sourcePath });
+        } else {
+          const original = !sameFolder && path && resolve?.(path, sourcePath);
+          if (original && original !== resolve?.(path, targetPath)) {
+            edits.push({ start: cursor + 2, end: cursor + 2 + path.length, text: original });
+          }
         }
         cursor += wiki[0].length;
         continue;
