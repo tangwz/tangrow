@@ -100,6 +100,7 @@ test('focus and habit records are validated and counted once by stable identity'
   ];
   const report = aggregateReport([...rows, rows[0]!], { ...DEFAULT_SETTINGS, habits: [{ id: 'read', name: 'Read' }, { id: 'walk', name: 'Walk' }] }, NOW);
   assert.equal(report.counts.focusMinutes, 6.53);
+  assert.deepEqual(report.focusSessions.map(({ note, minutes }) => [note.path, minutes]), [[rows[0]!.path, 2.33], [rows[2]!.path, 4.2]]);
   assert.equal(report.counts.habitCheckinsToday, 2);
   assert.equal(report.counts.notes, 2);
 });

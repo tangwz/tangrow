@@ -1632,7 +1632,7 @@ test('sidebar focus totals match report validation, stable session deduplication
   assert.deepEqual(app.vault.processedPaths, []);
 });
 
-test('Studio language refresh keeps the composing inputs and editing lease without rebuilding or refocusing', async () => {
+test('Scratchpad language refresh keeps the composing inputs and editing lease without rebuilding or refocusing', async () => {
   await withWindow(async () => {
     const { plugin } = createPlugin();
     plugin.updateWritingDraft({ text: 'The shared body before composition.', title: 'The shared title' }, plugin.loadWritingDraft().revision);
@@ -1674,7 +1674,8 @@ test('Studio language refresh keeps the composing inputs and editing lease witho
       querySelector: (): null => null
     };
     Object.assign(view, {
-      section: 'studio', scratchComposingControl: text, contentEl: content,
+      section: 'compose', composeTab: 'scratchpad', scratchComposingControl: text, contentEl: content,
+      workspacePane: { querySelectorAll: () => [] },
       pane: { contains: (control: unknown) => control === text || control === title, querySelectorAll: () => [] },
       setupBanner: { empty: () => undefined }, studioHeading: heading, studioCaption: caption,
       selectSection: (): void => { selectedSection++; throw new Error('Studio section selection would discard composing controls.'); },

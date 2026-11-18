@@ -1,12 +1,15 @@
 import type { App, WorkspaceLeaf } from 'obsidian';
-import type { ReportPreferences, ReportRange, ReportSnapshot, ReportStatusChange } from './report-contract';
+import type { ReportPreferences, ReportRange, ReportRecord, ReportSnapshot, ReportStatusChange } from './report-contract';
+import type { CardFilter, CardReport, MaterialReportRow } from './card-report-data';
+import type { CardReviewQueue } from './card-review';
 import type { JournalPeriod } from './periodic-notes';
 import type { CaptureSuggestion, QuickKind } from './ai';
 import type { AgentStatus, WorkflowId, WorkflowRun } from './claudian';
 
 export type Locale = 'zh-CN' | 'en';
 export type Section = 'tools' | 'capture' | 'pins' | 'studio' | 'focus' | 'habits' | 'ai';
-export type NoteKind = 'note' | 'project' | 'draft';
+export type NoteKind = 'note' | 'project' | 'draft' | 'card';
+export interface CardSource { path: string; anchor?: string }
 export type ActionId = 'copy-link' | 'copy-path' | 'file-location' | 'fold' | 'unfold' | 'page-width' | 'all-width' | 'refresh' | 'cover' | 'timestamp' | 'toggle-pin' | 'settings' | 'appearance' | 'file-list' | 'stack-tabs' | 'hide-panel' | 'random-note' | 'daily-note' | 'report' | 'title-date' | 'toggle-theme' | 'task-overview';
 export type BaseId = 'notes' | 'recent' | 'projects' | 'areas' | 'resources' | 'inbox' | 'sources' | 'captures' | 'pins' | 'drafts' | 'focus' | 'habits' | 'tasks';
 
@@ -20,6 +23,8 @@ export interface Settings extends ReportPreferences {
   resourcesFolder: string;
   archiveFolder: string;
   journalFolder: string;
+  cardFolder: string;
+  knowledgeEnabled: boolean;
   journalFormat: string;
   journalFormats: Record<Exclude<JournalPeriod, 'daily'>, string>;
   journalTemplates: Record<JournalPeriod, string>;
@@ -42,6 +47,8 @@ export const DEFAULT_SETTINGS: Settings = {
   resourcesFolder: '40-Resources',
   archiveFolder: '90-Archive',
   journalFolder: '10-Life(Meta)/13-Journal',
+  cardFolder: '50-Zettel',
+  knowledgeEnabled: true,
   journalFormat: 'YYYY/[Daily]/YYYY-MM-DD',
   journalFormats: {
     weekly: 'GGGG/[Weekly]/GGGG-[W]WW', monthly: 'YYYY/[Monthly]/YYYY-MM',
@@ -107,13 +114,20 @@ export interface SidebarHost {
   settings: Settings;
   snapshot(): Snapshot;
   loadReport(range: ReportRange): Promise<ReportSnapshot>;
+  openCardReport(filter?: CardFilter): Promise<void>;
+  loadWorkbenchCards(): Promise<{ knowledge: CardReport; report: CardReport; materials: MaterialReportRow[]; hubs: ReportRecord[] }>;
+  loadCardReview(day: string): CardReviewQueue | null;
+  saveCardReview(queue: CardReviewQueue, rebuild?: boolean): Promise<CardReviewQueue>;
+  markCardReviewed(path: string, day: string, entryPath: string): Promise<void>;
+  addWritingMaterial(draftPath: string, sourcePath: string): Promise<void>;
   updateReportSettings(patch: Partial<ReportPreferences>): Promise<void>;
   updateReportStatus(change: ReportStatusChange): Promise<void>;
   subscribe(listener: () => void): () => void;
   action(id: ActionId): Promise<void>;
-  openNote(path: string, line?: number): Promise<void>;
+  openNote(path: string, line?: number, anchor?: string): Promise<void>;
   openBase(id: BaseId): Promise<void>;
   createNote(kind: NoteKind, title: string, projectFolder?: string, body?: string): Promise<void>;
+  createCard(title: string, body: string, source?: CardSource): Promise<void>;
   addTask(text: string, options?: { due?: string; target?: 'overview' | 'daily' }): Promise<string>;
   completeTask(path: string, line: number): Promise<void>;
   openQuickAdd(kind?: QuickKind, text?: string): void;

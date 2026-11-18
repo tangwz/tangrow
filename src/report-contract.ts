@@ -1,7 +1,10 @@
 import type { ActivitySummary, EditingActivityState } from './activity';
+import type { CardDateRange, CardFilter, CardReport } from './card-report-data';
+import type { KnowledgeRecord } from './knowledge-index';
 
 export type ReportRange = 1 | 7 | 30 | 90 | 180 | 365;
 export type ReportPage = 'overview' | 'actions' | 'tasks' | 'projects' | 'notes' | 'resources' | 'areas' | 'time';
+export type ReportDestination = { page: 'overview' } | { page: 'cards'; filter?: CardFilter; dates?: CardDateRange };
 export type ReportStatus = 'open' | 'done' | 'archived' | 'unknown';
 export type EditableReportStatus = Exclude<ReportStatus, 'unknown'>;
 export type ReportTaskStatus = ' ' | '/' | 'x' | '-';
@@ -38,6 +41,8 @@ export interface ReportRecord {
   characterCount?: number;
   links?: string[];
   tags?: string[];
+  knowledge?: KnowledgeRecord;
+  captureTaskSources?: string[];
 }
 
 export interface ReportEntity {
@@ -115,6 +120,7 @@ export interface ReportData {
   resources: ReportResource[];
   clips: ReportRecord[];
   taskItems: ReportTask[];
+  focusSessions: Array<{ note: ReportRecord; minutes: number }>;
   orphanNotes: ReportRecord[];
   trends: DailyTrend[];
   gains90: { notes: number; projects: number; areas: number; resourceNotes: number; clips: number; captures: number };
@@ -138,6 +144,7 @@ export interface ReportSnapshot {
   activity: ActivitySummary;
   generatedAt: number;
   quality: { unreadable: number; linksReady: boolean };
+  cards?: CardReport;
 }
 
 export interface ReportState {

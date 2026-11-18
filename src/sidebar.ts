@@ -1,32 +1,36 @@
-import { ItemView, Notice, Platform, Scope, setTooltip } from 'obsidian';
+import { ItemView, Notice, Platform, Scope, TFile, setTooltip } from 'obsidian';
 import { describeError } from './i18n';
 import type { WorkspaceLeaf } from 'obsidian';
 import type { QuickKind } from './ai';
-import { QUICK_KINDS } from './quick-add';
-import type { ActionId, BaseId, Locale, NoteSummary, Section, SidebarHost, Snapshot } from './types';
+import { quickKinds } from './quick-add';
+import type { ActionId, BaseId, Locale, NoteSummary, SidebarHost, Snapshot } from './types';
 import { CapturePanel } from './capture-panel';
 import { AiPanel } from './ai-panel';
+import { writingStage } from './card-report-data';
+import { readKnowledgeRecord } from './knowledge-index';
+import { WorkbenchCards } from './workbench-cards';
+import { captureDay } from './capture-data';
+import { JOURNAL_LABELS, JOURNAL_PERIODS, journalInterval, type JournalPeriod } from './periodic-notes';
 import { SidebarUI, icon } from './ui';
+import { workbenchDestination, type ComposeTab, type KnowledgeTab, type MoreTab, type WorkbenchEntry, type WorkbenchTab } from './workbench-navigation';
 
 export const VIEW_TYPE = 'tangrow-sidebar';
 
-type ToolGroup = 'shortcuts' | 'current' | 'workspace' | 'databases';
-const TOOL_GROUPS: { id: ToolGroup; label: string }[] = [
-  { id: 'shortcuts', label: 'Today' },
-  { id: 'current', label: 'Current file' },
-  { id: 'workspace', label: 'Workspace' },
-  { id: 'databases', label: 'Databases' }
+const SECTIONS: { id: WorkbenchTab; label: string; icon: string }[] = [
+  { id: 'today', label: 'Today', icon: 'house' },
+  { id: 'compose', label: 'Compose', icon: 'pen-line' },
+  { id: 'knowledge', label: 'Knowledge', icon: 'brain' },
+  { id: 'ai', label: 'AI', icon: 'sparkles' },
+  { id: 'more', label: 'More workspaces', icon: 'ellipsis' }
 ];
 
-const SECTIONS: { id: Section; label: string; icon: string }[] = [
-  { id: 'tools', label: 'Home', icon: 'house' },
-  { id: 'capture', label: 'Capture', icon: 'inbox' },
-  { id: 'pins', label: 'Pins', icon: 'pin' },
-  { id: 'studio', label: 'Studio', icon: 'pen-line' },
-  { id: 'focus', label: 'Focus', icon: 'timer' },
-  { id: 'habits', label: 'Habits', icon: 'calendar-check' },
-  { id: 'ai', label: 'Assistant', icon: 'sparkles' }
-];
+const COMPOSE_TABS: Record<ComposeTab, string> = {
+  captures: 'Captures', journal: 'Journal', scratchpad: 'Writing scratchpad', manuscripts: 'Manuscripts'
+};
+const KNOWLEDGE_TABS: Record<KnowledgeTab, string> = {
+  materials: 'Knowledge materials', cards: 'Cards', hubs: 'Knowledge hubs', review: 'Card review'
+};
+const MORE_TABS: Record<MoreTab, string> = { pins: 'Pins', focus: 'Focus', habits: 'Habits', tools: 'File tools', databases: 'Databases' };
 
 const BASES: { id: BaseId; label: string; icon: string }[] = [
   { id: 'notes', label: 'All notes', icon: 'files' },
@@ -54,18 +58,25 @@ export class TangrowSidebar extends ItemView {
   private readonly ui: SidebarUI;
   private readonly viewId = `tangrow-${crypto.randomUUID()}`;
   private isMounted = false;
-  private section: Section = 'tools';
-  private toolGroup: ToolGroup = 'shortcuts';
+  private section: WorkbenchTab = 'today';
+  private composeTab: ComposeTab = 'captures';
+  private knowledgeTab: KnowledgeTab = 'materials';
+  private moreTab: MoreTab = 'pins';
+  private workspacePane!: HTMLElement;
   private pane!: HTMLElement;
   private noteLabel!: HTMLElement;
   private setupBanner!: HTMLElement;
-  private navButtons = new Map<Section, HTMLButtonElement>();
+  private navButtons = new Map<WorkbenchTab, HTMLButtonElement>();
   private unsubscribe?: () => void;
   private dismissCreateMenu?: (restoreFocus?: boolean) => void;
   private unsubscribeComposer?: () => void;
   private refreshSection: (state: Snapshot) => void = () => undefined;
   private capturePanel?: CapturePanel;
   private readonly aiPanel: AiPanel;
+  private readonly workbenchCards: WorkbenchCards;
+  private selectedManuscript?: string;
+  private journalPeriod: JournalPeriod = 'daily';
+  private journalDay?: string;
   private shellLabels: Array<{ element: HTMLElement; source: string; tooltip?: boolean }> = [];
   private taskDraft = '';
   private taskSaving = false;
@@ -100,12 +111,41 @@ export class TangrowSidebar extends ItemView {
     this.focusMinutes = host.settings.focusMinutes;
     this.focusDefaultMinutes = host.settings.focusMinutes;
     this.aiPanel = new AiPanel(host, this);
+    this.workbenchCards = new WorkbenchCards(host, this.ui, () => {
+      if (this.isMounted && (this.section === 'today' || this.section === 'knowledge')) this.refreshSection(this.host.snapshot());
+    }, (tab) => this.showKnowledge(tab), () => this.manuscript(this.host.snapshot())?.path, () => this.showCompose('manuscripts'));
   }
 
   /** Opens a workspace from a command or menu item. */
-  showSection(section: Section): void {
-    if (this.isMounted && this.section !== section) this.selectSection(section);
+  showSection(entry: WorkbenchEntry): void {
+    const destination = workbenchDestination(entry);
+    if (destination.tab === 'compose' && destination.page) this.showCompose(destination.page);
+    else if (destination.tab === 'more' && destination.page) this.showMore(destination.page);
+    else this.showWorkbench(destination.tab);
+  }
+
+  private showWorkbench(section: WorkbenchTab, changed = false): void {
+    if (section === 'knowledge' && !this.host.settings.knowledgeEnabled) section = 'today';
+    if (this.isMounted && (changed || this.section !== section)) this.selectSection(section);
     else this.section = section;
+  }
+
+  private showCompose(tab: ComposeTab): void {
+    const changed = this.composeTab !== tab;
+    this.composeTab = tab;
+    this.showWorkbench('compose', changed);
+  }
+
+  private showKnowledge(tab: KnowledgeTab): void {
+    const changed = this.knowledgeTab !== tab;
+    this.knowledgeTab = tab;
+    this.showWorkbench('knowledge', changed);
+  }
+
+  private showMore(tab: MoreTab): void {
+    const changed = this.moreTab !== tab;
+    this.moreTab = tab;
+    this.showWorkbench('more', changed);
   }
 
   getViewType(): string { return VIEW_TYPE; }
@@ -136,10 +176,11 @@ export class TangrowSidebar extends ItemView {
     const scrollTop = this.contentEl.scrollTop;
     this.preserveFocus(() => {
       this.refreshShellLabels();
-      if (this.section === 'capture' && this.capturePanel) {
+      this.refreshNestedLabels();
+      if (this.section === 'compose' && this.composeTab === 'captures' && this.capturePanel) {
         this.capturePanel.refresh();
         this.refresh();
-      } else if (this.section === 'studio') {
+      } else if (this.section === 'compose' && this.composeTab === 'scratchpad') {
         this.refreshStudioLabels();
         this.refresh();
       } else this.selectSection(this.section);
@@ -169,7 +210,10 @@ export class TangrowSidebar extends ItemView {
       const control = this.navButtons.get(item.id);
       const label = control?.querySelector('.tangrow-nav-label');
       if (label) label.textContent = this.ui.t(item.label);
-      if (control) setTooltip(control, this.ui.t(item.label));
+      if (control) {
+        control.setAttribute('aria-label', this.ui.t(item.label));
+        setTooltip(control, this.ui.t(item.label));
+      }
     }
     this.setupBanner.empty();
   }
@@ -205,35 +249,36 @@ export class TangrowSidebar extends ItemView {
       this.openCreateMenu(add, event.key === 'ArrowUp');
     });
     this.shellLabels.push({ element: add, source: 'New', tooltip: true }, { element: addLabel, source: 'New' });
-    this.noteLabel = this.contentEl.createDiv({ cls: 'tangrow-context', attr: { 'aria-live': 'polite' } });
+    this.noteLabel = this.contentEl.createDiv({ cls: 'tangrow-context', attr: { 'aria-live': 'polite', hidden: '' } });
     const nav = this.contentEl.createDiv({ cls: 'tangrow-nav', attr: { role: 'tablist', 'aria-label': this.ui.t('Companion workspaces') } });
     for (const item of SECTIONS) {
       const itemButton = nav.createEl('button', {
         cls: 'tangrow-nav-item',
-        attr: { type: 'button', role: 'tab', id: `${this.viewId}-tab-${item.id}`, 'aria-controls': `${this.viewId}-pane`, 'aria-selected': 'false' }
+        attr: { type: 'button', role: 'tab', id: `${this.viewId}-tab-${item.id}`, 'aria-controls': `${this.viewId}-pane`, 'aria-selected': 'false', 'aria-label': this.ui.t(item.label) }
       });
       icon(itemButton, item.icon);
       itemButton.createSpan({ cls: 'tangrow-nav-label', text: this.ui.t(item.label) });
       setTooltip(itemButton, this.ui.t(item.label));
       itemButton.addEventListener('click', () => {
-        if (this.section !== item.id) this.selectSection(item.id);
+        this.showWorkbench(item.id);
       });
       itemButton.addEventListener('keydown', (event) => {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
         event.preventDefault();
-        const index = SECTIONS.findIndex((entry) => entry.id === item.id);
-        const next = event.key === 'Home' ? 0 : event.key === 'End' ? SECTIONS.length - 1
-          : (index + (event.key === 'ArrowRight' ? 1 : -1) + SECTIONS.length) % SECTIONS.length;
-        const target = SECTIONS[next];
+        const available = SECTIONS.filter((entry) => !this.navButtons.get(entry.id)?.hidden);
+        const index = available.findIndex((entry) => entry.id === item.id);
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? available.length - 1
+          : (index + (event.key === 'ArrowRight' ? 1 : -1) + available.length) % available.length;
+        const target = available[next];
         if (target) {
-          if (this.section !== target.id) this.selectSection(target.id);
+          this.showWorkbench(target.id);
           this.navButtons.get(target.id)?.focus({ preventScroll: true });
         }
       });
       this.navButtons.set(item.id, itemButton);
     }
     this.setupBanner = this.contentEl.createDiv({ cls: 'tangrow-setup' });
-    this.pane = this.contentEl.createDiv({ cls: 'tangrow-pane', attr: { role: 'tabpanel', id: `${this.viewId}-pane` } });
+    this.workspacePane = this.contentEl.createDiv({ cls: 'tangrow-workspace-pane', attr: { role: 'tabpanel', id: `${this.viewId}-pane` } });
     this.selectSection(this.section);
   }
 
@@ -252,7 +297,7 @@ export class TangrowSidebar extends ItemView {
       this.dismissCreateMenu?.(true);
       this.host.openQuickAdd(kind);
     };
-    for (const [index, kind] of QUICK_KINDS.entries()) {
+    for (const [index, kind] of quickKinds(this.host.settings.knowledgeEnabled).entries()) {
       const shortcut = `${Platform.isMacOS ? '⌘' : 'Ctrl+'}${index + 1}`;
       const control = menu.createEl('button', {
         cls: 'tangrow-create-menu-item',
@@ -318,6 +363,7 @@ export class TangrowSidebar extends ItemView {
 
   async onClose(): Promise<void> {
     this.isMounted = false;
+    this.workbenchCards.pause();
     this.dismissCreateMenu?.();
     this.capturePanel?.destroy();
     this.capturePanel = undefined;
@@ -331,7 +377,7 @@ export class TangrowSidebar extends ItemView {
     this.navButtons.clear();
   }
 
-  private selectSection(section: Section): void {
+  private selectSection(section: WorkbenchTab): void {
     this.dismissCreateMenu?.();
     this.capturePanel?.destroy();
     this.capturePanel = undefined;
@@ -342,8 +388,12 @@ export class TangrowSidebar extends ItemView {
       item.setAttribute('aria-selected', String(id === section));
       item.tabIndex = id === section ? 0 : -1;
     }
-    this.pane.setAttribute('aria-labelledby', `${this.viewId}-tab-${section}`);
-    this.pane.empty();
+    this.workspacePane.setAttribute('aria-labelledby', `${this.viewId}-tab-${section}`);
+    this.workspacePane.empty();
+    if (section === 'compose') this.renderNestedTabs('Compose views', COMPOSE_TABS, this.composeTab, (tab) => this.showCompose(tab));
+    if (section === 'knowledge') this.renderNestedTabs('Knowledge views', KNOWLEDGE_TABS, this.knowledgeTab, (tab) => this.showKnowledge(tab));
+    if (section === 'more') this.renderNestedTabs('More views', MORE_TABS, this.moreTab, (tab) => this.showMore(tab));
+    this.pane = this.workspacePane.createDiv({ cls: 'tangrow-pane' });
     this.clearStudioControls();
     this.clock = undefined;
     this.clockStatus = undefined;
@@ -351,36 +401,85 @@ export class TangrowSidebar extends ItemView {
     this.refreshSection = () => undefined;
     const state = this.host.snapshot();
     switch (section) {
-      case 'tools': {
+      case 'today': {
         let signature = '';
         this.refreshSection = (snapshot) => {
-          const next = JSON.stringify([snapshot.active, snapshot.activePinned, snapshot.counts, snapshot.tasks, snapshot.widePage, this.host.settings.wideByDefault, snapshot.captures.filter((capture) => !capture.processed).length, new Date().toDateString(), this.taskSaving]);
+          const next = JSON.stringify([snapshot.counts, snapshot.tasks, snapshot.captures.filter((capture) => !capture.processed).length,
+            this.manuscript(snapshot) ?? snapshot.drafts[0], new Date().toDateString(), this.taskSaving, this.host.settings.knowledgeEnabled, this.workbenchCards.homeSignature]);
           if (next === signature) return;
           signature = next;
-          this.preserveFocus(() => this.renderTools(snapshot));
+          this.preserveFocus(() => this.renderToday(snapshot));
         };
         break;
       }
-      case 'capture': this.mountCapture(); break;
-      case 'pins': {
-        let signature = '';
-        this.refreshSection = (snapshot) => {
-          const next = JSON.stringify([snapshot.active?.path, snapshot.activePinned, snapshot.pins, snapshot.recentOpened, this.recentOpenedLimit]);
-          if (next === signature) return;
-          signature = next;
-          this.preserveFocus(() => this.renderPins(snapshot));
-        };
+      case 'compose': {
+        switch (this.composeTab) {
+          case 'captures': this.mountCapture(); break;
+          case 'journal': this.renderJournal(); break;
+          case 'scratchpad': this.mountStudio(); break;
+          case 'manuscripts': {
+            let signature = '';
+            this.refreshSection = (snapshot) => {
+              const next = JSON.stringify([snapshot.drafts, snapshot.active?.path, this.selectedManuscript]);
+              if (next === signature) return;
+              signature = next;
+              this.preserveFocus(() => this.renderManuscripts(snapshot));
+            };
+            break;
+          }
+        }
         break;
       }
-      case 'studio': this.mountStudio(); break;
-      case 'focus': this.mountFocus(); break;
-      case 'habits': this.mountHabits(); break;
+      case 'knowledge': {
+        this.refreshSection = () => this.preserveFocus(() => this.workbenchCards.renderKnowledge(this.pane, this.knowledgeTab));
+        break;
+      }
+      case 'more': {
+        const reportButton = this.actionButton(this.workspacePane, 'report', 'Open report', 'chart-no-axes-combined');
+        reportButton.addClass('tangrow-more-report', 'tangrow-full-width');
+        this.workspacePane.insertBefore(reportButton, this.pane);
+        switch (this.moreTab) {
+          case 'pins': {
+            let signature = '';
+            this.refreshSection = (snapshot) => {
+              const next = JSON.stringify([snapshot.active?.path, snapshot.activePinned, snapshot.pins, snapshot.recentOpened, this.recentOpenedLimit]);
+              if (next === signature) return;
+              signature = next;
+              this.preserveFocus(() => this.renderPins(snapshot));
+            };
+            break;
+          }
+          case 'focus': this.mountFocus(); break;
+          case 'habits': this.mountHabits(); break;
+          case 'tools': {
+            let signature = '';
+            this.refreshSection = (snapshot) => {
+              const next = JSON.stringify([snapshot.active?.path, snapshot.activePinned, snapshot.widePage, this.host.settings.wideByDefault, snapshot.counts.notes]);
+              if (next === signature) return;
+              signature = next;
+              this.preserveFocus(() => {
+                this.pane.empty();
+                this.renderCurrentActions(snapshot);
+                this.renderWorkspaceActions();
+              });
+            };
+            break;
+          }
+          case 'databases': {
+            this.ui.sectionHeading(this.pane, 'Your database views', 'Views query notes in their current folders.');
+            const databases = this.pane.createDiv({ cls: 'tangrow-databases' });
+            for (const base of BASES) this.ui.button(databases, base.label, () => this.host.openBase(base.id), { icon: base.icon });
+            break;
+          }
+        }
+        break;
+      }
       case 'ai': {
         this.aiPanel.mount(this.pane);
         let signature = '';
         this.refreshSection = (snapshot) => {
           const next = JSON.stringify([snapshot.active?.path, this.host.aiReady(), this.host.agentStatus(), this.host.agentRun()]);
-          if (signature && next !== signature) this.aiPanel.refresh();
+          if (signature && next !== signature) this.preserveFocus(() => this.aiPanel.refresh());
           signature = next;
         };
         break;
@@ -389,12 +488,52 @@ export class TangrowSidebar extends ItemView {
     this.refresh(state);
   }
 
+  private renderNestedTabs<T extends string>(label: string, tabs: Record<T, string>, active: T, select: (tab: T) => void): void {
+    const nav = this.workspacePane.createDiv({ cls: 'tangrow-chips tangrow-subnav', attr: { role: 'group', 'aria-label': this.ui.t(label) } });
+    nav.dataset.workbenchLabel = label;
+    for (const tab of Object.keys(tabs) as T[]) {
+      const chip = nav.createEl('button', { cls: 'tangrow-chip', text: this.ui.t(tabs[tab]), attr: { type: 'button', 'aria-pressed': String(tab === active) } });
+      chip.dataset.workbenchLabel = tabs[tab];
+      chip.addEventListener('click', () => {
+        if (tab === active) return;
+        select(tab);
+        this.workspacePane.querySelector<HTMLButtonElement>('.tangrow-subnav button[aria-pressed="true"]')?.focus({ preventScroll: true });
+      });
+    }
+  }
+
+  private refreshNestedLabels(): void {
+    const elements = this.workspacePane.querySelectorAll<HTMLElement>('.tangrow-subnav[data-workbench-label], .tangrow-subnav button[data-workbench-label]');
+    for (const element of Array.from(elements)) {
+      const key = element.dataset.workbenchLabel;
+      if (!key) continue;
+      if (element.matches('button')) element.textContent = this.ui.t(key);
+      else element.setAttribute('aria-label', this.ui.t(key));
+    }
+  }
+
   private refresh(snapshot = this.host.snapshot()): void {
+    const enabled = this.host.settings.knowledgeEnabled;
+    const knowledgeButton = this.navButtons.get('knowledge');
+    if (knowledgeButton) {
+      if (knowledgeButton.hidden !== !enabled) this.dismissCreateMenu?.(true);
+      knowledgeButton.hidden = !enabled;
+      knowledgeButton.parentElement?.classList.toggle('is-knowledge-disabled', !enabled);
+    }
+    if (!enabled && this.section === 'knowledge') {
+      const focusedInWorkbench = this.contentEl.contains(this.contentEl.ownerDocument.activeElement);
+      this.selectSection('today');
+      if (focusedInWorkbench) this.navButtons.get('today')?.focus({ preventScroll: true });
+      return;
+    }
     this.syncFocusDuration();
     this.noteLabel.empty();
-    icon(this.noteLabel, snapshot.active ? 'file-text' : 'compass');
-    this.noteLabel.createSpan({ text: snapshot.active?.name ?? this.ui.t('A companion for your existing vault') });
-    if (snapshot.active) setTooltip(this.noteLabel, snapshot.active.path);
+    this.noteLabel.hidden = !snapshot.active;
+    if (snapshot.active) {
+      icon(this.noteLabel, 'file-text');
+      this.noteLabel.createSpan({ text: snapshot.active.name });
+      setTooltip(this.noteLabel, snapshot.active.path);
+    }
     const needsSetup = !snapshot.supportReady;
     this.setupBanner.hidden = !needsSetup;
     if (needsSetup && !this.setupBanner.hasChildNodes()) {
@@ -403,6 +542,8 @@ export class TangrowSidebar extends ItemView {
       this.ui.button(this.setupBanner, 'Set up Bases', () => this.host.setup(), { icon: 'database', cls: 'mod-cta' });
     }
     this.refreshSection(snapshot);
+    if (enabled && (this.section === 'today' || this.section === 'knowledge')) this.workbenchCards.refresh(this.section === 'knowledge' && this.knowledgeTab === 'review');
+    else this.workbenchCards.pause();
     this.updateClock(snapshot);
   }
 
@@ -412,7 +553,7 @@ export class TangrowSidebar extends ItemView {
     return control;
   }
 
-  private renderTools(state: Snapshot): void {
+  private renderToday(state: Snapshot): void {
     this.pane.empty();
     const language = this.host.settings.language;
     const now = new Date();
@@ -420,55 +561,42 @@ export class TangrowSidebar extends ItemView {
     const hero = this.pane.createDiv({ cls: 'tangrow-today' });
     hero.createDiv({ cls: 'tangrow-today-date', text: now.toLocaleDateString(language, { month: 'long', day: 'numeric' }) });
     hero.createDiv({ cls: 'tangrow-today-weekday', text: now.toLocaleDateString(language, { weekday: 'long' }) });
-    const metrics = this.pane.createDiv({ cls: 'tangrow-overview' });
+    const metrics = this.pane.createDiv({ cls: 'tangrow-overview tangrow-today-overview' });
     const cards: [number, string, string, () => void | Promise<void>][] = [
       [state.counts.tasks, 'open tasks', 'Open task overview', () => this.host.action('task-overview')],
-      [pending, 'to sort', 'Review pending captures', () => this.selectSection('capture')],
-      [state.counts.projects, 'project notes', 'Browse projects', () => this.host.openBase('projects')],
-      [state.counts.notes, 'notes', 'Browse all notes', () => this.host.openBase('notes')]
+      [pending, 'Pending captures', 'Review pending captures', () => {
+        this.showCompose('captures');
+        this.capturePanel?.showPending();
+      }],
+      [state.counts.drafts, 'Manuscripts', 'Browse manuscripts', () => this.showCompose('manuscripts')]
     ];
     for (const [value, label, title, open] of cards) {
       const metric = this.ui.userButton(metrics, this.ui.t(label), open, { cls: 'tangrow-metric', title: this.ui.t(title) });
       metric.setAttribute('aria-label', `${this.ui.t(title)} · ${this.ui.number(value)}`);
+      metric.dataset.tangrowAction = title;
       metric.createEl('strong', { text: this.ui.number(value) });
       metric.prepend(metric.lastElementChild!);
     }
-    const groups = this.pane.createDiv({ cls: 'tangrow-chips tangrow-tool-groups', attr: { role: 'tablist', 'aria-label': this.ui.t('Tool groups') } });
-    for (const group of TOOL_GROUPS) {
-      const chip = groups.createEl('button', { cls: 'tangrow-chip', text: this.ui.t(group.label), attr: { type: 'button', role: 'tab', 'aria-selected': String(group.id === this.toolGroup), 'aria-label': this.ui.t(group.label) } });
-      chip.dataset.tangrowAction = `tool-group-${group.id}`;
-      chip.addEventListener('click', () => {
-        if (this.toolGroup === group.id) return;
-        this.toolGroup = group.id;
-        this.preserveFocus(() => this.renderTools(this.host.snapshot()));
-      });
+    const shortcuts = this.pane.createDiv({ cls: 'tangrow-actions tangrow-today-shortcuts' });
+    const journal = this.ui.button(shortcuts, "Open today's journal", () => {
+      this.journalPeriod = 'daily';
+      this.journalDay = undefined;
+      this.showCompose('journal');
+      return this.host.openPeriodicNote('daily');
+    }, { icon: 'calendar-days' });
+    journal.dataset.tangrowAction = 'today-journal';
+    this.actionButton(shortcuts, 'report', 'Open report', 'chart-no-axes-combined');
+    if (this.host.settings.knowledgeEnabled) this.workbenchCards.renderToday(this.pane);
+    const manuscript = this.manuscript(state) ?? state.drafts[0];
+    if (manuscript) {
+      this.ui.sectionHeading(this.pane, 'Continue writing');
+      const open = this.ui.userButton(this.pane, manuscript.name, () => {
+        this.selectedManuscript = manuscript.path;
+        this.showCompose('manuscripts');
+      }, { icon: 'pen-line', title: manuscript.path, cls: 'tangrow-full-width' });
+      open.dataset.tangrowAction = 'today-manuscript';
     }
-    switch (this.toolGroup) {
-      case 'shortcuts': {
-        this.renderTaskPreview(state);
-        this.ui.sectionHeading(this.pane, 'Periodic notes');
-        const periods = this.pane.createDiv({ cls: 'tangrow-chips' });
-        for (const [period, label] of [['daily', 'Today'], ['weekly', 'This week'], ['monthly', 'This month'], ['quarterly', 'This quarter'], ['yearly', 'This year']] as const) {
-          const chip = this.ui.button(periods, label, () => this.host.openPeriodicNote(period), { cls: 'tangrow-chip' });
-          chip.dataset.tangrowAction = `period-${period}`;
-        }
-        this.ui.sectionHeading(this.pane, 'Quick actions');
-        const shortcuts = this.pane.createDiv({ cls: 'tangrow-actions' });
-        this.actionButton(shortcuts, 'report', 'Open report', 'chart-no-axes-combined');
-        this.actionButton(shortcuts, 'toggle-pin', state.activePinned ? 'Unpin current note' : 'Pin current note', 'pin', !this.isMarkdown(state), state.activePinned);
-        this.actionButton(shortcuts, 'random-note', 'Rediscover a note', 'shuffle', state.counts.notes === 0);
-        this.actionButton(shortcuts, 'toggle-theme', 'Toggle light / dark', 'sun-moon');
-        break;
-      }
-      case 'current': this.renderCurrentActions(state); break;
-      case 'workspace': this.renderWorkspaceActions(); break;
-      case 'databases': {
-        this.ui.sectionHeading(this.pane, 'Your database views', 'Views query notes in their current folders.');
-        const databases = this.pane.createDiv({ cls: 'tangrow-databases' });
-        for (const base of BASES) this.ui.button(databases, base.label, () => this.host.openBase(base.id), { icon: base.icon });
-        break;
-      }
-    }
+    this.renderTaskPreview(state);
   }
 
   private isMarkdown(state: Snapshot): boolean {
@@ -498,7 +626,7 @@ export class TangrowSidebar extends ItemView {
   private renderWorkspaceActions(): void {
     this.ui.sectionHeading(this.pane, 'Workspace');
     const workspace = this.pane.createDiv({ cls: 'tangrow-actions' });
-    this.actionButton(workspace, 'report', 'Open report', 'chart-no-axes-combined');
+    this.actionButton(workspace, 'random-note', 'Rediscover a note', 'shuffle', this.host.snapshot().counts.notes === 0);
     this.actionButton(workspace, 'toggle-theme', 'Toggle light / dark', 'sun-moon');
     this.actionButton(workspace, 'appearance', 'Theme & accent settings', 'palette');
     this.actionButton(workspace, 'all-width', 'Roomier workspace', 'expand', false, this.host.settings.wideByDefault);
@@ -532,8 +660,8 @@ export class TangrowSidebar extends ItemView {
         .catch((error: unknown) => new Notice(describeError(this.host.settings.language, error)))
         .finally(() => {
           this.taskSaving = false;
-          if (this.section !== 'tools' || this.toolGroup !== 'shortcuts') return;
-          this.renderTools(this.host.snapshot());
+          if (this.section !== 'today') return;
+          this.renderToday(this.host.snapshot());
           this.pane.querySelector<HTMLInputElement>('.tangrow-task-add input')?.focus({ preventScroll: true });
         });
     });
@@ -566,6 +694,103 @@ export class TangrowSidebar extends ItemView {
   private mountCapture(): void {
     this.capturePanel = new CapturePanel(this.host);
     this.capturePanel.mount(this.pane);
+  }
+
+  private renderJournal(): void {
+    const day = this.journalDay ?? captureDay(Date.now());
+    const controls = this.pane.createDiv({ cls: 'tangrow-journal-controls' });
+    const group = controls.createDiv({ cls: 'tangrow-chips', attr: { role: 'group', 'aria-label': this.ui.t('Periodic notes') } });
+    const periodButtons = new Map<JournalPeriod, HTMLButtonElement>();
+    const summary = this.pane.createEl('p', { cls: 'tangrow-muted', attr: { 'aria-live': 'polite' } });
+    const label = controls.createEl('label', { text: this.ui.t('Journal date'), cls: 'tangrow-workbench-field' });
+    const date = label.createEl('input', { type: 'date', value: day, attr: { min: '0001-01-01', max: '9999-12-31' } });
+    const open = this.ui.button(this.pane, 'Open journal', () => this.host.openPeriodicNote(this.journalPeriod, date.value), { icon: 'book-open', cls: 'mod-cta' });
+    const update = () => {
+      for (const [period, control] of periodButtons) control.setAttribute('aria-pressed', String(period === this.journalPeriod));
+      open.disabled = !date.value || !date.validity.valid;
+      if (open.disabled) { summary.textContent = ''; return; }
+      const interval = journalInterval(this.journalPeriod, date.value);
+      summary.textContent = interval.start === interval.end ? interval.start : `${interval.start} – ${interval.end}`;
+    };
+    for (const period of JOURNAL_PERIODS) {
+      periodButtons.set(period, this.ui.button(group, JOURNAL_LABELS[period], () => {
+        this.journalPeriod = period;
+        update();
+      }, { cls: 'tangrow-chip' }));
+    }
+    date.addEventListener('input', () => {
+      this.journalDay = date.value && date.validity.valid ? date.value : undefined;
+      update();
+    });
+    update();
+  }
+
+  private manuscript(state: Snapshot): NoteSummary | undefined {
+    return state.drafts.find((draft) => draft.path === this.selectedManuscript);
+  }
+
+  private renderManuscripts(state: Snapshot): void {
+    this.pane.empty();
+    const target = this.manuscript(state);
+    if (state.drafts.length) {
+      const label = this.pane.createEl('label', { text: this.ui.t('Writing target'), cls: 'tangrow-workbench-field' });
+      const selector = label.createEl('select');
+      selector.dataset.tangrowAction = 'writing-target';
+      selector.createEl('option', { text: this.ui.t('Choose a manuscript'), value: '' });
+      for (const draft of state.drafts) selector.createEl('option', { text: draft.name, value: draft.path, attr: { title: draft.path } });
+      selector.value = target?.path ?? '';
+      selector.addEventListener('change', () => {
+        this.selectedManuscript = selector.value || undefined;
+        this.refreshSection(state);
+      });
+    }
+    if (target) {
+      const details = this.pane.createDiv({ cls: 'tangrow-workbench-card' });
+      this.ui.sectionHeading(details, 'Continue writing');
+      this.ui.userButton(details, target.name, () => this.host.openNote(target.path), { icon: 'file-pen-line', title: target.path, cls: 'tangrow-full-width' });
+      this.renderManuscriptRelations(details, target);
+      if (this.host.settings.knowledgeEnabled && state.active?.path && state.active.path !== target.path && this.isMarkdown(state)) {
+        const source = state.active;
+        this.ui.button(details, 'Add current note as a manuscript candidate', async () => {
+          await this.host.addWritingMaterial(target.path, source.path);
+          new Notice(this.ui.t('Added to manuscript candidates.'));
+        }, { icon: 'link', cls: 'tangrow-full-width tangrow-text-button' });
+      }
+    } else if (!state.drafts.length) {
+      this.ui.empty(this.pane, 'No manuscripts yet', 'A draft saved from the writing scratchpad appears here.', 'pen-line');
+      this.ui.button(this.pane, 'Writing scratchpad', () => this.showCompose('scratchpad'), { icon: 'pen-line', cls: 'tangrow-full-width' });
+    }
+    if (state.drafts.length) this.listHeading(this.pane, 'Drafts to return to', state.counts.drafts, 'drafts');
+  }
+
+  private renderManuscriptRelations(parent: HTMLElement, target: NoteSummary): void {
+    const file = this.host.app.vault.getAbstractFileByPath(target.path);
+    if (!(file instanceof TFile)) return;
+    const cache = this.host.app.metadataCache.getFileCache(file);
+    if (!cache) {
+      this.ui.paragraph(parent, 'Building knowledge links…');
+      return;
+    }
+    const stage = writingStage({ path: file.path, name: file.basename, created: file.stat.ctime, modified: file.stat.mtime, frontmatter: cache.frontmatter });
+    const stageLabel = { outline: 'Outline', drafting: 'Drafting', revising: 'Revising', finished: 'Finished', published: 'Published',
+      unset: 'Writing stage not set', unknown: 'Unrecognized writing stage' }[stage];
+    this.ui.paragraph(parent, stageLabel);
+    const record = readKnowledgeRecord(this.host.app.metadataCache, file, cache);
+    if (!record) return;
+    for (const [title, entries] of [['Candidate material', record.materials], ['Body citations', record.body]] as const) {
+      const group = parent.createEl('details', { cls: 'tangrow-manuscript-links' });
+      group.createEl('summary', { text: `${this.ui.t(title)} · ${this.ui.number(entries.length)}` });
+      for (const link of entries) {
+        const path = link.path;
+        if (!path) {
+          group.createEl('p', { text: `${link.raw} · ${this.ui.t('Unavailable')}`, cls: 'tangrow-muted' });
+          continue;
+        }
+        const related = this.host.app.vault.getAbstractFileByPath(path);
+        this.ui.userButton(group, related instanceof TFile ? related.basename : path, () => this.host.openNote(path, undefined, link.anchor || undefined),
+          { cls: 'tangrow-full-width tangrow-text-button', title: `${path}${link.anchor}` });
+      }
+    }
   }
 
   private renderPins(state: Snapshot): void {
@@ -642,7 +867,7 @@ export class TangrowSidebar extends ItemView {
     this.refreshSection = (state) => {
       history.empty();
       this.listHeading(history, 'Drafts to return to', state.counts.drafts, 'drafts');
-      this.noteList(history, state.drafts, 'Give an idea a little room', 'Drafts you save from the studio will appear here.', 'pen-line');
+      this.noteList(history, state.drafts.slice(0, 12), 'Give an idea a little room', 'Drafts you save from the studio will appear here.', 'pen-line');
     };
   }
 

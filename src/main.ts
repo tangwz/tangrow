@@ -1,4 +1,4 @@
-import { FileView, MarkdownView, Menu, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, TFolder, moment, parseYaml, getFrontMatterInfo, stringifyYaml, setTooltip, type EventRef, type WorkspaceLeaf } from 'obsidian';
+import { FileView, MarkdownView, Menu, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, TFolder, moment, parseYaml, getFrontMatterInfo, resolveSubpath, stringifyYaml, setTooltip, type EventRef, type WorkspaceLeaf } from 'obsidian';
 import { baseDefinitions, setupReadme, managedFileTranslations } from './bases';
 import { focusMinutes, pauseSession, remainingMs, resumeSession, startSession } from './focus';
 import { dayKey, inFolder, readSession, readSettings, recentDays, safeFolder, safeTitle, streak } from './model';
@@ -6,7 +6,7 @@ import { openNativeSettings, revealInFileList, runNativeCommand } from './compat
 import { TangrowSidebar, VIEW_TYPE } from './sidebar';
 import { TangrowReport, REPORT_VIEW_TYPE } from './report';
 import { TangrowCapture, CAPTURE_VIEW_TYPE, openCaptureWindow as revealCaptureWindow } from './capture-window';
-import { captureCreated, sortCaptures } from './capture-data';
+import { captureCreated, parseNoteTimestamp, sortCaptures } from './capture-data';
 import { captureIsProcessed, captureProjectFiles, processCapturedNote } from './capture-processing';
 import { AI_SECRET_ID, agentGuide, buildSuggestionPrompt, parseSuggestion, readAiModel, type CaptureSuggestion, type QuickKind } from './ai';
 import { CLAUDIAN_OPEN_COMMAND, CLAUDIAN_TURN_ENDED, WORKFLOWS, claudianApi, skillFiles, workflowPrompt, type AgentStatus, type ClaudianAPI, type WorkflowId, type WorkflowRun } from './claudian';
@@ -19,23 +19,27 @@ import { ImmersiveCapture, NoteImmersion } from './immersive';
 import { normalizeRecentOpened, recordRecentOpened, renameRecentOpened, removeRecentOpened } from './recent-opened';
 import { stampHeadingDate } from './note-tools';
 import { matchesGeneratedContent } from './managed-files';
-import { hasValidSupportFolder, SupportFolderConflictError, validateFolderSettings } from './folders';
+import { hasValidSupportFolder, SupportFolderConflictError, validateFolderSettings, type FolderSettingKey } from './folders';
 import { moveSupportFolder } from './support-migration';
 import { addEditingActivity, createActivityState, normalizeActivityState, summarizeActivity, type EditingActivityState } from './activity';
 import { ReportSource } from './report-source';
 import { captureWritingNavigation } from './writing-navigation';
 import { aggregateReport } from './report-data';
 import { writeReportStatus } from './report-editing';
-import type { ReportPreferences, ReportRange, ReportSnapshot, ReportStatusChange } from './report-contract';
+import { buildCardReport, buildWorkbenchCards, type CardFilter } from './card-report-data';
+import { readCardReviewQueue, type CardReviewQueue } from './card-review';
+import { resolvePropertyLink } from './knowledge-index';
+import { rebaseMarkdownLinks } from './markdown-links';
+import type { ReportDestination, ReportPreferences, ReportRange, ReportRecord, ReportSnapshot, ReportStatusChange } from './report-contract';
 import { translate, describeError, type TranslationValues } from './i18n';
-import { DEFAULT_SETTINGS, type CaptureRequest, type ComposerState, type Habit, type Locale, type ActionId, type BaseId, type FocusSession, type NoteKind, type NoteSummary, type Settings, type SidebarHost, type Snapshot, type TaskSummary, type WritingDraft, type WritingSaveOrigin } from './types';
+import { DEFAULT_SETTINGS, type CaptureRequest, type CardSource, type ComposerState, type Habit, type Locale, type ActionId, type BaseId, type FocusSession, type NoteKind, type NoteSummary, type Settings, type SidebarHost, type Snapshot, type TaskSummary, type WritingDraft, type WritingSaveOrigin } from './types';
 
 const dateTime = moment as unknown as (input?: number | string | Date) => { format(pattern: string): string };
 
-interface SavedData { version: number; settings: Settings; focus: FocusSession | null; scratch: string; composer: ComposerState; submissions: DraftSubmissions; recentOpened: string[]; activity: EditingActivityState }
+interface SavedData { version: number; settings: Settings; focus: FocusSession | null; scratch: string; composer: ComposerState; submissions: DraftSubmissions; recentOpened: string[]; activity: EditingActivityState; cardReviews: CardReviewQueue[] }
 interface PersistenceCoordinator { owner?: symbol; tail: Promise<void> }
+type WorkbenchCards = Awaited<ReturnType<SidebarHost['loadWorkbenchCards']>>;
 const PERSISTENCE_COORDINATOR = Symbol.for('tangrow.persistence-coordinator');
-type FolderSettingKey = keyof Pick<Settings, 'supportFolder' | 'inboxFolder' | 'projectFolder' | 'areaFolder' | 'resourcesFolder' | 'archiveFolder' | 'journalFolder'>;
 
 class PromptModal extends Modal {
   constructor(app: Plugin['app'], private title: string, private placeholder: string, private submit: (value: string) => Promise<void>, private language: Locale) { super(app); }
@@ -89,7 +93,9 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   private dataLoaded = false;
   private commandsRegistered = false;
   private ribbon: HTMLElement | null = null;
-  private readonly reportSource = new ReportSource(this.app);
+  private readonly reportSource = new ReportSource(this.app, resolveSubpath);
+  private workbenchCards?: { records: ReportRecord[]; scope: string; cards: WorkbenchCards };
+  private readonly cardReviews = new Map<string, CardReviewQueue>();
   private editingActivity = createActivityState();
   private lastActivityEvent: number | null = null;
   private activityTimer: number | undefined;
@@ -111,6 +117,12 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     coordinator.owner = this.persistenceOwner;
     this.persistenceClaimed = true;
     this.settings = readSettings(stored?.settings);
+    if (Array.isArray(stored?.cardReviews)) {
+      for (const entry of stored.cardReviews) {
+        const queue = readCardReviewQueue(entry);
+        if (queue) this.cardReviews.set(queue.day, queue);
+      }
+    }
     this.editingActivity = normalizeActivityState(stored?.activity);
     if (!hasValidSupportFolder(this.settings)) {
       new Notice(this.t('The companion folder conflicts with a content folder. Update the folder settings before creating companion files.'));
@@ -166,7 +178,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       refresh();
     }));
     this.registerEvent(this.app.workspace.on('editor-change', (_editor, info) => this.recordEditingActivity(info)));
-    this.registerEvent(this.app.workspace.on('editor-menu', (menu: Menu, editor) => {
+    this.registerEvent(this.app.workspace.on('editor-menu', (menu: Menu, editor, info) => {
       const selection = editor.getSelection().trim();
       if (!selection) return;
       const add = (title: string, iconName: string, run: () => void): void => {
@@ -174,6 +186,13 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       };
       add('Tangrow: add selection as task', 'square-check-big', () => this.openQuickAdd('task', selection));
       add('Tangrow: capture selection', 'inbox', () => this.openQuickAdd('capture', selection));
+      if (this.settings.knowledgeEnabled && info?.file?.extension === 'md') {
+        const file = info.file;
+        const line = editor.getCursor('from').line;
+        const heading = this.app.metadataCache.getFileCache(file)?.headings?.filter((entry) => entry.position.start.line <= line).at(-1);
+        const source: CardSource = { path: file.path, anchor: heading ? `#${heading.heading}` : undefined };
+        add('Tangrow: extract selection to card', 'sticky-note', () => this.openQuickAdd('card', `${file.basename}\n\n${selection}`, source));
+      }
     }));
     // Claudian announces every finished turn; only the session a workflow was sent to matters here.
     this.registerEvent((this.app.workspace as unknown as { on(name: string, callback: (event: { sessionId?: string }) => void): EventRef })
@@ -252,13 +271,18 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
 
   private registerCommands(): void {
     if (this.commandsRegistered) {
-      for (const id of ['quick-add', 'new-note', 'new-task', 'new-project', 'open-assistant', 'open-companion', 'open-report', 'open-capture-window', 'open-immersive-capture', 'toggle-note-immersion', ...JOURNAL_PERIODS.map((period) => `open-${period}-note`), 'setup-bases', 'migrate-companion-folder', 'quick-capture', 'pin-note']) this.removeCommand(id);
+      for (const id of ['quick-add', 'new-note', 'new-task', 'new-project', 'new-card', 'open-assistant', 'open-companion', 'open-report', 'open-capture-window', 'open-immersive-capture', 'toggle-note-immersion', ...JOURNAL_PERIODS.map((period) => `open-${period}-note`), 'setup-bases', 'migrate-companion-folder', 'quick-capture', 'pin-note']) this.removeCommand(id);
     }
     this.addCommand({ id: 'open-companion', name: this.t('Open companion'), callback: () => { void this.openSidebar().catch((error) => new Notice(this.error(error))); } });
     this.addCommand({ id: 'quick-add', name: this.t('Quick add'), callback: () => this.openQuickAdd() });
     for (const [id, name, kind] of [['new-note', 'New note', 'note'], ['new-task', 'New task', 'task'], ['new-project', 'New project', 'project']] as const) {
       this.addCommand({ id, name: this.t(name), callback: () => this.openQuickAdd(kind) });
     }
+    this.addCommand({ id: 'new-card', name: this.t('New card'), checkCallback: (checking) => {
+      if (!this.settings.knowledgeEnabled) return false;
+      if (!checking) this.openQuickAdd('card');
+      return true;
+    } });
     this.addCommand({ id: 'open-assistant', name: this.t('Open assistant'), callback: () => { void this.openAssistant().catch((error) => new Notice(this.error(error))); } });
     this.addCommand({ id: 'open-report', name: this.t('Open report'), callback: () => { void this.openReport().catch((error) => new Notice(this.error(error))); } });
     this.addCommand({ id: 'setup-bases', name: this.t('Set up companion Bases'), callback: () => { void this.setup().catch((error) => new Notice(this.error(error))); } });
@@ -337,7 +361,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     const leaf = await this.app.workspace.ensureSideLeaf(VIEW_TYPE, 'right', { active: true });
     if (leaf.view instanceof TangrowSidebar) leaf.view.showSection('ai');
   }
-  openQuickAdd(kind: QuickKind = 'capture', text = ''): void { new QuickAddModal(this, kind, text).open(); }
+  openQuickAdd(kind: QuickKind = 'capture', text = '', source?: CardSource): void { new QuickAddModal(this, kind, text, source).open(); }
   openCaptureWindow(): Promise<void> { return revealCaptureWindow(this.app, this); }
   openImmersiveCapture(): void {
     if (this.immersiveCapture) { this.immersiveCapture.contentEl.querySelector('textarea')?.focus(); return; }
@@ -419,11 +443,16 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       this.notify();
     });
   }
-  async openReport(): Promise<void> {
+  async openReport(): Promise<void> { await this.revealReport({ page: 'overview' }); }
+  async openCardReport(filter?: CardFilter): Promise<void> {
+    await this.revealReport(this.settings.knowledgeEnabled ? { page: 'cards', filter } : { page: 'overview' });
+  }
+  private async revealReport(destination: ReportDestination): Promise<void> {
     const existing = this.app.workspace.getLeavesOfType(REPORT_VIEW_TYPE)[0];
     const leaf = existing ?? this.app.workspace.getLeaf('tab');
     if (!existing) await leaf.setViewState({ type: REPORT_VIEW_TYPE, active: true });
     await this.app.workspace.revealLeaf(leaf);
+    if (leaf.view instanceof TangrowReport) leaf.view.navigate(destination);
   }
   subscribe(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   subscribeComposer(listener: () => void): () => void { this.composerListeners.add(listener); return () => this.composerListeners.delete(listener); }
@@ -448,7 +477,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     return app[PERSISTENCE_COORDINATOR] ??= { tail: Promise.resolve() };
   }
   private persistenceSnapshot(): SavedData {
-    return structuredClone({ version: 5, settings: this.settings, focus: this.focus, scratch: this.scratch, composer: this.composer, submissions: this.submissions, recentOpened: this.recentOpened, activity: this.editingActivity });
+    return structuredClone({ version: 5, settings: this.settings, focus: this.focus, scratch: this.scratch, composer: this.composer, submissions: this.submissions, recentOpened: this.recentOpened, activity: this.editingActivity, cardReviews: [...this.cardReviews.values()] });
   }
   private persist(finalFlush = false): Promise<void> {
     if (!this.alive && !finalFlush) return Promise.resolve();
@@ -482,13 +511,90 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     const settings = structuredClone(this.settings);
     const source = await this.reportSource.collect(settings);
     const now = Date.now();
+    const data = aggregateReport(source.records, settings, now, { range, folders: source.folders });
     return {
-      data: aggregateReport(source.records, settings, now, { range, folders: source.folders }),
+      data,
       records: source.records,
+      cards: settings.knowledgeEnabled ? buildCardReport(source.records, data.notes, source.linksReady, now) : undefined,
       activity: summarizeActivity(this.editingActivity, range, now),
       generatedAt: now,
       quality: { unreadable: source.unreadable, linksReady: source.linksReady }
     };
+  }
+  async loadWorkbenchCards(): Promise<WorkbenchCards> {
+    const settings = { ...this.settings };
+    const source = await this.reportSource.collectKnowledge(settings);
+    const now = Date.now();
+    const scope = JSON.stringify([dayKey(now), settings.resourcesFolder, settings.journalFolder, settings.journalFormat]);
+    if (this.workbenchCards?.records === source.records && this.workbenchCards.scope === scope) return this.workbenchCards.cards;
+    const { workspace: knowledge, report, materials, hubs } = buildWorkbenchCards(source.records, settings, source.linksReady, now);
+    const cards = { knowledge, report, materials, hubs };
+    this.workbenchCards = { records: source.records, scope, cards };
+    return cards;
+  }
+  async updateKnowledgeEnabled(enabled: boolean): Promise<void> {
+    await this.exclusive(async () => {
+      if (this.settings.knowledgeEnabled === enabled) return;
+      const previous = this.settings;
+      this.settings = { ...previous, knowledgeEnabled: enabled };
+      try { await this.persist(); }
+      catch (error) { this.settings = previous; throw error; }
+      if (!enabled) this.workbenchCards = undefined;
+      this.notify();
+    });
+  }
+  loadCardReview(day: string): CardReviewQueue | null {
+    const queue = this.cardReviews.get(day);
+    return queue ? structuredClone(queue) : null;
+  }
+  async saveCardReview(queue: CardReviewQueue, rebuild = false): Promise<CardReviewQueue> {
+    const candidate = readCardReviewQueue(queue);
+    if (!candidate) throw new Error('Invalid card review queue.');
+    return this.exclusive(async () => {
+      if (!this.settings.knowledgeEnabled) throw new Error('Knowledge features are disabled.');
+      if (candidate.day !== dayKey()) throw new Error('The review day has changed. Open today’s review again.');
+      const existing = this.loadCardReview(candidate.day);
+      if (existing && !rebuild) return existing;
+      if (existing) {
+        const completed = new Set(existing.completed);
+        const completedIds = new Set(existing.entries.filter((entry) => entry.id && completed.has(entry.path)).map((entry) => entry.id));
+        candidate.completed = candidate.entries.filter((entry) => completed.has(entry.path) || (entry.id && completedIds.has(entry.id))).map((entry) => entry.path);
+      }
+      await this.replaceCardReview(candidate);
+      this.notify();
+      return structuredClone(candidate);
+    });
+  }
+  async markCardReviewed(path: string, day: string, entryPath: string): Promise<void> {
+    await this.exclusive(async () => {
+      if (!this.settings.knowledgeEnabled) throw new Error('Knowledge features are disabled.');
+      const now = new Date(Date.now());
+      if (day !== dayKey(now.getTime())) throw new Error('The review day has changed. Open today’s review again.');
+      const queue = this.loadCardReview(day);
+      const entry = queue?.entries.find((item) => item.path === entryPath);
+      if (!queue || !entry || (path !== entry.path && !entry.id)) throw new Error('The review queue has changed.');
+      if (queue.completed.includes(entryPath)) return;
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile) || file.extension !== 'md') throw new Error('This note no longer exists.');
+      await this.app.fileManager.processFrontMatter(file, (fields) => {
+        const id = typeof fields.tangrow_id === 'string' ? fields.tangrow_id.trim() : '';
+        if (fields.tangrow_kind !== 'card' || (entry.id && id !== entry.id)) throw new Error('The selected file is no longer the queued card.');
+        const previous = parseNoteTimestamp(fields.tangrow_reviewed_at);
+        if (previous === null || dayKey(previous) !== day) fields.tangrow_reviewed_at = now.toISOString();
+      });
+      try { await this.replaceCardReview({ ...queue, completed: [...queue.completed, entryPath] }); }
+      finally { this.notify(); }
+    });
+  }
+  private async replaceCardReview(queue: CardReviewQueue): Promise<void> {
+    const previous = this.cardReviews.get(queue.day);
+    this.cardReviews.set(queue.day, queue);
+    try { await this.persist(); }
+    catch (error) {
+      if (previous) this.cardReviews.set(queue.day, previous);
+      else this.cardReviews.delete(queue.day);
+      throw error;
+    }
   }
   async updateReportSettings(patch: Partial<ReportPreferences>): Promise<void> {
     await this.exclusive(async () => {
@@ -708,7 +814,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
         return { ...this.summary(file), created: captureCreated(fields.created, file.stat.ctime, file.stat.mtime),
           processed: captureIsProcessed(fields), processing: Boolean(fields.tangrow_capture_processing) };
       })),
-      drafts: recent.filter((file) => byKind(file, 'draft')).slice(0, 12).map((file) => this.summary(file)),
+      drafts: recent.filter((file) => byKind(file, 'draft')).map((file) => this.summary(file)),
       tasks: taskNotes,
       habits: this.settings.habits.map((habit) => {
         const days = habitDays.get(habit.id) ?? new Set<string>();
@@ -733,14 +839,32 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       if (!found) await this.app.vault.createFolder(current);
     }
   }
-  private async createUnique(folder: string, title: string, body: string, fields: Record<string, unknown>): Promise<TFile> {
+  private async createUnique(folder: string, title: string, body: string, fields: Record<string, unknown>, source?: CardSource): Promise<TFile> {
     folder = safeFolder(folder);
     title = safeTitle(title);
     await this.ensureFolder(folder);
     let path = `${folder}/${title}.md`;
     let suffix = 2;
     while (this.app.vault.getAbstractFileByPath(path)) path = `${folder}/${title} (${suffix++}).md`;
-    return this.app.vault.create(path, `---\n${stringifyYaml(fields)}---\n\n# ${title}\n\n${body.trim()}\n`);
+    if (source) {
+      const file = this.app.vault.getAbstractFileByPath(source.path);
+      if (!(file instanceof TFile) || file.extension !== 'md') throw new Error('The card source no longer exists.');
+      fields.tangrow_sources = [this.app.fileManager.generateMarkdownLink(file, path, source.anchor)];
+      body = rebaseMarkdownLinks(body, source.path, path, (link, from) => this.app.metadataCache.getFirstLinkpathDest(link, from)?.path ?? null);
+    }
+    const content = `---\n${stringifyYaml(fields)}---\n\n# ${title}\n\n${body.trim()}\n`;
+    try { return await this.app.vault.create(path, content); }
+    catch (error) {
+      if (fields.tangrow_kind !== 'card') throw error;
+      const existing = this.app.vault.getAbstractFileByPath(path);
+      if (existing instanceof TFile) {
+        const saved = await this.app.vault.read(existing);
+        const info = getFrontMatterInfo(saved);
+        const actual = info.exists ? parseYaml(info.frontmatter) as Record<string, unknown> | null : null;
+        if (actual?.tangrow_kind === 'card' && actual.tangrow_id === fields.tangrow_id) return existing;
+      }
+      throw error;
+    }
   }
   private async recoverSubmittedDrafts(): Promise<void> {
     let recovered = false;
@@ -814,14 +938,21 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     if (!(file instanceof TFile) || file.extension !== 'base') throw new Error('The Base path is occupied by another file.');
     await this.app.workspace.getLeaf('tab').openFile(file);
   }
-  async openNote(path: string, line?: number): Promise<void> {
+  async openNote(path: string, line?: number, anchor?: string): Promise<void> {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile)) throw new Error('This note no longer exists.');
     const candidate = this.app.workspace.getLeaf(false);
-    const leaf = candidate.view.getViewType() === CAPTURE_VIEW_TYPE ? this.app.workspace.getLeaf('tab') : candidate;
+    const candidateType = candidate.view.getViewType();
+    const useNewTab = candidateType === CAPTURE_VIEW_TYPE || candidateType === REPORT_VIEW_TYPE;
+    if (anchor) {
+      await this.app.workspace.openLinkText(`${file.path}${anchor}`, '', useNewTab ? 'tab' : false);
+      return;
+    }
+    const leaf = useNewTab ? this.app.workspace.getLeaf('tab') : candidate;
     await leaf.openFile(file, { active: true, eState: line === undefined ? undefined : { line } });
   }
   async createNote(kind: NoteKind, title: string, projectFolder?: string, body = ''): Promise<void> {
+    if (kind === 'card') return this.createCard(title, body);
     const file = await this.exclusive(() => {
       let folder = this.settings.inboxFolder;
       if (kind === 'project') {
@@ -837,6 +968,39 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       return this.createUnique(folder, title, body, { tangrow_kind: kind, tangrow_status: 'open', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') });
     });
     await this.openNote(file.path);
+  }
+  async createCard(title: string, body: string, source?: CardSource): Promise<void> {
+    const file = await this.exclusive(() => {
+      if (!this.settings.knowledgeEnabled) throw new Error('Knowledge features are disabled.');
+      validateFolderSettings(this.settings);
+      const fields = { tangrow_kind: 'card', tangrow_id: uid(), tangrow_stage: 'seed', created: new Date().toISOString() };
+      return this.createUnique(this.settings.cardFolder, title, body, fields, source);
+    });
+    try { await this.openNote(file.path); }
+    catch (error) { new Notice(this.error(error)); }
+  }
+  async addWritingMaterial(draftPath: string, sourcePath: string): Promise<void> {
+    await this.exclusive(async () => {
+      if (!this.settings.knowledgeEnabled) throw new Error('Knowledge features are disabled.');
+      const draft = this.app.vault.getAbstractFileByPath(draftPath);
+      const source = this.app.vault.getAbstractFileByPath(sourcePath);
+      if (!(draft instanceof TFile) || draft.extension !== 'md') throw new Error('The selected manuscript no longer exists.');
+      if (!(source instanceof TFile) || source.extension !== 'md') throw new Error('The selected material no longer exists.');
+      if (draft === source) throw new Error('Choose material from a different note.');
+      await this.app.fileManager.processFrontMatter(draft, (fields) => {
+        if (fields.tangrow_kind !== 'draft') throw new Error('The selected file is no longer a manuscript.');
+        const previous: unknown = fields.tangrow_materials;
+        const materials = Array.isArray(previous) ? previous : previous == null ? [] : [previous];
+        const link = this.app.fileManager.generateMarkdownLink(source, draft.path);
+        if (materials.some((entry) => {
+          if (entry === link) return true;
+          const parsed = resolvePropertyLink(this.app.metadataCache, draft, entry);
+          return parsed?.path === source.path && !parsed.anchor;
+        })) return;
+        fields.tangrow_materials = [...materials, link];
+      });
+    });
+    this.notify();
   }
   async createNoteWithBody(title: string, body: string): Promise<void> {
     const file = await this.exclusive(() => this.createUnique(this.settings.inboxFolder, title, body, { tangrow_kind: 'note', tangrow_status: 'open', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') }));
@@ -1371,7 +1535,7 @@ class TangrowSettings extends PluginSettingTab {
         this.display();
       }));
     const folders: Array<[FolderSettingKey, string]> = [
-      ['supportFolder', 'Companion folder'], ['inboxFolder', 'Inbox'], ['projectFolder', 'Projects'], ['areaFolder', 'Areas'], ['resourcesFolder', 'Resources'], ['archiveFolder', 'Archive'], ['journalFolder', 'Journal folder']
+      ['supportFolder', 'Companion folder'], ['inboxFolder', 'Inbox'], ['projectFolder', 'Projects'], ['areaFolder', 'Areas'], ['resourcesFolder', 'Resources'], ['archiveFolder', 'Archive'], ['journalFolder', 'Journal folder'], ['cardFolder', 'Card folder']
     ];
     for (const [key, label] of folders) {
       let value = this.plugin.settings[key];
@@ -1379,6 +1543,10 @@ class TangrowSettings extends PluginSettingTab {
         try { await this.plugin.updateFolderSetting(key, value); new Notice(t('Path saved. Existing Bases keep their filters: edit them manually or choose a new companion folder and run setup.')); } catch (error) { new Notice(this.plugin.error(error)); }
       }));
     }
+    new Setting(this.containerEl).setName(t('Enable knowledge features')).setDesc(t('Show knowledge navigation, card review, and card reports.')).addToggle((toggle) => toggle.setValue(this.plugin.settings.knowledgeEnabled).onChange(async (enabled) => {
+      try { await this.plugin.updateKnowledgeEnabled(enabled); }
+      catch (error) { new Notice(this.plugin.error(error)); toggle.setValue(this.plugin.settings.knowledgeEnabled); }
+    }));
     new Setting(this.containerEl).setName(t('Move companion folder')).setDesc(t('Move the current companion folder to 99-Tangrow at the vault root. Existing destinations are never merged; customized files are preserved.')).addButton((button) => button.setButtonText(t('Move to 99-Tangrow')).setDisabled(this.plugin.settings.supportFolder === DEFAULT_SETTINGS.supportFolder).onClick(async () => {
       button.setDisabled(true);
       try { await this.plugin.migrateCompanionFolder(); this.display(); }

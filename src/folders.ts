@@ -1,7 +1,7 @@
 import { inFolder, safeFolder } from './model';
 import type { Settings } from './types';
 
-export const CONTENT_FOLDER_KEYS = ['inboxFolder', 'projectFolder', 'areaFolder', 'resourcesFolder', 'archiveFolder', 'journalFolder'] as const;
+export const CONTENT_FOLDER_KEYS = ['inboxFolder', 'projectFolder', 'areaFolder', 'resourcesFolder', 'archiveFolder', 'journalFolder', 'cardFolder'] as const;
 
 export type ContentFolderSettingKey = typeof CONTENT_FOLDER_KEYS[number];
 export type FolderSettingKey = 'supportFolder' | ContentFolderSettingKey;

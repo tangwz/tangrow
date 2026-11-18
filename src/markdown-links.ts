@@ -1,5 +1,6 @@
 interface Destination { start: number; end: number; after: number }
 type ResolveLink = (linkpath: string, sourcePath: string) => string | null;
+const INLINE_LINK_END = /^[ \t\r\n]*(?:(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\((?:\\.|[^)\\])*\))[ \t\r\n]*)?\)/;
 
 function pathSegments(path: string): string[] {
   return path.split('/').map((segment) => encodeURIComponent(segment)
@@ -25,6 +26,17 @@ function destinationAt(text: string, offset: number): Destination | null {
     }
   }
   return !angle && depth === 0 ? { start, end: text.length, after: text.length } : null;
+}
+
+export function readMarkdownLinkTarget(value: string): string | null {
+  const wiki = /^!?\[\[([^\[\]\r\n]+)\]\]$/u.exec(value);
+  if (wiki) return wiki[1]!.split(/\\?\|/, 1)[0]!.trim();
+  const label = /^!?\[(?:\\.|[^\]\\\r\n])*\]\(/u.exec(value);
+  if (!label) return null;
+  const destination = destinationAt(value, label[0].length);
+  const closing = destination && INLINE_LINK_END.exec(value.slice(destination.after));
+  if (!destination || !closing || destination.after + closing[0].length !== value.length) return null;
+  return value.slice(destination.start, destination.end).replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~])/g, '$1');
 }
 
 function relativeDestination(link: string, sourcePath: string, targetPath: string, resolve?: ResolveLink): string {
@@ -142,7 +154,7 @@ export function rebaseMarkdownLinks(content: string, sourcePath: string, targetP
       brackets--;
       if (content[cursor + 1] === '(') {
         const destination = destinationAt(content, cursor + 2);
-        const closing = destination && /^[ \t\r\n]*(?:(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\((?:\\.|[^)\\])*\))[ \t\r\n]*)?\)/.exec(content.slice(destination.after));
+        const closing = destination && INLINE_LINK_END.exec(content.slice(destination.after));
         if (destination && closing) {
           record(destination);
           cursor = destination.after + closing[0].length;

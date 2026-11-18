@@ -5,8 +5,11 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import type { EditingActivityState } from '../src/activity';
-import type { ReportPreferences, ReportRange, ReportSnapshot } from '../src/report-contract';
-import type { Settings } from '../src/types';
+import type { CardFilter } from '../src/card-report-data';
+import type { CardReviewQueue } from '../src/card-review';
+import { dayKey } from '../src/model';
+import type { ReportDestination, ReportPreferences, ReportRange, ReportSnapshot } from '../src/report-contract';
+import type { CardSource, Settings } from '../src/types';
 import type { MarkdownView, MockApp, Plugin as MockPlugin, createMockApp as AppFactory } from './obsidian-mock';
 
 interface ReportPlugin extends MockPlugin {
@@ -16,12 +19,20 @@ interface ReportPlugin extends MockPlugin {
   onunload(): void;
   loadReport(range: ReportRange): Promise<ReportSnapshot>;
   updateReportSettings(patch: Partial<ReportPreferences>): Promise<void>;
+  loadCardReview(day: string): CardReviewQueue | null;
+  saveCardReview(queue: CardReviewQueue): Promise<CardReviewQueue>;
+  markCardReviewed(path: string, day: string, entryPath: string): Promise<void>;
+  addWritingMaterial(draftPath: string, sourcePath: string): Promise<void>;
+  openReport(): Promise<void>;
+  openCardReport(filter?: CardFilter): Promise<void>;
+  updateKnowledgeEnabled(enabled: boolean): Promise<void>;
+  createCard(title: string, body: string, source?: CardSource): Promise<void>;
 }
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const bundled = await build({
   absWorkingDir: repository,
-  stdin: { contents: "export {default as TangrowPlugin} from './src/main'; export * from './tests/obsidian-mock';", resolveDir: repository, loader: 'ts' },
+  stdin: { contents: "export {default as TangrowPlugin} from './src/main'; export { TangrowReport } from './src/report'; export * from './tests/obsidian-mock';", resolveDir: repository, loader: 'ts' },
   bundle: true, write: false, platform: 'node', format: 'cjs', target: 'node22',
   plugins: [{ name: 'mock-obsidian', setup(builder) {
     builder.onResolve({ filter: /^obsidian$/ }, () => ({ path: path.join(repository, 'tests/obsidian-mock.ts') }));
@@ -31,6 +42,7 @@ const moduleObject: { exports: unknown } = { exports: {} };
 new Function('module', 'exports', 'require', bundled.outputFiles[0]!.text)(moduleObject, moduleObject.exports, createRequire(import.meta.url));
 const harness = moduleObject.exports as {
   TangrowPlugin: new (app: MockApp) => ReportPlugin;
+  TangrowReport: new (leaf: unknown, host: ReportPlugin) => { navigate(destination: ReportDestination): void };
   createMockApp: typeof AppFactory;
   MarkdownView: new () => MarkdownView;
 };
@@ -80,6 +92,95 @@ test('report preference validation and failed persistence never change notes or 
     assert.deepEqual(app.vault.processedPaths, []);
     plugin.onunload();
     await plugin.writes;
+  });
+});
+
+test('general report entry always restores overview while an explicit card entry carries its filter', async () => {
+  await withEnvironment(async () => {
+    const app = harness.createMockApp();
+    const plugin = new harness.TangrowPlugin(app);
+    const destinations: ReportDestination[] = [];
+    const view = new harness.TangrowReport({}, plugin);
+    view.navigate = (destination) => destinations.push(destination);
+    const leaf = { view };
+    const reveals: unknown[] = [];
+    Object.assign(app.workspace, { getLeavesOfType: () => [leaf], revealLeaf: async (target: unknown) => { reveals.push(target); } });
+    await plugin.openCardReport('candidate');
+    await plugin.openReport();
+    await plugin.updateKnowledgeEnabled(false);
+    await plugin.openCardReport('isolated');
+    assert.deepEqual(destinations, [{ page: 'cards', filter: 'candidate' }, { page: 'overview' }, { page: 'overview' }]);
+    assert.deepEqual(reveals, [leaf, leaf, leaf]);
+  });
+});
+
+test('card review retries persist progress without changing the first explicit review timestamp', async () => {
+  await withEnvironment(async (advance) => {
+    const app = harness.createMockApp();
+    const file = app.vault.seedFile('50-Zettel/Viewpoint.md', '---\ntangrow_kind: card\ntangrow_id: stable\n---\n\n# Viewpoint\n');
+    const plugin = new harness.TangrowPlugin(app);
+    const day = dayKey();
+    const established = { day, entries: [{ path: file.path, id: 'stable', reason: 'sample' as const }], completed: [] };
+    await plugin.saveCardReview(established);
+    assert.deepEqual(await plugin.saveCardReview({ ...established, entries: [] }), established);
+    plugin.saveFailures = 1;
+    await assert.rejects(plugin.markCardReviewed(file.path, day, file.path));
+    assert.deepEqual(plugin.loadCardReview(day)?.completed, []);
+    const firstReview = app.metadataCache.getFileCache(file).frontmatter?.tangrow_reviewed_at;
+    assert.equal(firstReview, new Date(Date.now()).toISOString());
+    advance(5000);
+    await plugin.markCardReviewed(file.path, day, file.path);
+    assert.equal(app.metadataCache.getFileCache(file).frontmatter?.tangrow_reviewed_at, firstReview);
+    assert.deepEqual(plugin.loadCardReview(day)?.completed, [file.path]);
+    assert.ok(file.content.endsWith('\n# Viewpoint\n'));
+  });
+});
+
+test('using a card in a manuscript updates only candidate material and deduplicates retries', async () => {
+  await withEnvironment(async () => {
+    const app = harness.createMockApp();
+    const card = app.vault.seedFile('50-Zettel/Viewpoint.md', '---\ntangrow_kind: card\n---\n\n# Viewpoint\n');
+    const draft = app.vault.seedFile('00-Inbox/Manuscript.md', '---\ntangrow_kind: draft\ntangrow_materials: "[[Other]]"\n---\n\n# Existing draft\n');
+    const plugin = new harness.TangrowPlugin(app);
+    const original = card.content;
+    await plugin.addWritingMaterial(draft.path, card.path);
+    await plugin.addWritingMaterial(draft.path, card.path);
+    assert.deepEqual(app.metadataCache.getFileCache(draft).frontmatter?.tangrow_materials, ['[[Other]]', `[[${card.path}]]`]);
+    assert.ok(draft.content.endsWith('\n# Existing draft\n'));
+    assert.equal(card.content, original);
+  });
+});
+
+test('creating a card uses a stable identity and only records an explicitly selected source', async () => {
+  await withEnvironment(async () => {
+    const app = harness.createMockApp();
+    const source = app.vault.seedFile('40-Resources/Reference.md', '# Reference\n\n## Details\n');
+    const plugin = new harness.TangrowPlugin(app);
+    const create = app.vault.create.bind(app.vault);
+    app.vault.create = async (path, content, options) => {
+      const saved = await create(path, content, options);
+      if (path === '50-Zettel/First idea.md') throw new Error('Failed after write');
+      return saved;
+    };
+    await plugin.createCard('First idea', 'A specific argument.', { path: source.path, anchor: '#Details' });
+    await plugin.createCard('Second idea', 'Another argument.');
+    const first = app.vault.getMarkdownFiles().find((file) => file.path === '50-Zettel/First idea.md')!;
+    const second = app.vault.getMarkdownFiles().find((file) => file.path === '50-Zettel/Second idea.md')!;
+    const firstFields = app.metadataCache.getFileCache(first).frontmatter!;
+    const secondFields = app.metadataCache.getFileCache(second).frontmatter!;
+    assert.equal(firstFields.tangrow_kind, 'card');
+    assert.equal(firstFields.tangrow_stage, 'seed');
+    assert.ok(typeof firstFields.tangrow_id === 'string' && typeof secondFields.tangrow_id === 'string');
+    assert.notEqual(firstFields.tangrow_id, secondFields.tangrow_id);
+    assert.deepEqual(firstFields.tangrow_sources, [`[[${source.path}#Details]]`]);
+    assert.equal(secondFields.tangrow_sources, undefined);
+    assert.equal(source.content, '# Reference\n\n## Details\n');
+    await plugin.updateKnowledgeEnabled(false);
+    const report = await plugin.loadReport(30);
+    assert.equal(report.cards, undefined);
+    assert.equal(report.data.counts.notes, 3);
+    await assert.rejects(plugin.createCard('Disabled', ''));
+    assert.equal(app.vault.getMarkdownFiles().length, 3);
   });
 });
 
