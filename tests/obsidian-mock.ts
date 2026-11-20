@@ -8,6 +8,10 @@ export function resolveSubpath(cache: { headings?: Array<{ heading: string }>; b
   return anchor.startsWith('#^') ? cache.blocks?.[anchor.slice(2)] ?? null : cache.headings?.find(({ heading }) => heading === anchor.slice(1)) ?? null;
 }
 
+export function stripHeadingForLink(heading: string): string {
+  return heading.replace(/[:#|^\\\r\n]|%%|\[\[|\]\]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 class MockEvents {
   private listeners = new Map<string, Set<(...args: unknown[]) => void>>();
   on = (name: string, callback: (...args: unknown[]) => void): object => {
@@ -281,6 +285,7 @@ export function createMockApp() {
   const metadataCache = {
     offref: cacheEvents.offref,
     getFirstLinkpathDest: (_linkpath: string, _sourcePath: string): TFile | null => null,
+    fileToLinktext: (file: TFile, _sourcePath: string, omitMdExtension = true): string => omitMdExtension ? file.path.replace(/\.md$/i, '') : file.path,
     getFileCache: (file: TFile) => {
       const frontmatter = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(file.content)?.[1];
       const listItems = file.content.split(/\r?\n/).flatMap((line, index) => {

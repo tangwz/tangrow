@@ -183,10 +183,11 @@ export function cardCreationTrend(index: CardReport, range: ReportRange): CardDa
   const step = range <= 7 ? 1 : range <= 90 ? 7 : 30;
   const bins: Array<CardDateRange & { count: number }> = [];
   const daysToBin = new Map<string, (typeof bins)[number]>();
-  for (let offset = 0; offset < days.length; offset += step) {
-    const group = days.slice(offset, offset + step);
+  // Anchor groups at today so only the oldest group can be partial.
+  for (let end = days.length; end > 0; end -= step) {
+    const group = days.slice(Math.max(0, end - step), end);
     const bin = { first: group[0]!, last: group.at(-1)!, count: 0 };
-    bins.push(bin);
+    bins.unshift(bin);
     for (const day of group) daysToBin.set(day, bin);
   }
   let count = 0;

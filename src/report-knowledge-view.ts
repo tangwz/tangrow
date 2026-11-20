@@ -35,6 +35,8 @@ export class ReportKnowledgeView {
   private cardPage = 0;
   private readonly draftFilters = { stage: '', page: 0 };
   private readonly materialFilters = { search: '', coveredOnly: false, page: 0 };
+  private readonly captureCoverage = { page: 0 };
+  /** Disclosure keys that stay open across report re-renders. */
   private readonly expanded = new Set<string>();
 
   constructor(
@@ -202,13 +204,7 @@ export class ReportKnowledgeView {
     const use = (['cited', 'candidate', 'unused'] as const).find((filter) => row.groups.has(filter));
     const summary = [created, ready && use ? this.ui.t(FILTER_LABELS[use]) : '', ready && row.groups.has('isolated') ? this.ui.t('Unconnected cards') : ''].filter(Boolean);
     entry.createEl('p', { cls: 'tangrow-report-caption', text: summary.join(' · ') });
-    const details = entry.createEl('details');
-    details.open = this.expanded.has(row.note.path);
-    details.addEventListener('toggle', () => {
-      if (!details.isConnected) return;
-      if (details.open) this.expanded.add(row.note.path);
-      else this.expanded.delete(row.note.path);
-    });
+    const details = this.disclosure(entry, `card:${row.note.path}`);
     details.createEl('summary', { text: this.ui.t('Sources and usage') });
     const list = details.createEl('dl');
     this.detail(list, 'File path').setText(row.note.path);
@@ -249,7 +245,7 @@ export class ReportKnowledgeView {
       this.recordList(results, selected, 'No matching manuscripts.', (entry, draft) => {
         this.noteButton(entry, draft.note);
         entry.createSpan({ cls: 'tangrow-muted', text: this.ui.t(DRAFT_STAGES[draft.stage]) });
-        const details = entry.createEl('details');
+        const details = this.disclosure(entry, `draft:${draft.note.path}`);
         details.createEl('summary', { text: this.ui.t('Sources and usage') });
         const list = details.createEl('dl');
         this.detail(list, 'File path').setText(draft.note.path);
@@ -307,11 +303,23 @@ export class ReportKnowledgeView {
 
   renderCaptureCoverage(parent: HTMLElement, snapshot: ReportSnapshot): void {
     const { captures, withResult, rows } = reportCaptureCoverage(snapshot);
-    const panel = parent.createEl('details', { cls: 'tangrow-report-panel tangrow-card-report' });
+    const panel = this.disclosure(parent, 'capture-coverage', 'tangrow-report-panel tangrow-card-report');
     const ratio = withResult === null ? this.ui.t('Pending confirmation') : `${this.percentage(withResult, captures)} · ${this.ratio(withResult, captures)}`;
     panel.createEl('summary', { text: `${this.ui.t('Capture results in the last 90 days')} · ${ratio}` });
     const entries = panel.createDiv();
-    this.recordList(entries, withResult === null ? rows : rows.filter(({ hasResult }) => hasResult), 'No captures with a result in this period.', (entry, { note }) => this.noteButton(entry, note));
+    this.recordList(entries, withResult === null ? rows : rows.filter(({ hasResult }) => hasResult), 'No captures with a result in this period.', (entry, { note }) => this.noteButton(entry, note), this.captureCoverage);
+  }
+
+  /** A <details> element whose open state survives the report's full re-renders. */
+  private disclosure(parent: HTMLElement, key: string, cls?: string): HTMLDetailsElement {
+    const details = parent.createEl('details', cls ? { cls } : undefined);
+    details.open = this.expanded.has(key);
+    details.addEventListener('toggle', () => {
+      if (!details.isConnected) return;
+      if (details.open) this.expanded.add(key);
+      else this.expanded.delete(key);
+    });
+    return details;
   }
 
   private recordList<T>(parent: HTMLElement, rows: readonly T[], empty: string, render: (entry: HTMLElement, row: T) => void, state?: { page: number }): void {

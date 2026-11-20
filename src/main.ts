@@ -1,4 +1,4 @@
-import { FileView, MarkdownView, Menu, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, TFolder, moment, parseYaml, getFrontMatterInfo, resolveSubpath, stringifyYaml, setTooltip, type EventRef, type WorkspaceLeaf } from 'obsidian';
+import { FileView, MarkdownView, Menu, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, TFolder, moment, parseYaml, getFrontMatterInfo, resolveSubpath, stringifyYaml, stripHeadingForLink, setTooltip, type EventRef, type WorkspaceLeaf } from 'obsidian';
 import { baseDefinitions, setupReadme, managedFileTranslations } from './bases';
 import { focusMinutes, pauseSession, remainingMs, resumeSession, startSession } from './focus';
 import { dayKey, inFolder, readSession, readSettings, recentDays, safeFolder, safeTitle, streak } from './model';
@@ -190,7 +190,9 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
         const file = info.file;
         const line = editor.getCursor('from').line;
         const heading = this.app.metadataCache.getFileCache(file)?.headings?.filter((entry) => entry.position.start.line <= line).at(-1);
-        const source: CardSource = { path: file.path, anchor: heading ? `#${heading.heading}` : undefined };
+        // Raw heading text can contain `|`, `#` or `]]`, which would split or end the generated link.
+        const anchor = heading ? stripHeadingForLink(heading.heading) : '';
+        const source: CardSource = { path: file.path, anchor: anchor ? `#${anchor}` : undefined };
         add('Tangrow: extract selection to card', 'sticky-note', () => this.openQuickAdd('card', `${file.basename}\n\n${selection}`, source));
       }
     }));
@@ -847,6 +849,10 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       if (!found) await this.app.vault.createFolder(current);
     }
   }
+  /** Obsidian only indexes and rename-updates wikilinks in properties, so ignore the Markdown link preference here. */
+  private propertyLink(file: TFile, sourcePath: string, anchor = ''): string {
+    return `[[${this.app.metadataCache.fileToLinktext(file, sourcePath)}${anchor}]]`;
+  }
   private async createUnique(folder: string, title: string, body: string, fields: Record<string, unknown>, source?: CardSource): Promise<TFile> {
     folder = safeFolder(folder);
     title = safeTitle(title);
@@ -858,7 +864,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       if (source.includeLink !== false) {
         const file = this.app.vault.getAbstractFileByPath(source.path);
         if (!(file instanceof TFile) || file.extension !== 'md') throw new Error('The card source no longer exists.');
-        fields.tangrow_sources = [this.app.fileManager.generateMarkdownLink(file, path, source.anchor)];
+        fields.tangrow_sources = [this.propertyLink(file, path, source.anchor)];
       }
       body = rebaseMarkdownLinks(body, source.path, path,
         (link, from) => this.app.metadataCache.getFirstLinkpathDest(link, from)?.path ?? null, { sourceLocalAnchors: true });
@@ -1002,7 +1008,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
         if (fields.tangrow_kind !== 'draft') throw new Error('The selected file is no longer a manuscript.');
         const previous: unknown = fields.tangrow_materials;
         const materials = Array.isArray(previous) ? previous : previous == null ? [] : [previous];
-        const link = this.app.fileManager.generateMarkdownLink(source, draft.path);
+        const link = this.propertyLink(source, draft.path);
         if (materials.some((entry) => {
           if (entry === link) return true;
           const parsed = resolvePropertyLink(this.app.metadataCache, draft, entry);

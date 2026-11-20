@@ -778,3 +778,29 @@ test('completing a range refresh does not steal focus from another control', asy
   assert.equal(view.snapshotRange, 7);
   assert.equal(doc.activeElement, outside);
 });
+
+test('capture coverage and manuscript disclosures keep their state across report re-renders', async () => {
+  const { app, plugin } = setup();
+  const today = recentDays(1)[0]!;
+  for (let index = 0; index < 21; index++) note(app, `Capture ${String(index).padStart(2, '0')}.md`, { tangrow_kind: 'capture', created: today });
+  note(app, 'Manuscript.md', { tangrow_kind: 'draft' });
+  const view = mountReport(plugin, await plugin.loadReport(30), 'notes');
+  const coverage = (): Element => view.contentEl.querySelectorAll('details').find((details) => details.children[0]?.textContent.startsWith('Capture results'))!;
+  assert.equal(coverage().open, false);
+  coverage().open = true;
+  coverage().dispatchEvent(new Event('toggle'));
+  coverage().querySelectorAll('button').find((button) => button.attributes.get('aria-label') === 'Next page')!.dispatchEvent(new Event('click'));
+  await flush();
+  assert.equal(coverage().querySelectorAll('article').length, 1);
+
+  view.render();
+  assert.equal(coverage().open, true);
+  assert.equal(coverage().querySelectorAll('article').length, 1);
+
+  await clickReportControl(view, 'note-tab-drafts');
+  const manuscript = (): Element => view.contentEl.querySelector('article')!.querySelector('details')!;
+  manuscript().open = true;
+  manuscript().dispatchEvent(new Event('toggle'));
+  view.render();
+  assert.equal(manuscript().open, true);
+});

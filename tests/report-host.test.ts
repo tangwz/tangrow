@@ -27,6 +27,7 @@ interface ReportPlugin extends MockPlugin {
   openCardReport(filter?: CardFilter): Promise<void>;
   updateKnowledgeEnabled(enabled: boolean): Promise<void>;
   createCard(title: string, body: string, source?: CardSource): Promise<void>;
+  openQuickAdd(kind?: string, text?: string, source?: CardSource): void;
 }
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -184,9 +185,11 @@ test('using a card in a manuscript updates only candidate material and deduplica
     const draft = app.vault.seedFile('00-Inbox/Manuscript.md', '---\ntangrow_kind: draft\ntangrow_materials: "[[Other]]"\n---\n\n# Existing draft\n');
     const plugin = new harness.TangrowPlugin(app);
     const original = card.content;
+    // Properties only track wikilinks, even when the vault prefers Markdown links.
+    app.fileManager.generateMarkdownLink = (file) => `[${file.basename}](${file.path})`;
     await plugin.addWritingMaterial(draft.path, card.path);
     await plugin.addWritingMaterial(draft.path, card.path);
-    assert.deepEqual(app.metadataCache.getFileCache(draft).frontmatter?.tangrow_materials, ['[[Other]]', `[[${card.path}]]`]);
+    assert.deepEqual(app.metadataCache.getFileCache(draft).frontmatter?.tangrow_materials, ['[[Other]]', '[[50-Zettel/Viewpoint]]']);
     assert.ok(draft.content.endsWith('\n# Existing draft\n'));
     assert.equal(card.content, original);
   });
@@ -213,7 +216,7 @@ test('creating a card uses a stable identity and only records an explicitly sele
     assert.equal(firstFields.tangrow_stage, 'seed');
     assert.ok(typeof firstFields.tangrow_id === 'string' && typeof secondFields.tangrow_id === 'string');
     assert.notEqual(firstFields.tangrow_id, secondFields.tangrow_id);
-    assert.deepEqual(firstFields.tangrow_sources, [`[[${source.path}#Details]]`]);
+    assert.deepEqual(firstFields.tangrow_sources, ['[[40-Resources/Reference#Details]]']);
     assert.equal(secondFields.tangrow_sources, undefined);
     assert.equal(source.content, '# Reference\n\n## Details\n');
     await plugin.updateKnowledgeEnabled(false);
@@ -275,5 +278,34 @@ test('editing activity counts focused eligible edits and stores only aggregate h
     assert.deepEqual(app.vault.processedPaths, []);
     reloaded.onunload();
     await reloaded.writes;
+  });
+});
+
+test('extracting a selection links its heading with a sanitized wikilink even when Markdown links are preferred', async () => {
+  await withEnvironment(async () => {
+    const app = harness.createMockApp();
+    const source = app.vault.seedFile('40-Resources/Reference.md', '# Reference\n\n## Pros | Cons [[x]]\n\nSelected idea\n');
+    const readCache = app.metadataCache.getFileCache;
+    app.metadataCache.getFileCache = (file) => Object.assign(readCache(file), file.path === source.path
+      ? { headings: [{ heading: 'Reference', level: 1, position: { start: { line: 0 } } }, { heading: 'Pros | Cons [[x]]', level: 2, position: { start: { line: 2 } } }] }
+      : {});
+    app.fileManager.generateMarkdownLink = (file) => `[${file.basename}](${file.path})`;
+    const plugin = new harness.TangrowPlugin(app);
+    await plugin.onload();
+    let extracted: CardSource | undefined;
+    plugin.openQuickAdd = (_kind, _text, cardSource) => { extracted = cardSource; };
+    const items: Array<() => void> = [];
+    const item = { setTitle: () => item, setIcon: () => item, onClick: (run: () => void) => { items.push(run); return item; } };
+    const menu = { addItem: (build: (entry: typeof item) => void) => { build(item); return menu; } };
+    const editor = { getSelection: () => 'Selected idea', getCursor: () => ({ line: 4, ch: 0 }) };
+    app.workspace.trigger('editor-menu', menu, editor, { file: source });
+    items.at(-1)!();
+    assert.deepEqual(extracted, { path: source.path, anchor: '#Pros Cons x' });
+
+    await plugin.createCard('Pros and cons', 'Selected idea', extracted);
+    const card = app.vault.getMarkdownFiles().find((file) => file.path === '50-Zettel/Pros and cons.md')!;
+    assert.deepEqual(app.metadataCache.getFileCache(card).frontmatter?.tangrow_sources, ['[[40-Resources/Reference#Pros Cons x]]']);
+    plugin.onunload();
+    await plugin.writes;
   });
 });

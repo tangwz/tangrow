@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildCardReport, buildWorkbenchCards, cardCreationTrend, filterCardReport, reportCaptureCoverage, reportDrafts, reportMaterials } from '../src/card-report-data';
 import type { CardRelationship, KnowledgeRecord } from '../src/knowledge-index';
+import { recentDays } from '../src/model';
 import type { ReportRecord, ReportSnapshot } from '../src/report-contract';
 import { aggregateReport } from '../src/report-data';
 import { DEFAULT_SETTINGS } from '../src/types';
@@ -48,6 +49,12 @@ test('card period counts and every inclusive chart bin match the same title/path
     assert.equal(trend.unknown, 2);
     assert.equal(trend.bins.length, Math.ceil(range / trend.step));
     assert.ok(trend.bins.some((bin) => bin.count === 0));
+    // Groups are anchored at today: only the oldest group may cover fewer days than the step.
+    const days = recentDays(range, NOW);
+    assert.equal(trend.bins[0]!.first, trend.first);
+    assert.equal(trend.bins.at(-1)!.last, trend.last);
+    for (const bin of trend.bins.slice(1)) assert.equal(days.indexOf(bin.last) - days.indexOf(bin.first) + 1, trend.step);
+    for (const [index, bin] of trend.bins.entries()) if (index) assert.equal(days.indexOf(bin.first), days.indexOf(trend.bins[index - 1]!.last) + 1);
     for (const bin of trend.bins) assert.equal(bin.count, filterCardReport(index, 'period', bin).length);
   }
   assert.deepEqual(filterCardReport(index, 'period', { first: '2026-11-15', last: '2026-11-15' }, 'ELSEWHERE').map(({ note }) => note.path), ['Elsewhere/B.md']);

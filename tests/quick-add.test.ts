@@ -200,7 +200,7 @@ test('keeping the card dialog open drops the extraction context after saving', a
   await dialog.save();
 
   const firstCard = app.vault.getAbstractFileByPath('50-Zettel/Extracted card.md') as TFile;
-  assert.deepEqual(app.metadataCache.getFileCache(firstCard).frontmatter?.tangrow_sources, [`[[${reference}]]`]);
+  assert.deepEqual(app.metadataCache.getFileCache(firstCard).frontmatter?.tangrow_sources, ['[[40-Resources/Reference]]']);
   assert.ok(firstCard.content.endsWith('# Extracted card\n\nCopied [[40-Resources/Reference.md#Details|details]].\n'));
   assert.equal(isClosed(), false);
   assert.equal(dialog.contentEl.querySelector('.tangrow-quick-row'), null);
