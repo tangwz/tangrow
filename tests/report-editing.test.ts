@@ -5,8 +5,9 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
+import { recentDays } from '../src/model';
 import { canonicalEntityNotes, reportStatusSource } from '../src/report-metrics';
-import type { ReportData, ReportEntity, ReportPage, ReportRange, ReportRecord, ReportSnapshot, ReportStatusChange, ReportTask, ReportTaskStatus } from '../src/report-contract';
+import type { ReportData, ReportDestination, ReportEntity, ReportPage, ReportRange, ReportRecord, ReportSnapshot, ReportStatusChange, ReportTask, ReportTaskStatus } from '../src/report-contract';
 import type { Settings } from '../src/types';
 import type { MockApp, TFile as MockFile, createMockApp as AppFactory } from './obsidian-mock';
 
@@ -34,6 +35,7 @@ interface RangeReportView extends ReportView {
   contentEl: Element;
   render(): void;
   selectPage(page: ReportPage): void;
+  navigate(destination: ReportDestination): void;
 }
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -272,19 +274,24 @@ class Element extends EventTarget {
   textContent = '';
   value = '';
   type = '';
+  selectionStart: number | null = null;
+  selectionEnd: number | null = null;
   scrollTop = 0;
   disabled = false;
-  style: Record<string, string> = {};
+  checked = false;
+  open = false;
+  style = { setProperty(name: string, value: string): void { Object.assign(this, { [name]: value }); } };
   dataset: Record<string, string> = {};
   attributes = new Map<string, string>();
   constructor(readonly tag = 'div', readonly ownerDocument = new ElementDocument()) { super(); }
   get tagName(): string { return this.tag.toUpperCase(); }
+  get isConnected(): boolean { return this.ownerDocument.body.contains(this); }
   createEl(tag: string, options: { text?: string; value?: string; type?: string; cls?: string; attr?: Record<string, string> } = {}): Element {
     const child = new Element(tag, this.ownerDocument);
     child.textContent = options.text ?? '';
     child.value = options.value ?? '';
     child.type = options.type ?? '';
-    child.attributes = new Map(Object.entries(options.attr ?? {}));
+    for (const [key, value] of Object.entries(options.attr ?? {})) child.setAttribute(key, value);
     if (options.cls) child.attributes.set('class', options.cls);
     this.appendChild(child);
     return child;
@@ -299,8 +306,14 @@ class Element extends EventTarget {
     this.textContent = '';
   }
   focus(): void { if (!this.disabled) this.ownerDocument.activeElement = this; }
+  setSelectionRange(start: number, end: number): void { this.selectionStart = start; this.selectionEnd = end; }
   scrollIntoView(): void {}
-  setAttribute(key: string, value: string): void { this.attributes.set(key, value); }
+  setText(text: string): void { this.textContent = text; }
+  getAttribute(key: string): string | null { return this.attributes.get(key) ?? null; }
+  setAttribute(key: string, value: string): void {
+    this.attributes.set(key, value);
+    if (key.startsWith('data-')) this.dataset[key.slice(5).replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase())] = value;
+  }
   removeAttribute(key: string): void { this.attributes.delete(key); }
   addClass(name: string): void { this.attributes.set('class', `${this.attributes.get('class') ?? ''} ${name}`.trim()); }
   toggleClass(name: string, enabled: boolean): void {
@@ -487,6 +500,195 @@ async function chooseRange(view: RangeReportView, range: ReportRange): Promise<v
   await flush();
 }
 
+async function clickReportControl(view: RangeReportView, focus: string): Promise<void> {
+  const button = view.contentEl.querySelector(`[data-report-focus="${focus}"]`);
+  assert.ok(button, `Missing report control ${focus}`);
+  button.dispatchEvent(new Event('click'));
+  await flush();
+}
+
+test('overview daily and 90-day drill-downs use the dates and roles behind each count', async () => {
+  const { app, plugin } = setup();
+  const dates = recentDays(110);
+  const yesterday = dates.at(-2)!;
+  const newFile = note(app, 'Recent.md', {}, '- [ ] Recent task\n');
+  newFile.stat.ctime = new Date(`${yesterday}T12:00:00`).getTime();
+  const capture = note(app, 'Capture.md', { tangrow_kind: 'capture', created: yesterday });
+  capture.stat.ctime = new Date(`${dates[0]}T12:00:00`).getTime();
+  const journal = note(app, 'Retrospective.md', { journal: 'Daily', 'journal-date': yesterday });
+  journal.stat.ctime = capture.stat.ctime;
+  const lastSeason = note(app, 'Last season.md', {}, '- [ ] Earlier task\n');
+  lastSeason.stat.ctime = new Date(`${dates.at(-40)}T12:00:00`).getTime();
+  const view = mountReport(plugin, await plugin.loadReport(30));
+  await chooseRange(view, 7);
+  const overviewHeadings = view.contentEl.querySelectorAll('h2').map((heading) => heading.textContent);
+  for (const title of ['Creation trends', 'Notes and actions', 'Records and time', 'Review and discovery', 'Card notes']) assert.ok(overviewHeadings.includes(title));
+
+  const daily = view.contentEl.querySelector('details')!;
+  daily.open = true;
+  daily.dispatchEvent(new Event('toggle'));
+  await clickReportControl(view, `trend-captures-${yesterday}`);
+  assert.equal(view.contentEl.querySelector('[data-report-focus="role"]')?.value, 'captures');
+  assert.ok(view.contentEl.querySelector('[data-report-focus="note-Capture.md"]'));
+  assert.equal(view.contentEl.querySelector('[data-report-focus="note-Recent.md"]'), null);
+
+  view.navigate({ page: 'overview' });
+  assert.equal(view.contentEl.querySelector('details')?.open, true);
+  await clickReportControl(view, `trend-tasks-${yesterday}`);
+  const tasks = view.contentEl.querySelectorAll('button').filter((button) => button.dataset.reportFocus?.startsWith('task-'));
+  assert.deepEqual(tasks.map((task) => task.attributes.get('aria-label')), ['Recent task']);
+
+  view.navigate({ page: 'overview' });
+  await clickReportControl(view, 'gain-notes-');
+  assert.ok(view.contentEl.querySelector('[data-report-focus="note-Last season.md"]'));
+  assert.equal(view.contentEl.querySelector('[data-report-focus="note-Capture.md"]'), null);
+
+  view.navigate({ page: 'overview' });
+  await clickReportControl(view, `history-journals-${yesterday}`);
+  assert.equal(view.contentEl.querySelector('[data-report-focus="role"]')?.value, 'journals');
+  assert.ok(view.contentEl.querySelector('[data-report-focus="note-Retrospective.md"]'));
+  assert.equal(view.contentEl.querySelector('[data-report-focus="note-Recent.md"]'), null);
+  view.navigate({ page: 'overview' });
+  await clickReportControl(view, `history-captures-${yesterday}`);
+  assert.ok(view.contentEl.querySelector('[data-report-focus="note-Capture.md"]'));
+  assert.equal(view.contentEl.querySelector('[data-report-focus="note-Retrospective.md"]'), null);
+});
+
+test('card destinations and the generic report open independently while card availability changes', async () => {
+  const { app, plugin } = setup();
+  note(app, 'Card.md', { tangrow_kind: 'card' });
+  const snapshot = await plugin.loadReport(30);
+  snapshot.quality.linksReady = false;
+  snapshot.cards!.linksReady = false;
+  const view = mountReport(plugin, snapshot);
+  assert.equal(view.contentEl.querySelector('[data-report-focus="count-Orphan notes"]'), null);
+  assert.equal(view.contentEl.querySelector('[data-report-focus="control-Open a random orphan"]')?.disabled, true);
+  assert.ok(view.contentEl.querySelector('[data-report-focus="count-Notes total"]'));
+  view.navigate({ page: 'cards', filter: 'week' });
+  assert.equal(view.contentEl.querySelector('[data-report-focus="note-tab-cards"]')?.attributes.get('aria-selected'), 'true');
+  assert.equal(view.contentEl.querySelector('[data-report-focus="card-filter"]')?.value, 'week');
+  view.navigate({ page: 'overview' });
+  assert.equal(view.contentEl.querySelector('[data-page="overview"]')?.attributes.get('aria-selected'), 'true');
+
+  view.navigate({ page: 'cards' });
+  plugin.settings.knowledgeEnabled = false;
+  view.render();
+  assert.equal(view.contentEl.querySelector('[data-page="overview"]')?.attributes.get('aria-selected'), 'true');
+  assert.ok(view.contentEl.querySelector('[data-report-focus="count-Manuscripts"]'));
+  assert.equal(view.contentEl.querySelectorAll('h2').some((heading) => heading.textContent === 'Card notes'), false);
+  view.navigate({ page: 'cards' });
+  assert.equal(view.contentEl.querySelector('[data-page="overview"]')?.attributes.get('aria-selected'), 'true');
+});
+
+test('returning to card trends preserves focus across the range load and zero groups open their own empty list', async () => {
+  const { plugin } = setup();
+  const month = await plugin.loadReport(30);
+  const view = mountReport(plugin, month, 'time');
+  await chooseRange(view, 1);
+  const requests = deferReportLoads(plugin);
+  view.navigate({ page: 'cards' });
+  const openTrend = view.contentEl.querySelectorAll('button').find((button) => button.getAttribute('aria-label') === 'View card creation trend');
+  assert.ok(openTrend);
+  openTrend.dispatchEvent(new Event('click'));
+  await flush();
+  assert.deepEqual(requests.map(({ range }) => range), [30]);
+  assert.ok(view.contentEl.querySelector('[data-report-focus="count-Notes total"]'));
+  const active = (): Element => view.contentEl.ownerDocument.activeElement;
+  assert.equal(active().dataset.reportFocus, 'card-overview-trend');
+  requests[0]!.resolve(month);
+  await flush();
+  assert.equal(active().dataset.reportFocus, 'card-overview-trend');
+
+  const zero = view.contentEl.querySelectorAll('button').find((button) => button.getAttribute('class')?.includes('tangrow-card-trend-bin') && button.getAttribute('aria-label')?.endsWith('0 cards'));
+  assert.ok(zero && !zero.disabled);
+  zero.dispatchEvent(new Event('click'));
+  await flush();
+  assert.equal(view.contentEl.querySelector('[data-report-focus="card-filter"]')?.value, 'period');
+  assert.equal(view.contentEl.querySelectorAll('p').find((element) => element.getAttribute('role') === 'status')?.textContent, '0 cards');
+});
+
+test('material filters, page, and search focus survive report refreshes and IME composition', async () => {
+  const { app, plugin } = setup();
+  const query = '\u8d44\u6599';
+  const matches = Array.from({ length: 21 }, (_, index) => `${query} ${String(index).padStart(2, '0')}`);
+  const materials = new Map([...matches, 'Other', `${query} Uncovered`].map((name) => {
+    const file = note(app, `40-Resources/${name}.md`);
+    return [file.path, file];
+  }));
+  app.metadataCache.getFirstLinkpathDest = (link) => materials.get(link) ?? null;
+  Object.assign(app.metadataCache, { resolvedLinks: {} });
+  note(app, 'Card.md', { tangrow_kind: 'card', tangrow_sources: [...matches, 'Other'].map((name) => `[[40-Resources/${name}.md]]`) });
+  const view = mountReport(plugin, await plugin.loadReport(30), 'resources');
+  await clickReportControl(view, 'resource-tab-materials');
+  await clickReportControl(view, 'material-coverage');
+  const search = () => view.contentEl.querySelector('[data-report-focus="material-search"]')!;
+  const hasButton = (label: string) => view.contentEl.querySelectorAll('button').some((button) => button.getAttribute('aria-label') === label);
+  const input = search();
+  input.focus();
+  input.dispatchEvent(new Event('compositionstart'));
+  input.value = 'zi';
+  input.dispatchEvent(new Event('input'));
+  await view.refresh();
+  assert.equal(search(), input);
+  assert.ok(hasButton('Other'));
+
+  input.value = query;
+  input.dispatchEvent(new Event('compositionend'));
+  assert.equal(hasButton('Other'), false);
+  const next = view.contentEl.querySelectorAll('button').find((button) => button.getAttribute('aria-label') === 'Next page')!;
+  next.dispatchEvent(new Event('click'));
+  await flush();
+  assert.ok(hasButton(matches[20]!));
+  assert.equal(hasButton(`${query} Uncovered`), false);
+
+  search().focus();
+  search().setSelectionRange(1, 2);
+  await view.refresh();
+  assert.equal(search().value, query);
+  assert.equal(view.contentEl.ownerDocument.activeElement, search());
+  assert.deepEqual([search().selectionStart, search().selectionEnd], [1, 2]);
+  assert.equal(view.contentEl.querySelector('[data-report-focus="material-coverage"]')?.getAttribute('aria-pressed'), 'true');
+  assert.ok(hasButton(matches[20]!));
+  assert.equal(hasButton(matches[0]!), false);
+  assert.equal(hasButton(`${query} Uncovered`), false);
+});
+
+test('manuscript stage stays selected across report refreshes', async () => {
+  const { app, plugin } = setup();
+  note(app, 'Manuscript.md', { tangrow_kind: 'draft', tangrow_writing_stage: 'drafting' });
+  note(app, 'Later.md', { tangrow_kind: 'draft', tangrow_writing_stage: 'outline' });
+  const view = mountReport(plugin, await plugin.loadReport(30), 'notes');
+  await clickReportControl(view, 'note-tab-drafts');
+  const stage = () => view.contentEl.querySelector('[data-report-focus="draft-stage"]')!;
+  stage().value = 'drafting';
+  stage().dispatchEvent(new Event('change'));
+  await view.refresh();
+  assert.equal(stage().value, 'drafting');
+  const names = view.contentEl.querySelectorAll('button').map((button) => button.getAttribute('aria-label'));
+  assert.ok(names.includes('Manuscript'));
+  assert.equal(names.includes('Later'), false);
+
+  view.navigate({ page: 'overview' });
+  await clickReportControl(view, 'count-Manuscripts');
+  assert.equal(stage().value, '');
+  assert.ok(view.contentEl.querySelectorAll('button').some((button) => button.getAttribute('aria-label') === 'Later'));
+});
+
+test('today habit check-ins can be recorded from the overview count', async () => {
+  const { plugin } = setup();
+  plugin.settings.habits = [{ id: 'read', name: 'Read' }];
+  const view = mountReport(plugin, await plugin.loadReport(30));
+  await clickReportControl(view, 'count-Habit check-ins today');
+  assert.equal(view.contentEl.querySelector('[data-page="actions"]')?.attributes.get('aria-selected'), 'true');
+  const check = view.contentEl.querySelector('[data-report-focus="habit-read"]')!;
+  assert.equal(check.checked, false);
+  check.checked = true;
+  check.dispatchEvent(new Event('change'));
+  await flush();
+  assert.equal(view.snapshot.data.habits.todayCompleted, 1);
+  assert.equal(view.contentEl.querySelector('[data-report-focus="habit-read"]')?.disabled, true);
+});
+
 test('returning to a cached range restarts an interrupted refresh and includes new notes', async () => {
   const { app, plugin } = setup();
   const original = await plugin.loadReport(30);
@@ -575,4 +777,30 @@ test('completing a range refresh does not steal focus from another control', asy
   await flush();
   assert.equal(view.snapshotRange, 7);
   assert.equal(doc.activeElement, outside);
+});
+
+test('capture coverage and manuscript disclosures keep their state across report re-renders', async () => {
+  const { app, plugin } = setup();
+  const today = recentDays(1)[0]!;
+  for (let index = 0; index < 21; index++) note(app, `Capture ${String(index).padStart(2, '0')}.md`, { tangrow_kind: 'capture', created: today });
+  note(app, 'Manuscript.md', { tangrow_kind: 'draft' });
+  const view = mountReport(plugin, await plugin.loadReport(30), 'notes');
+  const coverage = (): Element => view.contentEl.querySelectorAll('details').find((details) => details.children[0]?.textContent.startsWith('Capture results'))!;
+  assert.equal(coverage().open, false);
+  coverage().open = true;
+  coverage().dispatchEvent(new Event('toggle'));
+  coverage().querySelectorAll('button').find((button) => button.attributes.get('aria-label') === 'Next page')!.dispatchEvent(new Event('click'));
+  await flush();
+  assert.equal(coverage().querySelectorAll('article').length, 1);
+
+  view.render();
+  assert.equal(coverage().open, true);
+  assert.equal(coverage().querySelectorAll('article').length, 1);
+
+  await clickReportControl(view, 'note-tab-drafts');
+  const manuscript = (): Element => view.contentEl.querySelector('article')!.querySelector('details')!;
+  manuscript().open = true;
+  manuscript().dispatchEvent(new Event('toggle'));
+  view.render();
+  assert.equal(manuscript().open, true);
 });

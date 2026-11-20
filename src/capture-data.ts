@@ -24,7 +24,7 @@ function validTimestamp(value: unknown): number | null {
   return Number.isNaN(new Date(value).getTime()) ? null : value;
 }
 
-function parseCreated(value: unknown): number | null {
+export function parseNoteTimestamp(value: unknown): number | null {
   if (typeof value === 'number') return validTimestamp(value);
   if (typeof value !== 'string' || !value.trim()) return null;
   const text = value.trim();
@@ -44,7 +44,7 @@ function parseCreated(value: unknown): number | null {
 }
 
 export function captureCreated(frontmatterCreated: unknown, ctime: number, mtime: number): number {
-  return parseCreated(frontmatterCreated) ?? validTimestamp(ctime) ?? validTimestamp(mtime) ?? 0;
+  return parseNoteTimestamp(frontmatterCreated) ?? validTimestamp(ctime) ?? validTimestamp(mtime) ?? 0;
 }
 
 export function captureDay(timestamp: number): string {

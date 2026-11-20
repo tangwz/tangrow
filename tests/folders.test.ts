@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CONTENT_FOLDER_KEYS, hasValidSupportFolder, SupportFolderConflictError, validateFolderSettings } from '../src/folders';
 import { DEFAULT_SETTINGS } from '../src/types';
+import { readSettings } from '../src/model';
 
 test('default folders and legacy sibling folders keep content separate from support', () => {
   assert.doesNotThrow(() => validateFolderSettings(DEFAULT_SETTINGS));
@@ -10,6 +11,13 @@ test('default folders and legacy sibling folders keep content separate from supp
     supportFolder: '10-Life(Meta)/Tangrow',
     journalFolder: '10-Life(Meta)/13-Journal'
   }));
+});
+
+test('adding a card directory default keeps an existing companion directory usable', () => {
+  const settings = readSettings({ supportFolder: '50-zettel' });
+  assert.equal(settings.supportFolder, '50-zettel');
+  assert.ok(hasValidSupportFolder(settings));
+  assert.throws(() => validateFolderSettings(readSettings({ supportFolder: '50-zettel', cardFolder: '50-Zettel' })), SupportFolderConflictError);
 });
 
 test('support cannot equal any configured content folder', () => {

@@ -136,6 +136,34 @@ test('copying within the same folder leaves the body byte-for-byte unchanged', (
   assert.equal(rebaseMarkdownLinks(content, 'Capture.md', 'New note.md'), content);
 });
 
+test('card extraction preserves source-local Markdown and wiki heading and block references', () => {
+  const source = 'Notebook ideas/Reference draft.md';
+  const target = '50-Zettel/New.md';
+  const content = [
+    '[Heading](#Details%20and%20Context "Tooltip") [Block](<#^one-two>)',
+    '[[#Details and Context|Read this]] ![[#^one-two]]',
+    '[Reference link][details]',
+    '',
+    '[details]: #Details%20and%20Context "Source"',
+    '`[inline](#Details)` <!-- [[#^one-two]] -->'
+  ].join('\n');
+  assert.equal(rebaseMarkdownLinks(content, source, target), content);
+  assert.equal(rebaseMarkdownLinks(content, source, target, undefined, { sourceLocalAnchors: true }), [
+    '[Heading](../Notebook%20ideas/Reference%20draft.md#Details%20and%20Context "Tooltip") [Block](<../Notebook%20ideas/Reference%20draft.md#^one-two>)',
+    '[[Notebook ideas/Reference draft.md#Details and Context|Read this]] ![[Notebook ideas/Reference draft.md#^one-two]]',
+    '[Reference link][details]',
+    '',
+    '[details]: ../Notebook%20ideas/Reference%20draft.md#Details%20and%20Context "Source"',
+    '`[inline](#Details)` <!-- [[#^one-two]] -->'
+  ].join('\n'));
+});
+
+test('card extraction qualifies local anchors when the source and target share a folder', () => {
+  const content = '[local](#Heading) [[#^block|Alias]] [neighbor](./Neighbor.md)';
+  assert.equal(rebaseMarkdownLinks(content, SOURCE, '00-Inbox/New note.md', undefined, { sourceLocalAnchors: true }),
+    '[local](./Capture.md#Heading) [[00-Inbox/Capture.md#^block|Alias]] [neighbor](./Neighbor.md)');
+});
+
 test('a blank line cannot turn following text into a link destination', () => {
   const content = '[broken](\n\n./keep.md)\n[ref]:\n\n./keep.md\n[actual](\n  ./rebase.md)';
   assert.equal(rebaseMarkdownLinks(content, SOURCE, TARGET), content.replace('./rebase.md', '../../00-Inbox/rebase.md'));

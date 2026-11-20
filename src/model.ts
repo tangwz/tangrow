@@ -52,10 +52,13 @@ export function readSettings(value: unknown): Settings {
   const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const result = { ...DEFAULT_SETTINGS, journalFormats: { ...DEFAULT_SETTINGS.journalFormats }, journalTemplates: { ...DEFAULT_SETTINGS.journalTemplates }, habits: [], reportExcludedFolders: [] } as Settings;
   if (raw.language === 'en' || raw.language === 'zh-CN') result.language = raw.language;
-  const folders = ['supportFolder', 'inboxFolder', 'projectFolder', 'areaFolder', 'resourcesFolder', 'archiveFolder', 'journalFolder'] as const;
+  const folders = ['supportFolder', 'inboxFolder', 'projectFolder', 'areaFolder', 'resourcesFolder', 'archiveFolder', 'journalFolder', 'cardFolder'] as const;
   for (const key of folders) {
     if (typeof raw[key] !== 'string') continue;
     try { result[key] = safeFolder(raw[key]); } catch { /* Keep the safe default for invalid persisted data. */ }
+  }
+  if (raw.cardFolder === undefined && result.supportFolder.normalize('NFC').toLowerCase() === DEFAULT_SETTINGS.cardFolder.toLowerCase()) {
+    result.cardFolder = `${DEFAULT_SETTINGS.cardFolder}-Cards`;
   }
   if (typeof raw.taskOverviewPath === 'string') {
     try { result.taskOverviewPath = safeFolder(raw.taskOverviewPath); } catch { /* Keep the existing Tasks note default. */ }
@@ -75,6 +78,7 @@ export function readSettings(value: unknown): Settings {
   if (Number.isInteger(raw.focusMinutes) && Number(raw.focusMinutes) >= 1 && Number(raw.focusMinutes) <= 240) result.focusMinutes = Number(raw.focusMinutes);
   if (typeof raw.autoOpen === 'boolean') result.autoOpen = raw.autoOpen;
   if (typeof raw.wideByDefault === 'boolean') result.wideByDefault = raw.wideByDefault;
+  if (typeof raw.knowledgeEnabled === 'boolean') result.knowledgeEnabled = raw.knowledgeEnabled;
   if (typeof raw.aiEnabled === 'boolean') result.aiEnabled = raw.aiEnabled;
   result.aiModel = readAiModel(raw.aiModel);
   if (typeof raw.aiApiKey === 'string' && raw.aiApiKey.length <= 400) result.aiApiKey = raw.aiApiKey.trim();

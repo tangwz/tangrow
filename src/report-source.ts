@@ -1,19 +1,25 @@
 import type { App, CachedMetadata, TFile } from 'obsidian';
 import { hasValidSupportFolder } from './folders';
+import { hasConnectionAnnotations, readCaptureTaskSources, readKnowledgeRecord, type ResolveAnchor } from './knowledge-index';
 import { markdownStats, type MarkdownStats } from './markdown-stats';
 import { inFolder, safeFolder } from './model';
 import type { ReportRecord } from './report-contract';
 import type { Settings } from './types';
 
-export interface ReportSourceResult {
+export interface KnowledgeSourceResult {
   records: ReportRecord[];
+  linksReady: boolean;
+}
+
+export interface ReportSourceResult extends KnowledgeSourceResult {
   folders: string[];
   unreadable: number;
-  linksReady: boolean;
 }
 
 interface BodyStats extends MarkdownStats {
   taskLines: Map<number, string>;
+  connectionLines: Map<number, string>;
+  captureTaskLines: Map<number, number>;
 }
 
 interface CacheEntry {
@@ -38,11 +44,18 @@ function tagsFrom(cache: CachedMetadata | null): string[] {
 
 function bodyStats(content: string): BodyStats {
   const taskLines = new Map<number, string>();
+  const connectionLines = new Map<number, string>();
+  const captureTaskLines = new Map<number, number>();
   for (const [index, line] of content.replace(/\r\n?/g, '\n').split('\n').entries()) {
     const task = line.match(/^(?: {0,3}>[ \t]?)*[ \t]*(?:[-*+]|\d+[.)])[ \t]+\[[^\]\n]\](?:[ \t]+(.*))?$/);
-    if (task) taskLines.set(index, task[1] ?? '');
+    if (task) {
+      taskLines.set(index, task[1] ?? '');
+      const marker = /<!--\s*tangrow-capture:[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}\s*-->/iu.exec(line);
+      if (marker) captureTaskLines.set(index, marker.index);
+    }
+    if (/[\])][ \t]*[-\u2013\u2014\u00b7][ \t]*\p{L}/u.test(line)) connectionLines.set(index, line);
   }
-  return { ...markdownStats(content), taskLines };
+  return { ...markdownStats(content), taskLines, connectionLines, captureTaskLines };
 }
 
 export class ReportSource {
@@ -51,10 +64,12 @@ export class ReportSource {
   private readonly waiting: Array<() => void> = [];
   private linksDirty = false;
   private linksRevision = 0;
+  private knowledgeCache: { key: string; pending: Promise<KnowledgeSourceResult> } | null = null;
 
-  constructor(private readonly app: App) {}
+  constructor(private readonly app: App, private readonly resolveAnchor?: ResolveAnchor) {}
 
   invalidate(path?: string): void {
+    this.knowledgeCache = null;
     if (path === undefined) this.cache.clear();
     else this.cache.delete(path);
   }
@@ -69,14 +84,42 @@ export class ReportSource {
     this.linksRevision++;
   }
 
+  collectKnowledge(settings: Settings): Promise<KnowledgeSourceResult> {
+    const excluded = this.exclusions(settings);
+    const excludeSupport = hasValidSupportFolder(settings);
+    const key = JSON.stringify([this.linksRevision, excluded, settings.archiveFolder]);
+    if (this.knowledgeCache?.key === key) return this.knowledgeCache.pending;
+    const pending = this.readRecords((file, metadata) => {
+      const reportIncluded = !excluded.some((folder) => file.path === folder || inFolder(file.path, folder));
+      const workspaceIncluded = (!excludeSupport || !inFolder(file.path, settings.supportFolder)) && !inFolder(file.path, settings.archiveFolder);
+      return (reportIncluded || workspaceIncluded) && hasConnectionAnnotations(metadata);
+    }, false).then(({ records, linksReady }) => {
+      if ((!linksReady || records.some((record) => record.knowledge?.unreadable)) && this.knowledgeCache?.pending === pending) this.knowledgeCache = null;
+      return { records, linksReady };
+    });
+    this.knowledgeCache = { key, pending };
+    return pending;
+  }
+
   async collect(settings: Settings): Promise<ReportSourceResult> {
-    const files = this.app.vault.getMarkdownFiles();
-    const existing = new Set(files.map((file) => file.path));
-    for (const path of this.cache.keys()) if (!existing.has(path)) this.cache.delete(path);
+    const excluded = this.exclusions(settings);
+    const result = await this.readRecords((file) => !excluded.some((folder) => file.path === folder || inFolder(file.path, folder)), true);
+    const folders = [...new Set(this.app.vault.getAllFolders().map((folder) => folder.path).filter((path) => path && path !== '/'))].sort();
+    return { ...result, folders };
+  }
+
+  private exclusions(settings: Settings): string[] {
     const excluded = settings.reportExcludedFolders.flatMap((folder) => {
       try { return [safeFolder(folder)]; } catch { return []; }
     });
     if (hasValidSupportFolder(settings)) excluded.push(settings.supportFolder);
+    return excluded;
+  }
+
+  private async readRecords(read: (file: TFile, metadata: CachedMetadata | null) => boolean, statistics: boolean): Promise<KnowledgeSourceResult & { unreadable: number }> {
+    const files = this.app.vault.getMarkdownFiles();
+    const existing = new Set(files.map((file) => file.path));
+    for (const path of this.cache.keys()) if (!existing.has(path)) this.cache.delete(path);
     const resolved = this.app.metadataCache.resolvedLinks;
     const linksRevision = this.linksRevision;
     let linksReady = !this.linksDirty && resolved !== null && typeof resolved === 'object';
@@ -95,9 +138,15 @@ export class ReportSource {
         tags: tagsFrom(metadata),
         links: resolved && typeof resolved === 'object' ? Object.keys(resolved[file.path] ?? {}) : undefined
       };
-      if (excluded.some((folder) => file.path === folder || inFolder(file.path, folder))) return record;
-      const body = await this.readBody(file);
-      if (!body) { unreadable++; return record; }
+      const shouldRead = read(file, metadata);
+      const body = shouldRead ? await this.readBody(file) : null;
+      if (metadata) record.knowledge = readKnowledgeRecord(this.app.metadataCache, file, metadata, body?.connectionLines, this.resolveAnchor);
+      if (shouldRead && !body) {
+        unreadable++;
+        if (record.knowledge) record.knowledge.unreadable = true;
+      }
+      if (!statistics || !body) return record;
+      if (metadata && body.captureTaskLines.size) record.captureTaskSources = readCaptureTaskSources(this.app.metadataCache, file, metadata, body.captureTaskLines);
       record.wordCount = body.wordCount;
       record.characterCount = body.characterCount;
       record.taskItems = tasks.map((item) => ({
@@ -109,8 +158,7 @@ export class ReportSource {
       }));
       return record;
     }));
-    const folders = [...new Set(this.app.vault.getAllFolders().map((folder) => folder.path).filter((path) => path && path !== '/'))].sort();
-    return { records, folders, unreadable, linksReady: linksReady && !this.linksDirty && linksRevision === this.linksRevision };
+    return { records, unreadable, linksReady: linksReady && !this.linksDirty && linksRevision === this.linksRevision };
   }
 
   private readBody(file: TFile): Promise<BodyStats | null> {

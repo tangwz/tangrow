@@ -4,10 +4,10 @@ export const DEFAULT_AI_MODEL = 'claude-opus-5-5';
 export const AI_INPUT_LIMIT = 120_000;
 export const AI_SECRET_ID = 'tangrow-anthropic-api-key';
 
-export type QuickKind = 'capture' | 'note' | 'task' | 'project';
+export type QuickKind = 'capture' | 'note' | 'task' | 'project' | 'card';
 
 export interface AiPrompt { system: string; user: string; maxTokens: number; effort: 'low' | 'medium'; schema?: Record<string, unknown> }
-export interface CaptureSuggestion { kind: QuickKind; title: string; due: string | null; project: string | null; reason: string }
+export interface CaptureSuggestion { kind: Exclude<QuickKind, 'card'>; title: string; due: string | null; project: string | null; reason: string }
 
 function languageName(language: Locale): string { return language === 'zh-CN' ? 'Simplified Chinese' : 'English'; }
 
@@ -62,7 +62,7 @@ export function parseSuggestion(raw: string, projects: readonly string[]): Captu
   try { value = JSON.parse(start >= 0 && end > start ? raw.slice(start, end + 1) : raw) as Record<string, unknown>; }
   catch { throw new Error('The assistant reply could not be read. Try again.'); }
   if (!value || typeof value !== 'object') throw new Error('The assistant reply could not be read. Try again.');
-  const kind = ['capture', 'note', 'task', 'project'].includes(String(value.kind)) ? value.kind as QuickKind : 'capture';
+  const kind = ['capture', 'note', 'task', 'project'].includes(String(value.kind)) ? value.kind as CaptureSuggestion['kind'] : 'capture';
   const rawTitle = typeof value.title === 'string' ? value.title.replace(/\s+/g, ' ').trim() : '';
   const title = (kind === 'task' ? rawTitle.slice(0, 240) : rawTitle.replace(TITLE_FORBIDDEN, ' ').replace(/\s+/g, ' ').trim().replace(/[. ]+$/, '').slice(0, 140));
   const due = typeof value.due === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.due) && !Number.isNaN(Date.parse(`${value.due}T12:00:00`)) ? value.due : null;

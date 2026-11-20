@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { setTimeout } from 'node:timers/promises';
-import type { App, CachedMetadata, ListItemCache, Pos, TFile } from 'obsidian';
+import type { App, CachedMetadata, ListItemCache, Pos, ReferenceCache, TFile } from 'obsidian';
 import { ReportSource } from '../src/report-source';
 import { DEFAULT_SETTINGS } from '../src/types';
 
@@ -212,4 +212,73 @@ test('body read concurrency stays at three across overlapping collection request
   assert.equal(state.reads.length, 10);
   assert.equal(active, 0);
   assert.deepEqual(state.mutations, []);
+});
+
+test('knowledge collection uses host body references and property destinations without reading unrelated bodies', async () => {
+  const card = 'Cards/A.md';
+  const target = 'Cards/B Card.md';
+  const draft = 'Draft.md';
+  const source = 'Sources/Source.md';
+  const contents = ['# A', '## Connections', '- [B](./B%20Card.md#Part) \u2014 supports: Explains the tradeoff.', '### A subheading', '- [[Lost]]', '## Sources', '- [[Sources/Source]]', '## Premises', '[[B Card|a shorter label]]'];
+  const state = fixture([[card, contents.join('\n')], [target, '## Part'], [draft, '![[Cards/A]]'], [source, '# Source']]);
+  const pos = (lines: string[], number: number, raw: string): Pos => {
+    const col = lines[number]!.indexOf(raw);
+    const offset = lines.slice(0, number).reduce((size, line) => size + line.length + 1, 0) + col;
+    return { start: { line: number, col, offset }, end: { line: number, col: col + raw.length, offset: offset + raw.length } };
+  };
+  const reference = (lines: string[], line: number, link: string, original: string): ReferenceCache => ({ link, original, position: pos(lines, line, original) });
+  state.app.metadataCache.getFirstLinkpathDest = (link, path) => {
+    const canonical = path === card && ['./B Card.md', 'B Card'].includes(link) ? target : `${link}.md`;
+    return state.files.find((entry) => entry.path === canonical) ?? null;
+  };
+  state.metadata.set(card, {
+    frontmatter: { tangrow_kind: 'card', tangrow_sources: ['[[Sources/Source#Faulty anchor]]', '[[Missing source|Old title]]'], tangrow_parent: '[[Cards/B Card]]' },
+    links: [reference(contents, 2, './B%20Card.md#Part', '[B](./B%20Card.md#Part)'), reference(contents, 4, 'Lost', '[[Lost]]'),
+      reference(contents, 6, 'Sources/Source', '[[Sources/Source]]'), reference(contents, 8, 'B Card', '[[B Card|a shorter label]]')],
+    headings: [[1, 'Connections', 2], [3, 'A subheading', 3], [5, 'Sources', 2], [7, 'Premises', 2]].map(([line, heading, level]) =>
+      ({ heading: String(heading), level: Number(level), position: pos(contents, Number(line), contents[Number(line)]!) }))
+  } as CachedMetadata);
+  state.metadata.set(target, { frontmatter: { tangrow_kind: 'card' } } as CachedMetadata);
+  state.metadata.set(draft, {
+    frontmatter: { tangrow_kind: 'draft', tangrow_materials: '[[Cards/B Card]]' }, embeds: [reference(['![[Cards/A]]'], 0, 'Cards/A', '![[Cards/A]]')]
+  } as CachedMetadata);
+  const report = new ReportSource(state.app, (_cache, anchor) => anchor === '#Part');
+  const result = await report.collectKnowledge(DEFAULT_SETTINGS);
+  assert.equal(result.linksReady, true);
+  assert.deepEqual(state.reads, [card]);
+  assert.equal(await report.collectKnowledge(DEFAULT_SETTINGS), result);
+  const byPath = new Map(result.records.map((record) => [record.path, record.knowledge]));
+  const knowledge = byPath.get(card);
+  assert.deepEqual(knowledge?.body.map(({ path, anchor, reason, raw }) => [path, anchor, reason, raw]), [
+    [target, '#Part', 'Explains the tradeoff.', '[B](./B%20Card.md#Part)'],
+    [null, '', undefined, '[[Lost]]'],
+    [target, '', undefined, '[[B Card|a shorter label]]']
+  ]);
+  assert.deepEqual(knowledge?.sources.map(({ path, anchorMissing }) => [path, anchorMissing]), [[source, true], [null, undefined]]);
+  assert.deepEqual(knowledge?.parent.map(({ path }) => path), [target]);
+  assert.deepEqual(byPath.get(draft)?.body.map(({ path }) => path), [card]);
+  assert.deepEqual(byPath.get(draft)?.materials.map(({ path }) => path), [target]);
+  report.markLinksDirty();
+  assert.equal((await report.collectKnowledge(DEFAULT_SETTINGS)).linksReady, false);
+  report.markLinksResolved();
+  assert.equal((await report.collectKnowledge(DEFAULT_SETTINGS)).linksReady, true);
+  assert.deepEqual(state.reads, [card]);
+});
+
+test('legacy task proof uses the host-resolved capture link immediately preceding the matching task marker', async () => {
+  const overview = 'Overview.md';
+  const target = 'Capture.md';
+  const other = 'Other.md';
+  const content = '- [x] Check [[Other]] and summarize [[Capture]] <!-- tangrow-capture:0d0d0d0d-0d0d-0d0d-0d0d-0d0d0d0d0d0d -->';
+  const state = fixture([[overview, content], [target, 'Capture'], [other, 'Other']]);
+  state.app.metadataCache.getFirstLinkpathDest = (link) => state.files.find((entry) => entry.path === `${link}.md`) ?? null;
+  const reference = (link: string): ReferenceCache => {
+    const original = `[[${link}]]`;
+    const start = content.indexOf(original);
+    const end = start + original.length;
+    return { link, original, position: { start: { line: 0, col: start, offset: start }, end: { line: 0, col: end, offset: end } } };
+  };
+  state.metadata.set(overview, { listItems: [task(0, 'x')], links: [reference('Other'), reference('Capture')] });
+  const result = await state.source.collect(DEFAULT_SETTINGS);
+  assert.deepEqual(result.records.find((note) => note.path === overview)?.captureTaskSources, [target]);
 });

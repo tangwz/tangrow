@@ -5,13 +5,14 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import type { CaptureSuggestion, QuickKind } from '../src/ai';
-import type { Settings } from '../src/types';
+import type { CardSource, Settings } from '../src/types';
 import type { MockApp, TFile, createMockApp as AppFactory } from './obsidian-mock';
 
 class Element extends EventTarget {
   children: Element[] = [];
   textContent = '';
   value = '';
+  checked = false;
   disabled = false;
   classes = new Set<string>();
   attributes = new Map<string, string>();
@@ -72,18 +73,18 @@ const moduleObject: { exports: unknown } = { exports: {} };
 new Function('module', 'exports', 'require', bundle.outputFiles[0]!.text)(moduleObject, moduleObject.exports, createRequire(import.meta.url));
 const harness = moduleObject.exports as {
   TangrowPlugin: new (app: MockApp) => Host;
-  QuickAddModal: new (host: Host, kind: QuickKind, text: string) => Dialog;
+  QuickAddModal: new (host: Host, kind: QuickKind, text: string, source?: CardSource) => Dialog;
   createMockApp: typeof AppFactory;
   notices: string[];
 };
 
-function setup(text: string, kind: QuickKind = 'capture') {
+function setup(text: string, kind: QuickKind = 'capture', source?: CardSource) {
   const app = harness.createMockApp();
   const plugin = new harness.TangrowPlugin(app);
   plugin.settings.language = 'en';
   plugin.aiReady = () => true;
   plugin.suggestCapture = async () => ({ kind: 'project', title: 'Launch', due: null, project: null, reason: 'Project material' });
-  const dialog = new harness.QuickAddModal(plugin, kind, text);
+  const dialog = new harness.QuickAddModal(plugin, kind, text, source);
   let closed = false;
   Object.assign(dialog, { contentEl: new Element(), setTitle: () => undefined, close: () => { closed = true; } });
   dialog.render();
@@ -165,4 +166,52 @@ test('a project suggestion without a title preserves the source heading and body
   await dialog.save();
   const saved = app.vault.getAbstractFileByPath('20-Project/Ship the launch/Ship the launch.md') as TFile;
   assert.ok(saved.content.endsWith(`# ${SOURCE}\n`));
+});
+
+test('extracted cards rebase copied links when the source property is unchecked', async () => {
+  const reference = '40-Resources/Reference.md';
+  const selection = '[details](./Details.md) and [heading](#Details) and [[#^part|original block]]';
+  const sourceBody = `${selection}\n\n## Details\n\nSource passage. ^part\n`;
+  const { app, dialog, isClosed } = setup(`Extracted card\n${selection}`, 'card', { path: reference });
+  const source = app.vault.seedFile(reference, sourceBody);
+  app.vault.seedFile('40-Resources/Details.md', '# Details\n');
+  const checkbox = dialog.contentEl.querySelector('.tangrow-quick-row')!.querySelector('input')!;
+  assert.equal(checkbox.checked, true);
+  checkbox.checked = false;
+  checkbox.dispatchEvent(new Event('change'));
+
+  await dialog.save();
+
+  const card = app.vault.getAbstractFileByPath('50-Zettel/Extracted card.md') as TFile;
+  assert.ok(card.content.endsWith('# Extracted card\n\n[details](../40-Resources/Details.md) and [heading](../40-Resources/Reference.md#Details) and [[40-Resources/Reference.md#^part|original block]]\n'));
+  assert.equal(app.metadataCache.getFileCache(card).frontmatter?.tangrow_sources, undefined);
+  assert.equal(source.content, sourceBody);
+  assert.equal(isClosed(), true);
+});
+
+test('keeping the card dialog open drops the extraction context after saving', async () => {
+  const reference = '40-Resources/Reference.md';
+  const { app, dialog, isClosed } = setup('Extracted card\nCopied [[#Details|details]].', 'card', { path: reference });
+  app.vault.seedFile(reference, '# Reference\n\n## Details\n');
+  const keepOpen = dialog.contentEl.querySelector('.tangrow-quick-keep')!.querySelector('input')!;
+  keepOpen.checked = true;
+  keepOpen.dispatchEvent(new Event('change'));
+
+  await dialog.save();
+
+  const firstCard = app.vault.getAbstractFileByPath('50-Zettel/Extracted card.md') as TFile;
+  assert.deepEqual(app.metadataCache.getFileCache(firstCard).frontmatter?.tangrow_sources, ['[[40-Resources/Reference]]']);
+  assert.ok(firstCard.content.endsWith('# Extracted card\n\nCopied [[40-Resources/Reference.md#Details|details]].\n'));
+  assert.equal(isClosed(), false);
+  assert.equal(dialog.contentEl.querySelector('.tangrow-quick-row'), null);
+
+  app.vault.seedFile('50-Zettel/Local.md', '# Local card\n');
+  const editor = dialog.contentEl.querySelector('textarea')!;
+  editor.value = 'Next card\n[local card](./Local.md) [[#Next card]]';
+  editor.dispatchEvent(new Event('input'));
+  await dialog.save();
+
+  const nextCard = app.vault.getAbstractFileByPath('50-Zettel/Next card.md') as TFile;
+  assert.ok(nextCard.content.endsWith('# Next card\n\n[local card](./Local.md) [[#Next card]]\n'));
+  assert.equal(app.metadataCache.getFileCache(nextCard).frontmatter?.tangrow_sources, undefined);
 });

@@ -3,15 +3,20 @@ import type { QuickKind } from './ai';
 import { describeError } from './i18n';
 import { dayKey, safeTitle } from './model';
 import { taskText } from './task-tools';
-import type { SidebarHost } from './types';
+import type { CardSource, SidebarHost } from './types';
 import { SidebarUI, icon } from './ui';
 
 export const QUICK_KINDS: { id: QuickKind; label: string; icon: string; hint: string; placeholder: string }[] = [
   { id: 'capture', label: 'Capture', icon: 'inbox', hint: 'Saved to your inbox as it is. Sort it later.', placeholder: 'An idea, a question, a link...' },
   { id: 'note', label: 'Note', icon: 'file-plus-2', hint: 'The first line is the title. Anything below becomes the body.', placeholder: 'Title on the first line\nOptional body below' },
   { id: 'task', label: 'Task', icon: 'square-check-big', hint: 'One task per line.', placeholder: 'Something to do\nAnother thing to do' },
-  { id: 'project', label: 'Project', icon: 'folder-plus', hint: 'The first line names the project and its folder. Anything below becomes the body.', placeholder: 'Project name\nOptional body below' }
+  { id: 'project', label: 'Project', icon: 'folder-plus', hint: 'The first line names the project and its folder. Anything below becomes the body.', placeholder: 'Project name\nOptional body below' },
+  { id: 'card', label: 'Card', icon: 'sticky-note', hint: 'Write the title on the first line and develop one idea below.', placeholder: 'Card title\nOptional body below' }
 ];
+
+export function quickKinds(knowledgeEnabled: boolean): typeof QUICK_KINDS {
+  return QUICK_KINDS.filter(({ id }) => knowledgeEnabled || id !== 'card');
+}
 
 function offsetDay(days: number): string {
   const date = new Date();
@@ -20,7 +25,6 @@ function offsetDay(days: number): string {
   return dayKey(date.getTime());
 }
 
-/** One dialog for the four things worth writing down quickly. */
 export class QuickAddModal extends Modal {
   private readonly ui: SidebarUI;
   private kind: QuickKind;
@@ -33,11 +37,12 @@ export class QuickAddModal extends Modal {
   private suggesting?: AbortController;
   private original: string | null = null;
   private reason = '';
+  private includeSource = true;
 
-  constructor(private readonly host: SidebarHost, kind: QuickKind = 'capture', text = '') {
+  constructor(private readonly host: SidebarHost, kind: QuickKind = 'capture', text = '', private source?: CardSource) {
     super(host.app);
     this.ui = new SidebarUI(() => this.host.settings.language);
-    this.kind = kind;
+    this.kind = kind === 'card' && !host.settings.knowledgeEnabled ? 'capture' : kind;
     this.text = text;
   }
 
@@ -45,7 +50,7 @@ export class QuickAddModal extends Modal {
     this.modalEl.addClass('tangrow-quick-modal');
     this.contentEl.addClass('tangrow-dialog', 'tangrow-quick');
     this.scope.register(['Mod'], 'Enter', () => { void this.save(); return false; });
-    QUICK_KINDS.forEach((entry, index) => this.scope.register(['Mod'], String(index + 1), () => { this.setKind(entry.id); return false; }));
+    quickKinds(this.host.settings.knowledgeEnabled).forEach((entry, index) => this.scope.register(['Mod'], String(index + 1), () => { this.setKind(entry.id); return false; }));
     this.render();
   }
 
@@ -55,7 +60,7 @@ export class QuickAddModal extends Modal {
   }
 
   private setKind(kind: QuickKind): void {
-    if (this.saving || this.kind === kind) return;
+    if (this.saving || this.kind === kind || (kind === 'card' && !this.host.settings.knowledgeEnabled)) return;
     this.kind = kind;
     this.render();
   }
@@ -76,6 +81,7 @@ export class QuickAddModal extends Modal {
     const settings = this.host.settings;
     const first = this.lines()[0] ?? '';
     if (this.kind === 'task') return this.ui.t('Destination: {path}', { path: this.target === 'daily' ? this.ui.t("Today's journal") : settings.taskOverviewPath });
+    if (this.kind === 'card') return this.ui.t('Destination: {path}', { path: settings.cardFolder });
     if (this.kind !== 'project') return this.ui.t('Destination: {path}', { path: settings.inboxFolder });
     if (this.projectFolder) return this.ui.t('Destination: {path}', { path: this.projectFolder });
     let title = '';
@@ -84,11 +90,12 @@ export class QuickAddModal extends Modal {
   }
 
   private render(): void {
-    const entry = QUICK_KINDS.find((item) => item.id === this.kind) ?? QUICK_KINDS[0]!;
+    const kinds = quickKinds(this.host.settings.knowledgeEnabled);
+    const entry = kinds.find((item) => item.id === this.kind) ?? kinds[0]!;
     this.setTitle(this.ui.t('Quick add'));
     this.contentEl.empty();
     const tabs = this.contentEl.createDiv({ cls: 'tangrow-quick-tabs', attr: { role: 'tablist', 'aria-label': this.ui.t('What to add') } });
-    QUICK_KINDS.forEach((item, index) => {
+    kinds.forEach((item, index) => {
       const tab = tabs.createEl('button', { cls: `tangrow-quick-tab${item.id === this.kind ? ' is-active' : ''}`, attr: { type: 'button', role: 'tab', 'aria-selected': String(item.id === this.kind), title: `${this.ui.t(item.label)} · ⌘/Ctrl+${index + 1}` } });
       tab.tabIndex = item.id === this.kind ? 0 : -1;
       icon(tab, item.icon);
@@ -97,7 +104,7 @@ export class QuickAddModal extends Modal {
       tab.addEventListener('keydown', (event) => {
         if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
         event.preventDefault();
-        const next = QUICK_KINDS[(index + (event.key === 'ArrowRight' ? 1 : QUICK_KINDS.length - 1)) % QUICK_KINDS.length]!;
+        const next = kinds[(index + (event.key === 'ArrowRight' ? 1 : kinds.length - 1)) % kinds.length]!;
         this.setKind(next.id);
         this.contentEl.querySelector<HTMLElement>('.tangrow-quick-tab.is-active')?.focus();
       });
@@ -108,6 +115,13 @@ export class QuickAddModal extends Modal {
     this.contentEl.createEl('p', { cls: 'tangrow-muted tangrow-quick-hint', text: this.ui.t(entry.hint) });
 
     const options = this.contentEl.createDiv({ cls: 'tangrow-quick-options' });
+    if (this.kind === 'card' && this.source) {
+      const row = options.createEl('label', { cls: 'tangrow-quick-row' });
+      const source = row.createEl('input', { type: 'checkbox' });
+      source.checked = this.includeSource;
+      source.addEventListener('change', () => { this.includeSource = source.checked; });
+      row.createSpan({ text: this.ui.t('Keep source link to {path}', { path: `${this.source.path}${this.source.anchor ?? ''}` }) });
+    }
     if (this.kind === 'task') {
       const dueRow = options.createDiv({ cls: 'tangrow-quick-row' });
       dueRow.createSpan({ cls: 'tangrow-quick-label', text: this.ui.t('Due') });
@@ -149,7 +163,7 @@ export class QuickAddModal extends Modal {
     const validation = this.contentEl.createDiv({ cls: 'tangrow-input-error', attr: { 'aria-live': 'polite' } });
     const footer = this.contentEl.createDiv({ cls: 'tangrow-quick-footer' });
     const left = footer.createDiv({ cls: 'tangrow-quick-footer-side' });
-    const sort = this.host.aiReady() ? this.ui.button(left, 'Sort with AI', () => this.suggest(), { icon: 'sparkles', title: 'Suggests a type, title and date. Nothing is saved until you confirm.' }) : null;
+    const sort = this.kind !== 'card' && this.host.aiReady() ? this.ui.button(left, 'Sort with AI', () => this.suggest(), { icon: 'sparkles', title: 'Suggests a type, title and date. Nothing is saved until you confirm.' }) : null;
     const keep = left.createEl('label', { cls: 'tangrow-quick-keep' });
     const keepBox = keep.createEl('input', { type: 'checkbox' });
     keepBox.checked = this.keepOpen;
@@ -217,7 +231,10 @@ export class QuickAddModal extends Modal {
           this.text = this.text.split(/\r?\n/).filter((entry, index, all) => entry.trim() !== line || all.findIndex((other) => other.trim() === line) !== index).join('\n');
         }
       } else if (this.kind === 'project') await this.host.createNote('project', first, this.projectFolder || undefined, body);
-      else {
+      else if (this.kind === 'card') {
+        const source = this.source && { ...this.source, includeLink: this.includeSource };
+        await this.host.createCard(first, body, source);
+      } else {
         if (body) await this.host.createNoteWithBody(first, body);
         else await this.host.createNote('note', first);
       }
@@ -225,6 +242,7 @@ export class QuickAddModal extends Modal {
       this.original = null;
       this.reason = '';
       this.saving = false;
+      this.source = undefined;
       if (this.keepOpen) this.render();
       else this.close();
     } catch (error) {

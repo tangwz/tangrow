@@ -56,6 +56,14 @@ export class CapturePanel {
 
   constructor(private readonly host: SidebarHost, private readonly options: CapturePanelOptions = {}) {}
 
+  showPending(): void {
+    this.captureFilter = 'pending';
+    this.selectedDay = null;
+    this.limit = PAGE_SIZE;
+    if (this.statusFilter) this.statusFilter.value = this.captureFilter;
+    this.refresh();
+  }
+
   mount(container: HTMLElement): void {
     if (this.mounted) this.destroy();
     this.mounted = true;

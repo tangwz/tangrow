@@ -4,6 +4,14 @@ import type { KeymapContext, KeymapEventListener, Modifier } from 'obsidian';
 export const notices: string[] = [];
 export const Platform = { isDesktopApp: true, isMacOS: process.platform === 'darwin' };
 
+export function resolveSubpath(cache: { headings?: Array<{ heading: string }>; blocks?: Record<string, unknown> }, anchor: string): unknown {
+  return anchor.startsWith('#^') ? cache.blocks?.[anchor.slice(2)] ?? null : cache.headings?.find(({ heading }) => heading === anchor.slice(1)) ?? null;
+}
+
+export function stripHeadingForLink(heading: string): string {
+  return heading.replace(/[:#|^\\\r\n]|%%|\[\[|\]\]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 class MockEvents {
   private listeners = new Map<string, Set<(...args: unknown[]) => void>>();
   on = (name: string, callback: (...args: unknown[]) => void): object => {
@@ -277,6 +285,7 @@ export function createMockApp() {
   const metadataCache = {
     offref: cacheEvents.offref,
     getFirstLinkpathDest: (_linkpath: string, _sourcePath: string): TFile | null => null,
+    fileToLinktext: (file: TFile, _sourcePath: string, omitMdExtension = true): string => omitMdExtension ? file.path.replace(/\.md$/i, '') : file.path,
     getFileCache: (file: TFile) => {
       const frontmatter = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(file.content)?.[1];
       const listItems = file.content.split(/\r?\n/).flatMap((line, index) => {
@@ -289,7 +298,7 @@ export function createMockApp() {
     trigger: cacheEvents.trigger
   };
   const fileManager = {
-    generateMarkdownLink: (file: TFile): string => `[[${file.path}]]`,
+    generateMarkdownLink: (file: TFile, _sourcePath?: string, anchor = ''): string => `[[${file.path}${anchor}]]`,
     renameFile: (file: TFile | TFolder, path: string): Promise<void> => vault.rename(file, path),
     processFrontMatter: async (file: TFile, update: (fields: Record<string, unknown>) => void): Promise<void> => {
       await vault.process(file, (content) => {

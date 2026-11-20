@@ -1,7 +1,7 @@
 import { MarkdownRenderer, Notice, type Component } from 'obsidian';
 import { CLAUDIAN_ID, WORKFLOWS, type Workflow } from './claudian';
 import { describeError } from './i18n';
-import type { SidebarHost } from './types';
+import type { NoteSummary, SidebarHost } from './types';
 import { SidebarUI, icon } from './ui';
 
 /**
@@ -12,6 +12,7 @@ export class AiPanel {
   private readonly ui: SidebarUI;
   private root?: HTMLElement;
   private sending = false;
+  private page: 'workflows' | 'suggestions' = 'workflows';
 
   constructor(private readonly host: SidebarHost, private readonly component: Component) {
     this.ui = new SidebarUI(() => this.host.settings.language);
@@ -34,6 +35,19 @@ export class AiPanel {
     const root = this.root;
     if (!root) return;
     root.empty();
+    const nav = root.createDiv({ cls: 'tangrow-chips tangrow-subnav', attr: { role: 'group', 'aria-label': this.ui.t('AI views') } });
+    for (const [page, label] of [['workflows', 'Workflows'], ['suggestions', 'Instant suggestions']] as const) {
+      this.ui.button(nav, label, () => {
+        if (this.page === page) return;
+        this.page = page;
+        this.render();
+        root.querySelector<HTMLButtonElement>('.tangrow-subnav button[aria-pressed="true"]')?.focus({ preventScroll: true });
+      }, { cls: 'tangrow-chip', pressed: this.page === page });
+    }
+    if (this.page === 'suggestions') {
+      this.renderBuiltIn(root);
+      return;
+    }
     this.ui.sectionHeading(root, 'Vault workflows', 'Multi-step jobs that Claudian\'s agent carries out with this vault\'s folders and properties.');
     const status = this.host.agentStatus();
     if (status === 'missing' || status === 'incompatible') {
@@ -46,7 +60,8 @@ export class AiPanel {
       if (status === 'missing') this.ui.button(box, 'Find Claudian in Community plugins', () => { window.open(`obsidian://show-plugin?id=${CLAUDIAN_ID}`); }, { icon: 'external-link', cls: 'mod-cta' });
     } else {
       this.renderRun(root);
-      const markdown = this.host.snapshot().active?.path.toLowerCase().endsWith('.md') ?? false;
+      const active = this.host.snapshot().active;
+      const markdown = active?.path.toLowerCase().endsWith('.md') ? active : null;
       const busy = this.sending || this.host.agentRun()?.state === 'running';
       const list = root.createDiv({ cls: 'tangrow-workflows' });
       for (const item of WORKFLOWS) this.renderWorkflow(list, item, busy, markdown);
@@ -60,10 +75,9 @@ export class AiPanel {
       this.ui.button(row, 'Open Claudian', () => this.host.openAgent(), { icon: 'bot' });
     }
     this.renderGuide(root);
-    this.renderBuiltIn(root);
   }
 
-  private renderWorkflow(list: HTMLElement, item: Workflow, busy: boolean, markdown: boolean): void {
+  private renderWorkflow(list: HTMLElement, item: Workflow, busy: boolean, markdown: NoteSummary | null): void {
     const blocked = item.needsNote && !markdown;
     const button = list.createEl('button', { cls: 'tangrow-workflow', attr: { type: 'button' } });
     button.disabled = busy || blocked;
@@ -71,6 +85,9 @@ export class AiPanel {
     const copy = button.createDiv({ cls: 'tangrow-workflow-copy' });
     copy.createEl('strong', { text: this.ui.t(item.label) });
     copy.createSpan({ text: this.ui.t(blocked ? 'Open a Markdown note first.' : item.description) });
+    if (item.needsNote && markdown) {
+      copy.createSpan({ text: this.ui.t('Reference note · {name}', { name: markdown.name }), attr: { title: markdown.path } });
+    }
     button.createSpan({ cls: 'tangrow-workflow-tag', text: this.ui.t(item.writes ? 'Asks before writing' : 'Read only') });
     button.addEventListener('click', () => { void this.run(item); });
   }
@@ -121,7 +138,9 @@ export class AiPanel {
     this.ui.sectionHeading(section, 'Instant suggestions', this.host.aiReady()
       ? 'On. Quick add and capture processing can suggest a type, title, date and project with your own Anthropic API key.'
       : 'Off. Quick add and capture processing can suggest a type, title, date and project once you add your own Anthropic API key.');
-    this.ui.button(section, 'Open AI settings', () => this.host.action('settings'), { icon: 'settings-2', cls: 'tangrow-full-width' });
+    const actions = section.createDiv({ cls: 'tangrow-actions' });
+    this.ui.button(actions, 'Quick add', () => this.host.openQuickAdd(), { icon: 'plus' });
+    this.ui.button(actions, 'Open AI settings', () => this.host.action('settings'), { icon: 'settings-2' });
   }
 
   private async run(item: Workflow): Promise<void> {

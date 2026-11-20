@@ -2,7 +2,7 @@ import { captureCreated } from './capture-data';
 import { hasValidSupportFolder } from './folders';
 import { dayKey, inFolder, recentDays } from './model';
 import { collectReportEntities, collectReportResources, findOrphanNotes, isClipRecord, reportCompletion, reportRecordStatus, reportJournalDay, reportStreak } from './report-metrics';
-import type { AggregateReportOptions, CompletionSummary, DailyTrend, ReportData, ReportPreferences, ReportRecord, ReportStatus } from './report-contract';
+import type { AggregateReportOptions, CompletionSummary, DailyTrend, ReportData, ReportRecord, ReportStatus } from './report-contract';
 import type { Settings } from './types';
 
 export type { AggregateReportOptions, ReportData, ReportRecord } from './report-contract';
@@ -15,8 +15,19 @@ function validCreated(value: number, now: number): boolean {
   return Number.isFinite(value) && value >= 0 && value <= now && !Number.isNaN(new Date(value).getTime());
 }
 
+export function reportTrendDay(record: ReportRecord, series: Exclude<keyof DailyTrend, 'day' | 'projects'>, now: number): string | null {
+  const created = series === 'captures' ? captureCreated(record.frontmatter?.created, record.created, record.modified) : record.created;
+  return validCreated(created, now) ? dayKey(created) : null;
+}
+
 function isWithin(path: string, folder: string): boolean { return path === folder || inFolder(path, folder); }
 function safeCount(value: unknown): number { return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0; }
+
+export function reportPathIncluded(settings: Settings): (path: string) => boolean {
+  const folders = [...(settings.reportExcludedFolders ?? [])];
+  if (hasValidSupportFolder(settings)) folders.push(settings.supportFolder);
+  return (path) => !folders.some((folder) => isWithin(path, folder));
+}
 
 function taskCompletion(open: number, done: number, cancelled: number, unknown: number): CompletionSummary {
   const denominator = open + done;
@@ -26,11 +37,9 @@ function taskCompletion(open: number, done: number, cancelled: number, unknown: 
 export function aggregateReport(records: readonly ReportRecord[], settings: Settings, now = Date.now(), options: AggregateReportOptions = {}): ReportData {
   if (!Number.isFinite(now) || now < 0) throw new RangeError('Report time must be a finite non-negative timestamp.');
   const unique = [...new Map(records.map((record) => [record.path, record])).values()];
-  const excludeSupport = hasValidSupportFolder(settings);
-  const excludedFolders = (settings as Settings & Partial<ReportPreferences>).reportExcludedFolders ?? [];
-  const excluded = (path: string): boolean => (excludeSupport && isWithin(path, settings.supportFolder)) || excludedFolders.some((folder) => isWithin(path, folder));
-  const notes = unique.filter((record) => !excluded(record.path));
-  const folders = (options.folders ?? []).filter((path) => !excluded(path));
+  const included = reportPathIncluded(settings);
+  const notes = unique.filter((record) => included(record.path));
+  const folders = (options.folders ?? []).filter(included);
   const projects = collectReportEntities(notes, settings.projectFolder, folders, now);
   const areas = collectReportEntities(notes, settings.areaFolder, folders, now);
   const resources = collectReportResources(notes, settings.resourcesFolder, folders, now);
@@ -44,6 +53,7 @@ export function aggregateReport(records: readonly ReportRecord[], settings: Sett
   const gainDays = new Set(recentDays(90, now));
   const gains90 = { notes: 0, projects: 0, areas: 0, resourceNotes: 0, clips: 0, captures: 0 };
   const seenFocus = new Set<string>();
+  const focusSessions: ReportData['focusSessions'] = [];
   const seenHabits = new Set<string>();
   const activeHabitIds = new Set(settings.habits.map((habit) => habit.id));
   const habitDays = new Map<string, Set<string>>();
@@ -67,24 +77,23 @@ export function aggregateReport(records: readonly ReportRecord[], settings: Sett
     if (fields?.tangrow_kind === 'draft') counts.drafts++;
     counts.words += safeCount(record.wordCount);
     counts.characters += safeCount(record.characterCount);
-    const created = validCreated(record.created, now) ? record.created : null;
-    const trend = created === null ? undefined : dayTrends.get(dayKey(created));
+    const created = reportTrendDay(record, 'notes', now);
+    const trend = created === null ? undefined : dayTrends.get(created);
     if (created !== null) {
       if (trend) trend.notes++;
-      if (gainDays.has(dayKey(created))) {
+      if (gainDays.has(created)) {
         gains90.notes++;
         if (inFolder(record.path, settings.resourcesFolder)) gains90.resourceNotes++;
       }
       if (clipPaths.has(record.path)) {
         if (trend) trend.clips++;
-        if (gainDays.has(dayKey(created))) gains90.clips++;
+        if (gainDays.has(created)) gains90.clips++;
       }
     }
     if (fields?.tangrow_kind === 'capture') {
       counts.captures++;
-      const captureDate = captureCreated(fields.created, record.created, record.modified);
-      if (validCreated(captureDate, now)) {
-        const day = dayKey(captureDate);
+      const day = reportTrendDay(record, 'captures', now);
+      if (day !== null) {
         captureDays.set(day, (captureDays.get(day) ?? 0) + 1);
         const captureTrend = dayTrends.get(day);
         if (captureTrend) captureTrend.captures++;
@@ -121,7 +130,11 @@ export function aggregateReport(records: readonly ReportRecord[], settings: Sett
     const minutes = fields?.tangrow_minutes;
     if (fields?.tangrow_kind === 'focus' && typeof minutes === 'number' && Number.isFinite(minutes) && minutes >= 0) {
       const id = typeof fields.tangrow_session_id === 'string' && fields.tangrow_session_id.trim() ? `session:${fields.tangrow_session_id}` : `path:${record.path}`;
-      if (!seenFocus.has(id)) { counts.focusMinutes += minutes; seenFocus.add(id); }
+      if (!seenFocus.has(id)) {
+        seenFocus.add(id);
+        counts.focusMinutes += minutes;
+        focusSessions.push({ note: record, minutes });
+      }
     }
     if (fields?.tangrow_kind === 'habit' && typeof fields.tangrow_habit_id === 'string' && activeHabitIds.has(fields.tangrow_habit_id) && typeof fields.tangrow_day === 'string' && fields.tangrow_day <= today) {
       const id = `${fields.tangrow_habit_id}:${fields.tangrow_day}`;
@@ -142,7 +155,7 @@ export function aggregateReport(records: readonly ReportRecord[], settings: Sett
       const rightTime = Number.isFinite(right.modified) ? right.modified : -Infinity;
       return rightTime - leftTime || (left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
     }).slice(0, 8),
-    notes, projects, areas, resources, clips, taskItems, orphanNotes: orphans, trends, gains90,
+    notes, projects, areas, resources, clips, taskItems, focusSessions, orphanNotes: orphans, trends, gains90,
     completion: {
       tasks: taskCompletion(counts.openTasks, counts.completedTasks, counts.cancelledTasks, unknownTasks),
       projects: reportCompletion(projects.map((entity) => entity.status)),
