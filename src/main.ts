@@ -1,11 +1,11 @@
-import { FileView, MarkdownView, Menu, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, TFolder, moment, parseYaml, getFrontMatterInfo, resolveSubpath, stringifyYaml, stripHeadingForLink, setTooltip, type EventRef, type WorkspaceLeaf } from 'obsidian';
+import { FileView, MarkdownView, Menu, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, TFolder, moment, parseYaml, getFrontMatterInfo, resolveSubpath, stringifyYaml, stripHeadingForLink, setTooltip, type Command, type EventRef, type WorkspaceLeaf } from 'obsidian';
 import { baseDefinitions, setupReadme, managedFileTranslations } from './bases';
 import { Platform, requestUrl } from 'obsidian';
 import { Access, DEVELOPMENT_KEYS, LICENSE_ENDPOINT } from './access';
 import { randomBytes } from './license/format';
 import { focusMinutes, pauseSession, remainingMs, resumeSession, startSession } from './focus';
 import { dayKey, inFolder, readSession, readSettings, recentDays, safeFolder, safeTitle, streak } from './model';
-import { openNativeSettings, revealInFileList, runNativeCommand } from './compat';
+import { openActivationSettings, openNativeSettings, revealInFileList, runNativeCommand } from './compat';
 import { TangrowSidebar, VIEW_TYPE } from './sidebar';
 import { TangrowReport, REPORT_VIEW_TYPE } from './report';
 import { TangrowCapture, CAPTURE_VIEW_TYPE, openCaptureWindow as revealCaptureWindow } from './capture-window';
@@ -164,6 +164,16 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
         contentType: 'application/json', body: JSON.stringify(body), throw: false })
     });
     this.access.start();
+    let usable = this.access.canUse();
+    this.access.subscribe(event => {
+      const next = this.access.canUse();
+      if (event !== 'change' || (usable && !next)) {
+        this.lastActivityEvent = null;
+        // The write queue snapshots after all synchronous draft listeners have flushed.
+        void this.persist().catch(error => new Notice(this.error(error)));
+      }
+      usable = next;
+    });
     this.registerDomEvent(window, 'storage', event => {
       if (event.key === null || /^tangrow:(device|lease|trial):v1$/.test(event.key)) this.access.refresh(false, false);
     });
@@ -197,7 +207,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       const selection = editor.getSelection().trim();
       if (!selection) return;
       const add = (title: string, iconName: string, run: () => void): void => {
-        menu.addItem((item) => item.setTitle(this.t(title)).setIcon(iconName).onClick(run));
+        menu.addItem((item) => item.setTitle(this.t(title)).setIcon(iconName).onClick(() => { if (this.requireAccess()) run(); }));
       };
       add('Tangrow: add selection as task', 'square-check-big', () => this.openQuickAdd('task', selection));
       add('Tangrow: capture selection', 'inbox', () => this.openQuickAdd('capture', selection));
@@ -287,39 +297,70 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     return describeError(this.settings.language, error);
   }
 
+  openActivationSettings(): void {
+    if (!openActivationSettings(this.app, this.manifest.id)) {
+      new Notice(this.t('Open Settings → Tangrow → Activation and updates.'));
+    }
+  }
+
+  requireAccess(): boolean {
+    if (this.access.canUse()) return true;
+    this.access.refresh();
+    new Notice(this.t('Activate Tangrow to use this feature.'));
+    this.openActivationSettings();
+    return false;
+  }
+
+  private registerAccessCommand(command: Pick<Command, 'id' | 'name' | 'callback' | 'checkCallback'>): void {
+    const { callback, checkCallback, id } = command;
+    if (checkCallback) {
+      this.addCommand({ ...command, checkCallback: checking => {
+        if (id === 'toggle-note-immersion' && this.noteImmersion) {
+          if (!checking) this.toggleNoteImmersion();
+          return true;
+        }
+        if (this.access.canUse()) return checkCallback(checking);
+        if (!checking) this.requireAccess();
+        return true;
+      } });
+    } else {
+      this.addCommand({ ...command, callback: () => { if (id === 'open-companion' || this.requireAccess()) callback?.(); } });
+    }
+  }
+
   private registerCommands(): void {
     if (this.commandsRegistered) {
       for (const id of ['quick-add', 'new-note', 'new-task', 'new-project', 'new-card', 'open-assistant', 'open-companion', 'open-report', 'open-capture-window', 'open-immersive-capture', 'toggle-note-immersion', ...JOURNAL_PERIODS.map((period) => `open-${period}-note`), 'setup-bases', 'migrate-companion-folder', 'quick-capture', 'pin-note']) this.removeCommand(id);
     }
-    this.addCommand({ id: 'open-companion', name: this.t('Open companion'), callback: () => { void this.openSidebar().catch((error) => new Notice(this.error(error))); } });
-    this.addCommand({ id: 'quick-add', name: this.t('Quick add'), callback: () => this.openQuickAdd() });
+    this.registerAccessCommand({ id: 'open-companion', name: this.t('Open companion'), callback: () => { void this.openSidebar().catch((error) => new Notice(this.error(error))); } });
+    this.registerAccessCommand({ id: 'quick-add', name: this.t('Quick add'), callback: () => this.openQuickAdd() });
     for (const [id, name, kind] of [['new-note', 'New note', 'note'], ['new-task', 'New task', 'task'], ['new-project', 'New project', 'project']] as const) {
-      this.addCommand({ id, name: this.t(name), callback: () => this.openQuickAdd(kind) });
+      this.registerAccessCommand({ id, name: this.t(name), callback: () => this.openQuickAdd(kind) });
     }
-    this.addCommand({ id: 'new-card', name: this.t('New card'), checkCallback: (checking) => {
+    this.registerAccessCommand({ id: 'new-card', name: this.t('New card'), checkCallback: (checking) => {
       if (!this.settings.knowledgeEnabled) return false;
       if (!checking) this.openQuickAdd('card');
       return true;
     } });
-    this.addCommand({ id: 'open-assistant', name: this.t('Open assistant'), callback: () => { void this.openAssistant().catch((error) => new Notice(this.error(error))); } });
-    this.addCommand({ id: 'open-report', name: this.t('Open report'), callback: () => { void this.openReport().catch((error) => new Notice(this.error(error))); } });
-    this.addCommand({ id: 'setup-bases', name: this.t('Set up companion Bases'), callback: () => { void this.setup().catch((error) => new Notice(this.error(error))); } });
-    this.addCommand({ id: 'migrate-companion-folder', name: this.t('Move companion folder to 99-Tangrow'), callback: () => { void this.migrateCompanionFolder().catch((error) => new Notice(this.error(error))); } });
+    this.registerAccessCommand({ id: 'open-assistant', name: this.t('Open assistant'), callback: () => { void this.openAssistant().catch((error) => new Notice(this.error(error))); } });
+    this.registerAccessCommand({ id: 'open-report', name: this.t('Open report'), callback: () => { void this.openReport().catch((error) => new Notice(this.error(error))); } });
+    this.registerAccessCommand({ id: 'setup-bases', name: this.t('Set up companion Bases'), callback: () => { void this.setup().catch((error) => new Notice(this.error(error))); } });
+    this.registerAccessCommand({ id: 'migrate-companion-folder', name: this.t('Move companion folder to 99-Tangrow'), callback: () => { void this.migrateCompanionFolder().catch((error) => new Notice(this.error(error))); } });
     const captureWindow = (): void => { void this.openCaptureWindow().catch((error) => new Notice(this.error(error))); };
-    this.addCommand({ id: 'quick-capture', name: this.t('Quick capture'), callback: captureWindow });
-    this.addCommand({ id: 'open-capture-window', name: this.t('Open capture window'), callback: captureWindow });
-    this.addCommand({ id: 'open-immersive-capture', name: this.t('Immersive capture'), callback: () => this.openImmersiveCapture() });
-    this.addCommand({ id: 'toggle-note-immersion', name: this.t('Toggle immersive writing'), checkCallback: (checking) => {
+    this.registerAccessCommand({ id: 'quick-capture', name: this.t('Quick capture'), callback: captureWindow });
+    this.registerAccessCommand({ id: 'open-capture-window', name: this.t('Open capture window'), callback: captureWindow });
+    this.registerAccessCommand({ id: 'open-immersive-capture', name: this.t('Immersive capture'), callback: () => this.openImmersiveCapture() });
+    this.registerAccessCommand({ id: 'toggle-note-immersion', name: this.t('Toggle immersive writing'), checkCallback: (checking) => {
       if (!this.app.workspace.getActiveViewOfType(MarkdownView)) return false;
       if (!checking) this.toggleNoteImmersion();
       return true;
     } });
     for (const period of JOURNAL_PERIODS) {
-      this.addCommand({ id: `open-${period}-note`, name: this.t(JOURNAL_LABELS[period]), callback: () => {
+      this.registerAccessCommand({ id: `open-${period}-note`, name: this.t(JOURNAL_LABELS[period]), callback: () => {
         void this.openPeriodicNote(period).catch((error) => new Notice(this.error(error)));
       } });
     }
-    this.addCommand({ id: 'pin-note', name: this.t('Pin or unpin current note'), checkCallback: (checking) => {
+    this.registerAccessCommand({ id: 'pin-note', name: this.t('Pin or unpin current note'), checkCallback: (checking) => {
       if (!this.activeMarkdown()) return false;
       if (!checking) void this.action('toggle-pin').catch((error) => new Notice(this.error(error)));
       return true;
@@ -390,7 +431,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
 
   toggleNoteImmersion(view = this.app.workspace.getActiveViewOfType(MarkdownView)): void {
     if (this.noteImmersion) { this.noteImmersion.close(); return; }
-    if (!view) return;
+    if (!view || !this.requireAccess()) return;
     this.noteImmersion = new NoteImmersion(view, this, () => { this.noteImmersion = undefined; });
   }
 
@@ -654,7 +695,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     this.registerDomEvent(win.document, 'visibilitychange', () => { this.lastActivityEvent = null; });
   }
   private recordEditingActivity(info: unknown): void {
-    if (!this.alive || !this.settings.trackEditingActivity || !(info instanceof MarkdownView) || !info.file) { this.lastActivityEvent = null; return; }
+    if (!this.alive || !this.settings.trackEditingActivity || !this.access.canUse() || !(info instanceof MarkdownView) || !info.file) { this.lastActivityEvent = null; return; }
     const doc = info.containerEl.ownerDocument;
     const path = info.file.path;
     const excluded = (hasValidSupportFolder(this.settings) && inFolder(path, this.settings.supportFolder))
@@ -935,7 +976,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     const path = submission.path;
     await this.ensureFolder(path.slice(0, path.lastIndexOf('/')));
     const heading = path.slice(path.lastIndexOf('/') + 1, -3);
-    const content = `---\n${stringifyYaml({ ...fields, tangrow_submission_id: submission.id })}---\n\n# ${heading}\n\n${body.trim()}\n`;
+    const content = `---\n${stringifyYaml({ ...fields, tangrow_submission_id: submission.id })}---\n\n# ${heading}\n\n${body}\n`;
     try { return await this.app.vault.create(path, content); }
     catch (error) {
       // A create can report failure after writing; retry only if no matching receipt exists.
@@ -1221,8 +1262,8 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   }
   async openAiGuide(): Promise<void> { await this.openNote(await this.ensureAiGuide()); }
 
-  async capture(text: string, submission?: DraftSubmission): Promise<void> {
-    if (!text.trim()) throw new Error('Write something before saving.');
+  async capture(text: string, submission?: DraftSubmission, rescue = false): Promise<void> {
+    if (!(rescue ? text : text.trim())) throw new Error('Write something before saving.');
     const title = this.t('Capture {date}', { date: dateTime().format('YYYY-MM-DD HHmmss') });
     await this.exclusive(() => {
       const fields = { tangrow_kind: 'capture', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') };
@@ -1232,14 +1273,14 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     this.notify();
     new Notice(this.t('Captured in your inbox.'));
   }
-  submitCaptureDraft(): Promise<void> {
+  submitCaptureDraft(rescue = false): Promise<void> {
     const source = this.composer.capture;
-    if (!source.trim()) return Promise.reject(new Error('Write something before saving.'));
+    if (!(rescue ? source : source.trim())) return Promise.reject(new Error('Write something before saving.'));
     const revision = this.captureRevision;
     const pending = this.captureSubmissions.get(revision);
     if (pending) return pending;
     const receipt = this.submissions.capture ??= { id: uid(), path: null };
-    const submission = this.capture(source, receipt).then(async () => {
+    const submission = this.capture(source, receipt, rescue).then(async () => {
       if (!this.alive) return;
       if (this.captureRevision === revision && this.composer.capture === source) this.saveComposer({ capture: '' });
       try { await this.persist(); }
@@ -1266,8 +1307,8 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       this.notify();
     }
   }
-  async saveDraft(text: string, title: string, origin?: WritingSaveOrigin, submission?: DraftSubmission): Promise<void> {
-    if (!text.trim()) throw new Error('Write a draft before saving.');
+  async saveDraft(text: string, title: string, origin?: WritingSaveOrigin, submission?: DraftSubmission, rescue = false): Promise<void> {
+    if (!(rescue ? text : text.trim())) throw new Error('Write a draft before saving.');
     const revision = this.scratchRevision;
     const navigation = captureWritingNavigation(this.app.workspace, origin);
     try {
@@ -1284,15 +1325,17 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       catch (error) { new Notice(this.t('Draft saved, but it could not be opened: {error}', { error: this.error(error) })); }
     } finally { navigation.dispose(); }
   }
-  submitWritingDraft(expectedRevision: number, origin?: WritingSaveOrigin): Promise<void> {
+  submitWritingDraft(expectedRevision: number, origin?: WritingSaveOrigin, rescue = false): Promise<void> {
     const draft = this.loadWritingDraft();
     if (draft.editingView !== undefined) return Promise.reject(new Error('Finish typing before saving this draft.'));
     if (draft.revision !== expectedRevision) return Promise.reject(new Error('The writing draft changed in another view. Review the latest text before saving.'));
-    if (!draft.text.trim()) return Promise.reject(new Error('Write a draft before saving.'));
+    if (!(rescue ? draft.text || draft.title : draft.text.trim())) return Promise.reject(new Error('Write a draft before saving.'));
     const pending = this.scratchSubmissions.get(draft.revision);
     if (pending) return pending;
     const receipt = this.submissions.writing ??= { id: uid(), path: null };
-    const submission = this.saveDraft(draft.text, draft.title, origin, receipt).then(async () => {
+    // A working title may be empty or contain characters forbidden in a filename.
+    const body = rescue ? [draft.title, draft.text].filter(Boolean).join('\n\n') : draft.text;
+    const submission = this.saveDraft(body, rescue ? '' : draft.title, origin, receipt, rescue).then(async () => {
       if (!this.alive) return;
       this.updateWritingDraft({ text: '', title: '' }, draft.revision);
       try { await this.persist(); }

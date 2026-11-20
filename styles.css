@@ -1028,3 +1028,18 @@ button.tangrow-report-day:hover { outline: 1px solid var(--text-accent); outline
   .tangrow-card-entry dl { display: block; }
   .tangrow-card-entry dd { margin-block-end: 6px; }
 }
+
+.tangrow-access-locked > :not(.tangrow-access-gate) {
+  display: none !important;
+}
+
+.tangrow-access-gate {
+  display: grid;
+  gap: var(--size-4-2);
+  padding: var(--size-4-4);
+}
+
+.tangrow-access-gate textarea {
+  display: block;
+  width: 100%;
+}

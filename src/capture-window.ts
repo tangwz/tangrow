@@ -18,7 +18,7 @@ export class TangrowCapture extends ItemView {
 
   async onOpen(): Promise<void> {
     this.contentEl.addClass('tangrow-capture-window');
-    this.panel = new CapturePanel(this.host, { allowPopout: false });
+    this.panel = new CapturePanel(this.host, 'window');
     this.panel.mount(this.contentEl);
   }
 

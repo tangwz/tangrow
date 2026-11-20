@@ -1,3 +1,4 @@
+import { AccessGate } from './access-gate';
 import { Notice, setIcon, setTooltip } from 'obsidian';
 import { captureCalendar, captureDay, groupCapturesByDay, shiftCaptureMonth } from './capture-data';
 import { capturePreview } from './capture-preview';
@@ -11,11 +12,12 @@ const PAGE_SIZE = 12;
 const PREVIEW_CONCURRENCY = 3;
 const PREVIEW_CACHE_SIZE = 200;
 
-interface CapturePanelOptions { allowPopout?: boolean; composerOnly?: boolean }
+type CaptureSurface = 'sidebar' | 'window' | 'immersive';
 interface PreviewJob { key: string; path: string; targets: Set<HTMLElement> }
 
 export class CapturePanel {
   private readonly instanceId = `tangrow-capture-${crypto.randomUUID()}`;
+  private gate?: AccessGate;
   private root?: HTMLElement;
   private editor?: HTMLTextAreaElement;
   private saveButton?: HTMLButtonElement;
@@ -54,7 +56,7 @@ export class CapturePanel {
   private previewQueue: PreviewJob[] = [];
   private activeReads = 0;
 
-  constructor(private readonly host: SidebarHost, private readonly options: CapturePanelOptions = {}) {}
+  constructor(private readonly host: SidebarHost, private readonly surface: CaptureSurface = 'sidebar') {}
 
   showPending(): void {
     this.captureFilter = 'pending';
@@ -68,6 +70,12 @@ export class CapturePanel {
     if (this.mounted) this.destroy();
     this.mounted = true;
     this.root = container.createDiv({ cls: 'tangrow-capture-panel' });
+    if (this.surface !== 'sidebar') {
+      this.gate = new AccessGate(this.host, this.root, locked => this.protectDraft(locked), () => {
+        if (this.editor) this.editor.readOnly = false;
+        this.refresh();
+      });
+    }
     this.labels = [];
     this.buttonLabels.clear();
     this.label(this.root, 'h3', 'Capture a thought', 'tangrow-section-title');
@@ -78,11 +86,11 @@ export class CapturePanel {
     this.editor.addEventListener('compositionstart', () => { this.composing = true; });
     this.editor.addEventListener('compositionend', () => {
       this.composing = false;
-      if (this.editor) this.host.saveComposer({ capture: this.editor.value });
+      if (this.editor && !this.editor.readOnly) this.host.saveComposer({ capture: this.editor.value });
       this.syncComposer();
     });
     this.editor.addEventListener('input', () => {
-      if (this.editor) this.host.saveComposer({ capture: this.editor.value });
+      if (this.editor && !this.editor.readOnly) this.host.saveComposer({ capture: this.editor.value });
       this.updateComposerControls();
     });
     this.editor.addEventListener('keydown', (event) => {
@@ -91,21 +99,22 @@ export class CapturePanel {
         this.saveButton?.click();
       }
     });
-    if (!this.options.composerOnly && this.options.allowPopout !== false) {
+    if (this.surface === 'sidebar') {
       composer.addClass('tangrow-composer-with-popout');
       this.button(composer, 'Open capture window', () => this.host.openCaptureWindow(), 'external-link', 'tangrow-capture-icon-button tangrow-capture-popout');
     }
     const composerFooter = composer.createDiv({ cls: 'tangrow-composer-footer' });
     this.count = composerFooter.createSpan({ cls: 'tangrow-muted' });
-    if (!this.options.composerOnly) this.button(composerFooter, 'Immersive capture', () => this.host.openImmersiveCapture(), 'expand', 'tangrow-capture-icon-button');
+    if (this.surface !== 'immersive') this.button(composerFooter, 'Immersive capture', () => this.host.openImmersiveCapture(), 'expand', 'tangrow-capture-icon-button');
     this.saveButton = this.button(composerFooter, 'Save capture', () => this.submit(), 'arrow-up-right', 'mod-cta');
     this.destination = this.root.createEl('p', { cls: 'tangrow-destination' });
-    if (this.options.composerOnly) {
+    if (this.surface === 'immersive') {
       this.root.addClass('tangrow-capture-composer-only');
       this.label(this.root, 'p', 'Drafts sync automatically. Mod+Enter saves; Esc returns to your workspace.', 'tangrow-muted tangrow-immersive-hint');
       this.unsubscribe = this.host.subscribe(() => this.refresh());
       this.unsubscribeComposer = this.host.subscribeComposer(() => this.syncComposer());
       this.language = '';
+      this.gate?.mount();
       this.refresh();
       return;
     }
@@ -147,11 +156,13 @@ export class CapturePanel {
     this.calendarSignature = '';
     this.timelineSignature = '';
     this.language = '';
+    this.gate?.mount();
     this.refresh();
   }
 
   refresh(): void {
     if (!this.mounted || !this.root) return;
+    if (this.gate?.locked) { this.gate.refresh(); return; }
     this.labels = this.labels.filter(({ element }) => this.root?.contains(element));
     for (const control of this.buttonLabels.keys()) if (!this.root.contains(control)) this.buttonLabels.delete(control);
     const languageChanged = this.language !== this.host.settings.language;
@@ -173,7 +184,7 @@ export class CapturePanel {
     }
     if (this.destination) this.destination.textContent = this.t('Destination: {path}', { path: this.host.settings.inboxFolder });
     this.syncComposer();
-    if (this.options.composerOnly) return;
+    if (this.surface === 'immersive') return;
     const captures = this.host.snapshot().captures;
     const fingerprint = captures.map((capture) => [capture.path, capture.created, capture.modified, capture.name, capture.processed, capture.processing]);
     const calendarSignature = JSON.stringify([this.language, this.year, this.monthIndex, this.selectedDay, this.focusedDay, captureDay(Date.now()), fingerprint]);
@@ -192,6 +203,8 @@ export class CapturePanel {
   }
 
   destroy(): void {
+    this.gate?.dispose();
+    this.gate = undefined;
     this.mounted = false;
     this.unsubscribe?.();
     this.unsubscribeComposer?.();
@@ -235,6 +248,15 @@ export class CapturePanel {
       void Promise.resolve().then(handler).catch((error: unknown) => new Notice(describeError(this.host.settings.language, error))).finally(() => control.removeAttribute('aria-busy'));
     });
     return control;
+  }
+
+  protectDraft(locked: boolean): void {
+    if (!this.editor) return;
+    if (!this.editor.readOnly && this.editor.value !== this.host.loadComposer().capture) {
+      this.host.saveComposer({ capture: this.editor.value });
+    }
+    this.composing = false;
+    if (locked) this.editor.readOnly = true;
   }
 
   private syncComposer(): void {

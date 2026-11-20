@@ -200,7 +200,7 @@ export class QuickAddModal extends Modal {
 
   private async suggest(): Promise<void> {
     const source = this.text;
-    if (!source.trim() || this.suggesting) return;
+    if (!source.trim() || this.suggesting || !this.host.requireAccess()) return;
     this.suggesting = new AbortController();
     try {
       const result = await this.host.suggestCapture(source, this.suggesting.signal);
@@ -216,7 +216,7 @@ export class QuickAddModal extends Modal {
   }
 
   private async save(): Promise<void> {
-    if (this.saving || this.problem() !== null) return;
+    if (this.saving || this.problem() !== null || !this.host.requireAccess()) return;
     const lines = this.lines();
     const first = lines[0] ?? '';
     const body = this.text.slice(this.text.indexOf(first) + first.length).trim();

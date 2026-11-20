@@ -52,6 +52,7 @@ class Element extends EventTarget {
   }
 }
 interface Host {
+  requireAccess(): boolean;
   app: MockApp;
   settings: Settings;
   processCapture(path: string, request: CaptureRequest): Promise<string | null>;
@@ -94,7 +95,7 @@ const harness = moduleObject.exports as {
 };
 function host(): Host {
   return {
-    app: harness.createMockApp(), settings: readSettings({ language: 'en' }), processCapture: async () => null,
+    requireAccess: () => true, app: harness.createMockApp(), settings: readSettings({ language: 'en' }), processCapture: async () => null,
     openNote: async () => undefined, aiReady: () => false, readCapture: async () => 'Source body',
     suggestCapture: async () => { throw new Error('Unexpected suggestion request'); }
   };

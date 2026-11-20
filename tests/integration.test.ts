@@ -1,3 +1,8 @@
+import type { Command } from 'obsidian';
+import { memoryStorage } from './obsidian-mock';
+import { Access } from '../src/access';
+import { signLease, type Lease } from '../src/license/format';
+import vector from './fixtures/license-vectors.json';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import path from 'node:path';
@@ -13,6 +18,7 @@ import type { FileView as MockFileView, ItemView as MockItemView, MarkdownView a
 type FolderSettingKey = keyof Pick<Settings, 'supportFolder' | 'inboxFolder' | 'projectFolder' | 'areaFolder' | 'resourcesFolder' | 'archiveFolder' | 'journalFolder'>;
 
 interface TestPlugin extends MockPlugin {
+  access: Access;
   settings: Settings;
   focus: FocusSession | null;
   scratch: string;
@@ -55,6 +61,9 @@ interface TestPlugin extends MockPlugin {
 }
 interface Harness {
   TangrowPlugin: new (app: MockApp) => TestPlugin;
+  CapturePanel: new (host: TestPlugin, surface: 'immersive' | 'window') => {
+    mount(container: GateElement): void; destroy(): void; editor: GateElement;
+  };
   TangrowSidebar: new (leaf: unknown, host: TestPlugin) => TestSidebar;
   createMockApp: typeof MockAppFactory;
   TFile: typeof MockFile;
@@ -103,7 +112,7 @@ const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 const bundled = await build({
   absWorkingDir: repository,
   stdin: {
-    contents: "export { default as TangrowPlugin } from './src/main'; export { TangrowSidebar } from './src/sidebar'; export { openCaptureWindow } from './src/capture-window'; export * from './tests/obsidian-mock';",
+    contents: "export { default as TangrowPlugin } from './src/main'; export { TangrowSidebar } from './src/sidebar'; export { CapturePanel } from './src/capture-panel'; export { openCaptureWindow } from './src/capture-window'; export * from './tests/obsidian-mock';",
     resolveDir: repository,
     sourcefile: 'integration-entry.ts',
     loader: 'ts'
@@ -124,6 +133,7 @@ const harness = moduleObject.exports as Harness;
 function createPlugin(): { plugin: TestPlugin; app: MockApp } {
   const app = harness.createMockApp();
   const plugin = new harness.TangrowPlugin(app);
+  Object.assign(plugin, { access: { canUse: () => true, subscribe: () => () => {}, snapshot: () => ({ state: 'active' }) } });
   return { plugin, app };
 }
 
@@ -447,6 +457,7 @@ async function withWindow(run: (timers: TestTimers) => Promise<void>): Promise<v
   let nextId = 1;
   const timeouts = new Map<number, () => void>();
   const fakeWindow = {
+    localStorage: memoryStorage(),
     setTimeout(callback: () => void): number { const id = nextId++; timeouts.set(id, callback); return id; },
     clearTimeout(id: number | undefined): void { if (id !== undefined) timeouts.delete(id); },
     setInterval(): number { return nextId++; },
@@ -828,7 +839,7 @@ test('open Studio instances share body and title changes and closing one removes
       view.renderShell = () => undefined;
       view.refresh = () => undefined;
       view.registerInterval = () => undefined;
-      view.contentEl = { empty: () => undefined };
+      view.contentEl = Object.assign(new EventTarget(), { empty: () => undefined, removeClass: () => undefined });
       return view;
     };
     const first = createView();
@@ -874,7 +885,7 @@ test('IME composition protects pending input from remote updates and cleanup rel
         view.renderShell = () => undefined;
         view.refresh = () => undefined;
         view.registerInterval = () => undefined;
-        view.contentEl = { empty: () => undefined };
+        view.contentEl = Object.assign(new EventTarget(), { empty: () => undefined, removeClass: () => undefined });
         return view;
       };
       const createControl = (): DraftControl => ({
@@ -953,12 +964,12 @@ class StudioElement extends EventTarget {
   setSelectionRange(): void {}
 }
 
-async function mountedStudio(plugin: TestPlugin): Promise<TestSidebar> {
+async function mountedStudio(plugin: TestPlugin, root?: GateElement): Promise<TestSidebar> {
   const view = new harness.TangrowSidebar({}, plugin);
   view.renderShell = () => undefined;
   view.refresh = () => undefined;
   view.registerInterval = () => undefined;
-  view.contentEl = { empty: () => undefined };
+  view.contentEl = root ?? Object.assign(new EventTarget(), { empty: () => undefined, removeClass: () => undefined });
   await view.onOpen();
   Object.assign(view, {
     pane: new StudioElement(),
@@ -973,6 +984,7 @@ test('IME preedit is not persisted when a writing view closes during composition
     for (const field of ['text', 'title'] as const) {
       const { plugin } = createPlugin();
       await plugin.onload();
+      if (!plugin.access.canUse()) assert.ok(plugin.access.startTrial().ok);
       plugin.updateWritingDraft({ text: 'Committed body', title: 'Committed title' }, 0);
       const view = await mountedStudio(plugin);
       const control = (field === 'text' ? view.scratchEditor : view.scratchTitleInput) as unknown as StudioElement;
@@ -1640,7 +1652,7 @@ test('Scratchpad language refresh keeps the composing inputs and editing lease w
     view.renderShell = () => undefined;
     view.refresh = () => undefined;
     view.registerInterval = () => undefined;
-    view.contentEl = { empty: () => undefined };
+    view.contentEl = Object.assign(new EventTarget(), { empty: () => undefined, removeClass: () => undefined });
     await view.onOpen();
     let focused = 0;
     let selected = 0;
@@ -1709,12 +1721,13 @@ test('plugin unload discards pending IME text while preserving the other field',
   await withWindow(async () => {
     const { plugin, app } = createPlugin();
     await plugin.onload();
+    assert.ok(plugin.access.startTrial().ok);
     plugin.updateWritingDraft({ text: 'The body before composition.', title: 'The title before composition' }, plugin.loadWritingDraft().revision);
     const view = new harness.TangrowSidebar({}, plugin);
     view.renderShell = () => undefined;
     view.refresh = () => undefined;
     view.registerInterval = () => undefined;
-    view.contentEl = { empty: () => undefined };
+    view.contentEl = Object.assign(new EventTarget(), { empty: () => undefined, removeClass: () => undefined });
     await view.onOpen();
     const control = (value: string): DraftControl => ({
       value, isConnected: true, readOnly: false, ownerDocument: { activeElement: null }, selectionStart: 0, selectionEnd: 0,
@@ -1843,3 +1856,202 @@ test('the note header immersion action stays attached to its native view when th
   assert.equal(callbacks.length, 1);
   assert.equal(note.content, '# Existing\n');
 });
+
+class GateElement extends StudioElement {
+  attributes = new Map<string, string>();
+  children: GateElement[] = [];
+  parent?: GateElement;
+  dataset: Record<string, string> = {};
+  prepend(child: GateElement): void { this.children = [child, ...this.children.filter(entry => entry !== child)]; }
+  constructor(readonly tag = 'div') { super(); }
+  createEl(tag = 'div', options: { attr?: Record<string, string>; text?: string; value?: string } = {}): GateElement {
+    const child = new GateElement(tag);
+    child.attributes = new Map(Object.entries(options.attr ?? {}));
+    child.textContent = options.text ?? '';
+    child.value = options.value ?? '';
+    child.parent = this;
+    this.children.push(child);
+    return child;
+  }
+  createDiv(): GateElement { return this.createEl(); }
+  createSpan(options = {}): GateElement { return this.createEl('span', options); }
+  addClass(): void {}
+  removeClass(): void {}
+  closest(): null { return null; }
+  contains(node: GateElement): boolean { return this === node || this.children.some(child => child.contains(node)); }
+  empty(): void { this.children = []; }
+  remove(): void { if (this.parent) this.parent.children = this.parent.children.filter(child => child !== this); }
+  setAttribute(key: string, value: string): void { this.attributes.set(key, value); }
+  getAttribute(key: string): string | null { return this.attributes.get(key) ?? null; }
+  removeAttribute(key: string): void { this.attributes.delete(key); }
+  all(): GateElement[] { return [this, ...this.children.flatMap(child => child.all())]; }
+  querySelector(tag: string): GateElement | undefined { return this.all().find(child => child.tag === tag); }
+  async clickButton(label: string): Promise<void> {
+    const button = this.all().find(el => el.tag === 'button' && el.getAttribute('aria-label') === label);
+    assert.ok(button, label);
+    button.dispatchEvent(new Event('click'));
+    await new Promise(resolve => setImmediate(resolve));
+  }
+}
+
+test('every registered command and editor menu item has a purchase-scope classification', async () => {
+  await withWindow(async () => {
+    const { app, plugin } = createPlugin();
+    plugin.savedData = { settings: { language: 'en' } };
+    const commands = new Map<string, Command>();
+    let shown = 0;
+    let opened = 0;
+    let ribbons = 0;
+    Object.assign(window, { document: new EventTarget() });
+    window.document.addEventListener('tangrow:open-activation', () => { shown++; });
+    Object.assign(app, { setting: { open() {}, openTabById(id: string) { assert.equal(id, 'tangrow'); } } });
+    Object.assign(plugin, {
+      addCommand(command: Command) { commands.set(command.id, command); },
+      openSidebar: async () => { opened++; },
+      addRibbonIcon(_icon: string, _title: string, open: () => void) { open(); ribbons++; }
+    });
+    await plugin.onload();
+    const restricted = [
+      'quick-add', 'new-note', 'new-task', 'new-project', 'new-card', 'quick-capture', 'open-capture-window',
+      'open-immersive-capture', 'open-assistant', 'open-report', 'pin-note', 'setup-bases', 'migrate-companion-folder',
+      'open-daily-note', 'open-weekly-note', 'open-monthly-note', 'open-quarterly-note', 'open-yearly-note'
+    ];
+    assert.deepEqual([...commands.keys()].sort(), [...restricted, 'open-companion', 'toggle-note-immersion'].sort());
+    for (const id of [...restricted, 'toggle-note-immersion']) {
+      const command = commands.get(id)!;
+      const before = shown;
+      if (command.checkCallback) {
+        assert.equal(command.checkCallback(true), true, id);
+        assert.equal(shown, before, id);
+        command.checkCallback(false);
+      } else command.callback!();
+      assert.equal(shown, before + 1, id);
+      assert.equal(harness.notices.at(-1), 'Activate Tangrow to use this feature.');
+    }
+    let exited = false;
+    Object.assign(plugin, { noteImmersion: { close() { exited = true; } } });
+    commands.get('toggle-note-immersion')!.checkCallback!(false);
+    assert.ok(exited);
+    commands.get('open-companion')!.callback!();
+    assert.equal(opened, ribbons + 1);
+    const actions = new Map<string, () => void>();
+    const menu = { addItem(build: (item: unknown) => void) {
+      let title = '';
+      const item = { setTitle(value: string) { title = value; return item; }, setIcon() { return item; },
+        onClick(callback: () => void) { actions.set(title, callback); } };
+      build(item);
+    } };
+    const file = app.vault.seedFile('Note.md', 'selection');
+    app.workspace.trigger('editor-menu', menu, { getSelection: () => 'selection', getCursor: () => ({ line: 0 }) }, { file });
+    assert.deepEqual([...actions.keys()].sort(), ['Tangrow: add selection as task', 'Tangrow: capture selection', 'Tangrow: extract selection to card']);
+    for (const run of actions.values()) { const before = shown; run(); assert.equal(shown, before + 1); }
+    delete (app as unknown as { setting?: unknown }).setting;
+    commands.get('quick-add')!.callback!();
+    assert.equal(harness.notices.at(-1), 'Open Settings → Tangrow → Activation and updates.');
+  });
+});
+
+test('a locked view switches language, starts trial only on click, and rescues IME and in-flight work at expiry', async () => {
+  await withClock(async advance => withWindow(async timers => {
+    const { app, plugin } = createPlugin();
+    await plugin.onload();
+    const root = new GateElement();
+    const capture = new harness.CapturePanel(plugin, 'window');
+    capture.mount(root);
+    assert.equal(plugin.access.snapshot().state, 'not_started');
+    await root.clickButton('English');
+    assert.equal(plugin.settings.language, 'en');
+    assert.equal(plugin.access.snapshot().state, 'not_started');
+    await root.clickButton('Start 24-hour trial');
+    assert.ok(plugin.access.canUse());
+    const sidebar = new GateElement();
+    const studio = await mountedStudio(plugin, sidebar);
+    const writing = studio.scratchEditor as unknown as StudioElement;
+    const input = capture.editor;
+    plugin.saveComposer({ capture: 'Earlier capture in flight' });
+    await plugin.startFocus(10);
+    const entered = deferred(), release = deferred();
+    const create = app.vault.create.bind(app.vault);
+    app.vault.create = async (path, data) => { entered.resolve(); await release.promise; return create(path, data); };
+    const inFlight = plugin.submitCaptureDraft();
+    await entered.promise;
+    input.dispatchEvent(new Event('compositionstart'));
+    input.value = 'Unpublished capture';
+    writing.dispatchEvent(new Event('compositionstart'));
+    writing.value = 'Unpublished writing';
+    advance(24 * 60);
+    timers.flush();
+    assert.equal(plugin.access.snapshot().state, 'expired');
+    assert.equal(capture.editor, input);
+    assert.equal(studio.scratchEditor, writing);
+    assert.equal(input.readOnly, true);
+    assert.equal(writing.readOnly, true);
+    assert.equal(plugin.loadComposer().capture, input.value);
+    assert.equal(plugin.loadWritingDraft().text, writing.value);
+    const finishing = Promise.all([plugin.finishFocus(), plugin.finishFocus()]);
+    release.resolve();
+    await Promise.all([inFlight, finishing]);
+    assert.equal(focusFiles(app).length, 1);
+    assert.equal(plugin.loadComposer().capture, 'Unpublished capture');
+    await plugin.writes;
+    await studio.onClose();
+    capture.destroy();
+    plugin.onunload();
+    await plugin.writes;
+    const restarted = new harness.TangrowPlugin(app);
+    restarted.savedData = structuredClone(plugin.savedData);
+    await restarted.onload();
+    const after = new GateElement();
+    const reopened = new harness.CapturePanel(restarted, 'immersive');
+    reopened.mount(after);
+    assert.equal(restarted.access.snapshot().state, 'expired');
+    const drafts = after.all().filter(el => el.tag === 'textarea' && el.attributes.has('readonly')).map(el => el.value);
+    assert.deepEqual(drafts, ['Unpublished capture', 'Unpublished writing']);
+    const readOnly = after.all().find(el => el.tag === 'textarea' && el.attributes.has('readonly'))!;
+    let copied = '';
+    Object.assign(readOnly.ownerDocument, { defaultView: { navigator: { clipboard: { writeText: async (value: string) => { copied = value; } } } } });
+    await after.clickButton('Copy to clipboard');
+    assert.equal(copied, drafts[0]);
+    await after.clickButton('Save to Inbox');
+    await after.clickButton('Save to Inbox');
+    const files = app.vault.getMarkdownFiles().filter(file => ['capture', 'draft'].includes(String(app.metadataCache.getFileCache(file).frontmatter?.tangrow_kind)));
+    assert.equal(files.length, 3);
+    for (const body of [...drafts, 'Earlier capture in flight']) assert.equal(files.filter(file => file.content.includes(body)).length, 1);
+    reopened.destroy();
+  }));
+});
+
+for (const st of ['released', 'revoked'] as const) {
+  test(`${st} flushes the composing capture before removing the lease`, async () => {
+    await withWindow(async () => {
+      const { plugin } = createPlugin();
+      const { exp: _exp, ...base } = vector.payload;
+      const terminal = signLease({ ...base, st } as Lease, Buffer.from(vector.seedHex, 'hex'));
+      let lease = vector.lease;
+      const access = plugin.access = new Access({
+        storage: () => window.localStorage, now: () => base.iat * 1000, bytes: () => Buffer.from(vector.deviceId, 'hex'),
+        jitter: () => 0, keys: { 'test-1': vector.publicKey }, platform: 'iOS', version: '1',
+        request: async () => ({ status: 200, text: JSON.stringify({ lease, devices: [], deviceLimit: 3 }) }),
+        later: window.setTimeout, cancel: window.clearTimeout, warn() {}
+      });
+      access.start();
+      if (st === 'released') assert.ok(access.startTrial().ok);
+      assert.ok((await access.activate(vector.code)).ok);
+      const capture = new harness.CapturePanel(plugin, 'immersive');
+      capture.mount(new GateElement());
+      capture.editor.dispatchEvent(new Event('compositionstart'));
+      capture.editor.value = 'IME before removal';
+      let beforeRemoval: string[] = [];
+      access.subscribe(event => {
+        if (event === st) beforeRemoval = [access.snapshot().state, plugin.loadComposer().capture];
+      });
+      lease = terminal;
+      assert.ok((await (st === 'released' ? access.release() : access.renew())).ok);
+      assert.deepEqual(beforeRemoval, ['active', 'IME before removal']);
+      assert.equal(capture.editor.readOnly, st === 'revoked');
+      assert.equal(access.snapshot().state, st === 'released' ? 'trial' : 'not_started');
+      capture.destroy();
+      access.dispose();
+    });
+  });
+}

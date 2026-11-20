@@ -111,6 +111,10 @@ export interface Snapshot {
 }
 export interface SidebarHost {
   app: App;
+  access: import('./access').Access;
+  requireAccess(): boolean;
+  openActivationSettings(): void;
+  setLanguage(language: Locale): Promise<void>;
   settings: Settings;
   snapshot(): Snapshot;
   loadReport(range: ReportRange): Promise<ReportSnapshot>;
@@ -142,7 +146,7 @@ export interface SidebarHost {
   createNoteWithBody(title: string, body: string): Promise<void>;
   openAiGuide(): Promise<void>;
   capture(text: string): Promise<void>;
-  submitCaptureDraft(): Promise<void>;
+  submitCaptureDraft(rescue?: boolean): Promise<void>;
   openCaptureWindow(): Promise<void>;
   openImmersiveCapture(): void;
   openPeriodicNote(period: JournalPeriod, date?: string, immersive?: boolean): Promise<void>;
@@ -153,7 +157,7 @@ export interface SidebarHost {
   updateWritingDraft(patch: Partial<Pick<WritingDraft, 'text' | 'title'>>, expectedRevision: number, viewId?: string): boolean;
   beginWritingDraftComposition(viewId: string, expectedRevision: number): boolean;
   endWritingDraftComposition(viewId: string): void;
-  submitWritingDraft(expectedRevision: number, origin?: WritingSaveOrigin): Promise<void>;
+  submitWritingDraft(expectedRevision: number, origin?: WritingSaveOrigin, rescue?: boolean): Promise<void>;
   setup(): Promise<void>;
   startFocus(minutes: number): Promise<void>;
   pauseFocus(): Promise<void>;
