@@ -1,5 +1,8 @@
 import { FileView, MarkdownView, Menu, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, TFolder, moment, parseYaml, getFrontMatterInfo, resolveSubpath, stringifyYaml, stripHeadingForLink, setTooltip, type EventRef, type WorkspaceLeaf } from 'obsidian';
 import { baseDefinitions, setupReadme, managedFileTranslations } from './bases';
+import { Platform, requestUrl } from 'obsidian';
+import { Access, DEVELOPMENT_KEYS, LICENSE_ENDPOINT } from './access';
+import { randomBytes } from './license/format';
 import { focusMinutes, pauseSession, remainingMs, resumeSession, startSession } from './focus';
 import { dayKey, inFolder, readSession, readSettings, recentDays, safeFolder, safeTitle, streak } from './model';
 import { openNativeSettings, revealInFileList, runNativeCommand } from './compat';
@@ -64,6 +67,7 @@ function uid(): string { return crypto.randomUUID(); }
 type SecretAccess = { getSecret(id: string): string | null; setSecret(id: string, value: string): void };
 
 export default class TangrowPlugin extends Plugin implements SidebarHost {
+  access!: Access;
   settings: Settings = readSettings(DEFAULT_SETTINGS);
   private focus: FocusSession | null = null;
   private scratch = '';
@@ -152,6 +156,17 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       } catch (error) { new Notice(this.error(error)); }
     }
     if (!this.alive) return;
+    this.access = new Access({
+      storage: () => window.localStorage, now: Date.now, bytes: randomBytes, jitter: Math.random, keys: DEVELOPMENT_KEYS,
+      platform: Platform.isIosApp ? 'iOS' : Platform.isAndroidApp ? 'Android' : Platform.isMacOS ? 'macOS' : Platform.isWin ? 'Windows' : 'Linux',
+      version: this.manifest.version, later: (callback, delay) => window.setTimeout(callback, delay), cancel: timer => window.clearTimeout(timer),
+      warn: message => console.warn(message), request: (path, body) => requestUrl({ url: LICENSE_ENDPOINT + path, method: 'POST',
+        contentType: 'application/json', body: JSON.stringify(body), throw: false })
+    });
+    this.access.start();
+    this.registerDomEvent(window, 'storage', event => {
+      if (event.key === null || /^tangrow:(device|lease|trial):v1$/.test(event.key)) this.access.refresh(false, false);
+    });
     this.registerView(VIEW_TYPE, (leaf: WorkspaceLeaf) => new TangrowSidebar(leaf, this));
     this.registerView(REPORT_VIEW_TYPE, (leaf: WorkspaceLeaf) => new TangrowReport(leaf, this));
     this.registerView(CAPTURE_VIEW_TYPE, (leaf: WorkspaceLeaf) => new TangrowCapture(leaf, this));
@@ -241,6 +256,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   }
 
   onunload(): void {
+    this.access?.dispose();
     this.immersiveCapture?.close();
     this.noteImmersion?.close();
     this.noteImmersionAction?.remove();

@@ -2,6 +2,7 @@ import momentLibrary from 'moment';
 import type { KeymapContext, KeymapEventListener, Modifier } from 'obsidian';
 
 export const notices: string[] = [];
+export async function requestUrl(): Promise<never> { throw new Error('Unexpected network request'); }
 export const Platform = { isDesktopApp: true, isMacOS: process.platform === 'darwin' };
 
 export function resolveSubpath(cache: { headings?: Array<{ heading: string }>; blocks?: Record<string, unknown> }, anchor: string): unknown {
@@ -331,6 +332,7 @@ export class Plugin {
   removeCommand(): void {}
   addSettingTab(): void {}
   registerEvent(): void {}
+  registerDomEvent(): void {}
   registerMarkdownPostProcessor(): void {}
   registerInterval(): void {}
 }
