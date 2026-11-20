@@ -331,6 +331,7 @@ export class Plugin {
   addCommand(): void {}
   removeCommand(): void {}
   addSettingTab(): void {}
+  register(): void {}
   registerEvent(): void {}
   registerDomEvent(): void {}
   registerMarkdownPostProcessor(): void {}

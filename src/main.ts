@@ -1,7 +1,8 @@
-import { FileView, MarkdownView, Menu, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, TFolder, moment, parseYaml, getFrontMatterInfo, resolveSubpath, stringifyYaml, stripHeadingForLink, setTooltip, type EventRef, type WorkspaceLeaf } from 'obsidian';
+import { FileView, MarkdownView, Menu, Modal, Notice, Plugin, Setting, TFile, TFolder, moment, parseYaml, getFrontMatterInfo, resolveSubpath, stringifyYaml, stripHeadingForLink, setTooltip, type EventRef, type WorkspaceLeaf } from 'obsidian';
 import { baseDefinitions, setupReadme, managedFileTranslations } from './bases';
 import { Platform, requestUrl } from 'obsidian';
 import { Access, DEVELOPMENT_KEYS, LICENSE_ENDPOINT } from './access';
+import { TangrowSettings } from './settings/tab';
 import { randomBytes } from './license/format';
 import { focusMinutes, pauseSession, remainingMs, resumeSession, startSession } from './focus';
 import { dayKey, inFolder, readSession, readSettings, recentDays, safeFolder, safeTitle, streak } from './model';
@@ -64,6 +65,7 @@ class PromptModal extends Modal {
 }
 
 function uid(): string { return crypto.randomUUID(); }
+type LocalSettingsPatch = Partial<Pick<Settings, 'autoOpen' | 'focusMinutes' | 'taskOverviewPath' | 'wideByDefault'>>;
 type SecretAccess = { getSecret(id: string): string | null; setSecret(id: string, value: string): void };
 
 export default class TangrowPlugin extends Plugin implements SidebarHost {
@@ -442,15 +444,17 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     return path;
   }
 
-  async updateJournalSettings(period: JournalPeriod, format: string, template: string): Promise<void> {
-    if (!format.trim() || format.length >= 100) throw new Error('Use a date format of 1-99 characters.');
-    template = template.trim() ? safeFolder(template) : '';
-    if (template) {
-      const file = this.app.vault.getAbstractFileByPath(template);
-      if (!(file instanceof TFile) || file.extension !== 'md') throw new Error('Choose an existing Markdown journal template.');
-    }
+  async updateJournalSettings(period: JournalPeriod, format?: string, template?: string): Promise<void> {
     await this.exclusive(async () => {
       const previous = this.settings;
+      format ??= period === 'daily' ? previous.journalFormat : previous.journalFormats[period];
+      template ??= previous.journalTemplates[period];
+      if (!format.trim() || format.length >= 100) throw new Error('Use a date format of 1-99 characters.');
+      template = template.trim() ? safeFolder(template) : '';
+      if (template) {
+        const file = this.app.vault.getAbstractFileByPath(template);
+        if (!(file instanceof TFile) || file.extension !== 'md') throw new Error('Choose an existing Markdown journal template.');
+      }
       const next = { ...previous, journalFormats: { ...previous.journalFormats }, journalTemplates: { ...previous.journalTemplates, [period]: template } };
       if (period === 'daily') next.journalFormat = format;
       else next.journalFormats[period] = format;
@@ -524,7 +528,17 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     try { await this.persist(); } catch (error) { this.focus = previous; this.notify(); throw error; }
     this.notify();
   }
-  async saveSettings(): Promise<void> { await this.persist(); this.notify(); }
+  async saveSettings(patch: LocalSettingsPatch | ((current: Settings) => LocalSettingsPatch) = {}): Promise<void> {
+    await this.exclusive(async () => {
+      const previous = this.settings;
+      const changes = typeof patch === 'function' ? patch(previous) : patch;
+      this.settings = { ...previous, ...changes };
+      try { await this.persist(); }
+      catch (error) { this.settings = previous; throw error; }
+      if (changes.wideByDefault !== undefined) this.widePages.clear();
+      this.notify();
+    });
+  }
   async loadReport(range: ReportRange): Promise<ReportSnapshot> {
     const settings = structuredClone(this.settings);
     const source = await this.reportSource.collect(settings);
@@ -1088,26 +1102,30 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   async setAiKey(value: string): Promise<void> {
     const key = value.trim();
     if (key.length > 400 || /\s/.test(key)) throw new Error('This does not look like an API key.');
-    const secrets = this.secrets();
-    const previous = this.settings.aiApiKey;
-    if (secrets) { secrets.setSecret(AI_SECRET_ID, key); this.settings.aiApiKey = ''; }
-    else this.settings.aiApiKey = key;
-    try { await this.persist(); }
-    catch (error) { this.settings.aiApiKey = previous; throw error; }
-    this.notify();
+    await this.exclusive(async () => {
+      const secrets = this.secrets();
+      const previous = this.settings.aiApiKey;
+      if (secrets) { secrets.setSecret(AI_SECRET_ID, key); this.settings.aiApiKey = ''; }
+      else this.settings.aiApiKey = key;
+      try { await this.persist(); }
+      catch (error) { this.settings.aiApiKey = previous; throw error; }
+      this.notify();
+    });
   }
   async updateAiSettings(patch: { aiEnabled?: boolean; aiModel?: string }): Promise<void> {
-    const previous = this.settings;
-    const next = { ...previous };
-    if (patch.aiEnabled !== undefined) next.aiEnabled = patch.aiEnabled;
-    if (patch.aiModel !== undefined) {
-      if (readAiModel(patch.aiModel) !== patch.aiModel.trim()) throw new Error('Use a model name such as claude-opus-5-5.');
-      next.aiModel = patch.aiModel.trim();
-    }
-    this.settings = next;
-    try { await this.persist(); }
-    catch (error) { this.settings = previous; throw error; }
-    this.notify();
+    await this.exclusive(async () => {
+      const previous = this.settings;
+      const next = { ...previous };
+      if (patch.aiEnabled !== undefined) next.aiEnabled = patch.aiEnabled;
+      if (patch.aiModel !== undefined) {
+        if (readAiModel(patch.aiModel) !== patch.aiModel.trim()) throw new Error('Use a model name such as claude-opus-5-5.');
+        next.aiModel = patch.aiModel.trim();
+      }
+      this.settings = next;
+      try { await this.persist(); }
+      catch (error) { this.settings = previous; throw error; }
+      this.notify();
+    });
   }
   aiReady(): boolean { return this.settings.aiEnabled && this.hasAiKey(); }
   private aiConfig(): { apiKey: string; model: string } {
@@ -1358,7 +1376,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
         if (!this.widePages.delete(path)) this.widePages.add(path);
         this.notify(); break;
       }
-      case 'all-width': this.settings.wideByDefault = !this.settings.wideByDefault; this.widePages.clear(); await this.saveSettings(); break;
+      case 'all-width': await this.saveSettings((settings) => ({ wideByDefault: !settings.wideByDefault })); break;
       case 'refresh': this.taskLabels.clear(); this.notify(); new Notice(this.t('Tangrow index refreshed.')); break;
       case 'cover': {
         const note = requireMarkdown();
@@ -1548,93 +1566,5 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     try { await this.persist(); }
     catch (error) { this.settings.habits = previous; this.notify(); throw error; }
     this.notify();
-  }
-}
-
-class TangrowSettings extends PluginSettingTab {
-  constructor(private plugin: TangrowPlugin) { super(plugin.app, plugin); }
-  display(): void {
-    this.containerEl.empty();
-    const t = (source: string): string => this.plugin.t(source);
-    this.containerEl.createEl('h2', { text: 'Tangrow' });
-    this.containerEl.createEl('p', { text: t('Your folders stay in place. These paths tell the companion where to read and where to add new files.') });
-    new Setting(this.containerEl).setName(t('Interface language')).setDesc(t('Chinese is the default. Change the language without renaming notes or database files.')).addDropdown((dropdown) => dropdown
-      .addOption('zh-CN', t('Simplified Chinese'))
-      .addOption('en', 'English')
-      .setValue(this.plugin.settings.language)
-      .onChange(async (value) => {
-        try { await this.plugin.setLanguage(value as Locale); }
-        catch (error) { new Notice(this.plugin.error(error)); }
-        this.display();
-      }));
-    const folders: Array<[FolderSettingKey, string]> = [
-      ['supportFolder', 'Companion folder'], ['inboxFolder', 'Inbox'], ['projectFolder', 'Projects'], ['areaFolder', 'Areas'], ['resourcesFolder', 'Resources'], ['archiveFolder', 'Archive'], ['journalFolder', 'Journal folder'], ['cardFolder', 'Card folder']
-    ];
-    for (const [key, label] of folders) {
-      let value = this.plugin.settings[key];
-      new Setting(this.containerEl).setName(t(label)).setDesc(t(key === 'supportFolder' ? 'New Bases and focus/habit records only. Changing this path does not move existing files.' : 'Existing vault-relative folder. No files are moved.')).addText((input) => input.setValue(value).onChange((text) => { value = text; })).addButton((button) => button.setButtonText(t('Apply')).onClick(async () => {
-        try { await this.plugin.updateFolderSetting(key, value); new Notice(t('Path saved. Existing Bases keep their filters: edit them manually or choose a new companion folder and run setup.')); } catch (error) { new Notice(this.plugin.error(error)); }
-      }));
-    }
-    new Setting(this.containerEl).setName(t('Enable knowledge features')).setDesc(t('Show knowledge navigation, card review, and card reports.')).addToggle((toggle) => toggle.setValue(this.plugin.settings.knowledgeEnabled).onChange(async (enabled) => {
-      try { await this.plugin.updateKnowledgeEnabled(enabled); }
-      catch (error) { new Notice(this.plugin.error(error)); toggle.setValue(this.plugin.settings.knowledgeEnabled); }
-    }));
-    new Setting(this.containerEl).setName(t('Move companion folder')).setDesc(t('Move the current companion folder to 99-Tangrow at the vault root. Existing destinations are never merged; customized files are preserved.')).addButton((button) => button.setButtonText(t('Move to 99-Tangrow')).setDisabled(this.plugin.settings.supportFolder === DEFAULT_SETTINGS.supportFolder).onClick(async () => {
-      button.setDisabled(true);
-      try { await this.plugin.migrateCompanionFolder(); this.display(); }
-      catch (error) { new Notice(this.plugin.error(error)); }
-      finally { button.setDisabled(this.plugin.settings.supportFolder === DEFAULT_SETTINGS.supportFolder); }
-    }));
-    let taskOverviewPath = this.plugin.settings.taskOverviewPath;
-    new Setting(this.containerEl).setName(t('Task overview note')).setDesc(t('Existing Tasks note path. Tangrow opens it without changing its queries.')).addText((input) => input.setValue(taskOverviewPath).onChange((value) => { taskOverviewPath = value; })).addButton((button) => button.setButtonText(t('Apply')).onClick(async () => {
-      try {
-        const path = safeFolder(taskOverviewPath);
-        const note = this.app.vault.getAbstractFileByPath(path);
-        if (!(note instanceof TFile) || note.extension !== 'md') throw new Error('Set an existing Tasks note path in Tangrow settings.');
-        const previous = this.plugin.settings.taskOverviewPath;
-        this.plugin.settings.taskOverviewPath = path;
-        try { await this.plugin.saveSettings(); }
-        catch (error) { this.plugin.settings.taskOverviewPath = previous; throw error; }
-        new Notice(t('Task overview path saved.'));
-      } catch (error) { new Notice(this.plugin.error(error)); }
-    }));
-    new Setting(this.containerEl).setName(t('Periodic notes')).setHeading();
-    this.containerEl.createEl('p', { cls: 'setting-item-description', text: t('Paths are relative to the Journal folder. Weekly notes use ISO weeks (Monday first); use GGGG and WW for their week-year and week number.') });
-    for (const period of JOURNAL_PERIODS) {
-      let format = period === 'daily' ? this.plugin.settings.journalFormat : this.plugin.settings.journalFormats[period];
-      let template = this.plugin.settings.journalTemplates[period];
-      new Setting(this.containerEl).setName(t(JOURNAL_LABELS[period])).setDesc(t('Moment format, including literal folder names in brackets.')).addText((input) => input.setValue(format).onChange((value) => { format = value; }));
-      new Setting(this.containerEl).setName(t('Journal template')).setDesc(t('Optional Markdown path. Supports {{title}}, {{date}}, {{start}}, {{end}}, {{period}}, {{year}}, {{week}} and {{quarter}}. Existing notes are preserved.')).addText((input) => input.setPlaceholder(t('No template')).setValue(template).onChange((value) => { template = value; })).addButton((button) => button.setButtonText(t('Apply')).onClick(async () => {
-        try { await this.plugin.updateJournalSettings(period, format, template); new Notice(t('Journal settings saved.')); }
-        catch (error) { new Notice(this.plugin.error(error)); }
-      }));
-    }
-    new Setting(this.containerEl).setName(t('Open companion on startup')).addToggle((toggle) => toggle.setValue(this.plugin.settings.autoOpen).onChange(async (value) => { this.plugin.settings.autoOpen = value; await this.plugin.saveSettings(); }));
-    new Setting(this.containerEl).setName(t('Default focus duration')).setDesc(t('Minutes, from 1 to 240.')).addText((input) => input.setValue(String(this.plugin.settings.focusMinutes)).onChange(async (value) => {
-      const minutes = Number(value);
-      if (!Number.isInteger(minutes) || minutes < 1 || minutes > 240) return;
-      this.plugin.settings.focusMinutes = minutes; await this.plugin.saveSettings();
-    }));
-    new Setting(this.containerEl).setName(t('AI suggestions')).setHeading();
-    this.containerEl.createEl('p', { cls: 'setting-item-description', text: t('Off by default. When on, quick add and capture processing send the text you are sorting to the Claude API with your own key, and only when you press an AI button. Vault workflows run in Claudian and do not use this key.') });
-    new Setting(this.containerEl).setName(t('Enable AI features')).addToggle((toggle) => toggle.setValue(this.plugin.settings.aiEnabled).onChange(async (value) => {
-      try { await this.plugin.updateAiSettings({ aiEnabled: value }); } catch (error) { new Notice(this.plugin.error(error)); }
-    }));
-    let apiKey = '';
-    new Setting(this.containerEl).setName(t('Anthropic API key')).setDesc(t(this.plugin.hasAiKey()
-      ? (this.plugin.aiKeyProtected() ? 'A key is saved in Obsidian\'s secret storage. Enter a new one to replace it, or save an empty value to remove it.' : 'A key is saved in this plugin\'s data.json. Enter a new one to replace it, or save an empty value to remove it.')
-      : (this.plugin.aiKeyProtected() ? 'Stored in Obsidian\'s secret storage, outside your notes.' : 'This Obsidian version has no secret storage, so the key is stored in this plugin\'s data.json. Keep that file out of shared or public sync.')))
-      .addText((input) => { input.inputEl.type = 'password'; input.inputEl.autocomplete = 'off'; input.setPlaceholder('sk-ant-...').onChange((value) => { apiKey = value; }); })
-      .addButton((button) => button.setButtonText(t('Save')).onClick(async () => {
-        try { await this.plugin.setAiKey(apiKey); new Notice(t(apiKey.trim() ? 'API key saved.' : 'API key removed.')); this.display(); }
-        catch (error) { new Notice(this.plugin.error(error)); }
-      }));
-    let aiModel = this.plugin.settings.aiModel;
-    new Setting(this.containerEl).setName(t('Model')).setDesc(t('Claude model ID. The default is claude-opus-5-5; claude-sonnet-5-5 and claude-haiku-5-5 are faster and cheaper.')).addText((input) => input.setValue(aiModel).onChange((value) => { aiModel = value; })).addButton((button) => button.setButtonText(t('Apply')).onClick(async () => {
-      try { await this.plugin.updateAiSettings({ aiModel }); new Notice(t('Model saved.')); } catch (error) { new Notice(this.plugin.error(error)); }
-    }));
-    new Setting(this.containerEl).setName(t('Agent guide')).setDesc(t('Creates AGENTS.md in the companion folder: a plain description of your folders and Tangrow properties for Claudian and other agents. An existing file is opened, not overwritten.')).addButton((button) => button.setButtonText(t('Open agent guide')).onClick(async () => { try { await this.plugin.openAiGuide(); } catch (error) { new Notice(this.plugin.error(error)); } }));
-    new Setting(this.containerEl).setName(t('Set up companion Bases')).setDesc(t('Create missing files only. Existing Bases and notes are never overwritten.')).addButton((button) => button.setButtonText(t('Set up Bases')).onClick(async () => { try { await this.plugin.setup(); } catch (error) { new Notice(this.plugin.error(error)); } }));
   }
 }
