@@ -11,7 +11,11 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
     "install:vault": "node scripts/install.mjs",
-    "package": "node scripts/package.mjs"
+    "package": "node scripts/package.mjs",
+    "server:start": "tsx server/index.ts",
+    "server:typecheck": "tsc -p server/tsconfig.json",
+    "server:test": "tsx --test server/tests/*.test.ts",
+    "license:cards": "tsx scripts/cards.ts"
   },
   "devDependencies": {
     "@types/node": "^24.10.0",
