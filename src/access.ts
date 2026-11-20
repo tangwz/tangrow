@@ -196,6 +196,7 @@ export class Access {
         timer = this.deps.later(() => reject(new Error('timeout')), background ? 5000 : 15000);
       });
       const body: Record<string, string> = action === 'activate' ? { code, dev, platform: this.deps.platform, pluginVersion: this.deps.version } : { lease: current!.token };
+      if (action === 'renew') body.platform = this.deps.platform;
       const response = await Promise.race([this.deps.request(`/v1/${action}`, body), deadline]);
       if (stale()) return fail('stale');
       const parsed: unknown = JSON.parse(response.text);

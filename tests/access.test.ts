@@ -61,7 +61,7 @@ test('first activation verifies this device; expired signed leases renew with ro
   deps.keys = { ...deps.keys, 'test-2': vector.publicKey };
   const iat = state.now / 1000;
   const next = sign({ kid: 'test-2', iat, rnb: iat + 7 * DAY_SECONDS, exp: iat + 30 * DAY_SECONDS });
-  state.request = async (path, body) => { assert.equal(path, '/v1/renew'); assert.deepEqual(body, { lease: vector.lease }); return response(next); };
+  state.request = async (path, body) => { assert.equal(path, '/v1/renew'); assert.deepEqual(body, { lease: vector.lease, platform: 'iOS' }); return response(next); };
   assert.ok((await access.renew()).ok); assert.equal(access.snapshot().state, 'active');
 });
 
