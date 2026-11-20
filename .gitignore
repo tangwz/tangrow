@@ -6,3 +6,5 @@ output/
 .DS_Store
 .obsidian/
 *.tsbuildinfo
+cards.txt
+feishu-import.csv
