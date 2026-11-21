@@ -5,6 +5,7 @@ import { INTERACTIVE_TIMEOUT_MS, type AccessCoordination } from './access-coordi
 const HOUR = 3600000;
 const DAY = DAY_SECONDS * 1000;
 const FOREGROUND_COOLDOWN_MS = 60_000;
+const MARK_STEP_MS = 60_000;
 export const LICENSE_ENDPOINT = licenseClient.endpoint;
 export const LICENSE_KEYS: PublicKeys = Object.freeze(licenseClient.keys);
 const platforms = ['macOS', 'Windows', 'Linux', 'iOS', 'Android'] as const;
@@ -110,7 +111,7 @@ export class Access {
     return this.initializingDevice;
   }
 
-  private clock(now: number, persist = true): ClockRecord {
+  private clock(now: number, persist = true, force = false): ClockRecord {
     const saved = this.read('trial');
     const valid = object(saved) && timestamp(saved.maxSeenAt) && (saved.startedAt === null ||
       timestamp(saved.startedAt) && saved.startedAt <= saved.maxSeenAt) &&
@@ -122,7 +123,10 @@ export class Access {
     this.highWater = Math.max(this.highWater, now, valid ? saved.maxSeenAt as number : 0);
     const clock: ClockRecord = { startedAt: valid ? saved.startedAt as number | null : null, maxSeenAt: this.highWater,
       ...(this.trustedAt === undefined ? {} : { trustedAt: this.trustedAt }) };
-    if (persist && valid && saved.maxSeenAt !== this.highWater) this.write('trial', clock);
+    // Access checks run on every keystroke, and each write wakes the other vault windows, so store the mark at most
+    // once a minute. Memory keeps the exact mark, so rolling the clock back within a session still gains nothing.
+    const lag = valid ? this.highWater - (saved.maxSeenAt as number) : 0;
+    if (persist && valid && (force ? lag > 0 : lag >= MARK_STEP_MS)) this.write('trial', clock);
     return clock;
   }
 
@@ -188,6 +192,8 @@ export class Access {
   }
 
   dispose() {
+    // Store the exact mark that throttled writes may have held back.
+    if (this.alive) this.clock(this.deps.now(), true, true);
     this.alive = false; this.generation++; this.stopRequest?.(); this.listeners.clear();
     if (this.checkTimer !== undefined) this.deps.cancel(this.checkTimer);
     if (this.expiryTimer !== undefined) this.deps.cancel(this.expiryTimer);

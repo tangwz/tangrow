@@ -334,6 +334,8 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
           return true;
         }
         if (this.access.canUse()) return checkCallback(checking);
+        // Stay listed only where the command would otherwise run, then ask for activation instead of running it.
+        if (!checkCallback(true)) return false;
         if (!checking) this.requireAccess();
         return true;
       } });

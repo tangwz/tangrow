@@ -111,6 +111,34 @@ test('a signed lease repairs a clock that once ran ahead in every window', async
   assert.ok(!warnings.includes('Tangrow access: trial'));
 });
 
+test('frequent checks store the clock mark at most once a minute, and unload stores the exact mark', () => {
+  const trialKey = 'tangrow:trial:v1';
+  const records = new Map<string, string>();
+  let writes = 0;
+  const { access, deps, state } = fixture(records, { storage: () => ({
+    getItem: key => records.get(key) ?? null,
+    setItem: (key, value) => { if (key === trialKey) writes++; records.set(key, value); },
+    removeItem: key => { records.delete(key); },
+  }) });
+  assert.ok(access.startTrial().ok);
+  const started = writes;
+  // A burst of keystrokes over ten seconds checks access a hundred times.
+  for (let count = 0; count < 100; count += 1) { state.now += 100; assert.ok(access.canUse()); }
+  assert.equal(writes, started);
+  state.now += 60_000; access.snapshot();
+  assert.equal(writes, started + 1);
+  state.now += 10_000; access.snapshot();
+  assert.equal(writes, started + 1);
+  const latest = state.now;
+  // The held-back mark still blocks a rollback in this session.
+  state.now -= 30_000;
+  assert.equal(access.snapshot().remainingMs, 24 * hour - (latest - vector.payload.iat * 1000));
+  access.dispose();
+  assert.equal(JSON.parse(records.get(trialKey)!).maxSeenAt, latest);
+  const reopened = new Access(deps); reopened.start();
+  assert.equal(reopened.snapshot().remainingMs, 24 * hour - (latest - vector.payload.iat * 1000));
+});
+
 test('first activation verifies this device; expired signed leases renew with rotated keys', async () => {
   const { access, state, deps, records } = fixture();
   const sign = (overrides: Partial<Lease>) => signLease({ ...vector.payload, ...overrides } as Lease, Buffer.from(vector.seedHex, 'hex'));

@@ -1980,6 +1980,10 @@ test('every registered command and editor menu item has a purchase-scope classif
       'open-daily-note', 'open-weekly-note', 'open-monthly-note', 'open-quarterly-note', 'open-yearly-note'
     ];
     assert.deepEqual([...commands.keys()].sort(), [...restricted, 'open-companion', 'toggle-note-immersion'].sort());
+    // Note commands are only offered with an open note, locked or not.
+    const open = new harness.MarkdownView();
+    open.file = app.vault.seedFile('Open note.md', '# Open note\n');
+    app.workspace.setActiveView(open);
     for (const id of [...restricted, 'toggle-note-immersion']) {
       const command = commands.get(id)!;
       const before = shown;
@@ -1991,6 +1995,15 @@ test('every registered command and editor menu item has a purchase-scope classif
       assert.equal(shown, before + 1, id);
       assert.equal(harness.notices.at(-1), 'Activate Tangrow to use this feature.');
     }
+    // A command that is unavailable anyway stays hidden instead of prompting for activation.
+    app.workspace.setActiveFile(null);
+    plugin.settings.knowledgeEnabled = false;
+    for (const id of ['pin-note', 'toggle-note-immersion', 'new-card']) {
+      const before = shown;
+      assert.equal(commands.get(id)!.checkCallback!(true), false, id);
+      assert.equal(shown, before, id);
+    }
+    plugin.settings.knowledgeEnabled = true;
     let exited = false;
     Object.assign(plugin, { noteImmersion: { close() { exited = true; } } });
     commands.get('toggle-note-immersion')!.checkCallback!(false);
