@@ -104,7 +104,7 @@ export function renderActivation(container: HTMLElement, plugin: TangrowPlugin):
     for (const device of visibleList?.devices ?? []) {
       const date = new Date(device.lastRenewedAt * 1000);
       const lastUsed = Number.isNaN(date.getTime()) ? t('Unknown date') : dates.format(date);
-      list.createEl('li', { text: t(device.isCurrent ? '{platform} (this device) · Last used {date}' : '{platform} · Last used {date}', { platform: device.platform, date: lastUsed }) });
+      list.createEl('li', { text: t(device.isCurrent ? '{platform} (this device) · Last used {date}' : '{platform} · Last used {date}', { platform: device.platform ?? t('Unknown device'), date: lastUsed }) });
     }
   }
 

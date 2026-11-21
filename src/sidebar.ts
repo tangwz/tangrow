@@ -387,6 +387,9 @@ export class TangrowSidebar extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    // The deadline can pass before its timer fires. Lock first so the gate rescues unsaved text, including a writing
+    // preedit that closing would otherwise discard, before the controls are torn down.
+    if (this.gate && !this.gate.locked && !this.host.access.canUse()) this.host.access.refresh();
     this.unsubscribeAccess?.();
     this.gate?.dispose();
     this.isMounted = false;

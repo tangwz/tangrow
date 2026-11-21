@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { codeDigest, DAY_SECONDS, PRODUCT, signLease, verifyLease } from '../src/license/format.js';
 import type { Lease, PublicKeys } from '../src/license/format.js';
 import { digestPattern, isObject, isPlatform } from './store.js';
-import type { DeviceFields, LicenseRecord, LicenseStore } from './store.js';
+import type { DeviceFields, DeviceUpdate, LicenseRecord, LicenseStore } from './store.js';
 
 export type Action = 'activate' | 'renew' | 'release';
 type ErrorCode = 'bad_request' | 'revoked' | 'invalid_code' | 'rate_limited' | 'upstream_unavailable';
@@ -24,7 +24,7 @@ export interface SigningKeys {
 const seatWindow = 45 * DAY_SECONDS;
 const hourMs = 3600 * 1000;
 
-function occupiesSeat(device: DeviceFields, now: number) {
+function occupiesSeat(device: DeviceUpdate, now: number) {
   return device.status === 'active' && device.lastRenewedAt > now - seatWindow;
 }
 
@@ -150,13 +150,13 @@ export class LicenseService {
     const now = Math.floor(this.now() / 1000);
     const existing = devices.find(device => device.digest === dev);
     const used = devices.filter(device => occupiesSeat(device, now)).length;
-    const list = (current: DeviceFields[] = devices) => ({
+    const list = (current: DeviceUpdate[] = devices) => ({
       devices: current.filter(device => occupiesSeat(device, now)).map(device => ({
         platform: device.platform, lastRenewedAt: device.lastRenewedAt, isCurrent: device.digest === dev,
       })),
       deviceLimit: license.deviceLimit,
     });
-    const success = (status: Lease['st'], current?: DeviceFields[]) => {
+    const success = (status: Lease['st'], current?: DeviceUpdate[]) => {
       const iat = Math.floor(this.now() / 1000);
       const payload = {
         kid: this.keys.kid, lic: license.id, dev, prd: PRODUCT, iat, rnb: iat + 7 * DAY_SECONDS,

@@ -1,6 +1,6 @@
 import defaultFields from './fields.json' with { type: 'json' };
 import { digestPattern, isObject, isPlatform, licenseIdPattern } from './store.js';
-import type { DeviceFields, DeviceRecord, LicenseRecord, LicenseStore } from './store.js';
+import type { DeviceRecord, DeviceUpdate, LicenseRecord, LicenseStore } from './store.js';
 
 export interface FieldNames {
   license: Pick<typeof defaultFields.license, 'id' | 'codeDigest' | 'status' | 'deviceLimit'>;
@@ -31,9 +31,13 @@ function textField(value: unknown): string {
   return value.map(part => part.text).join('');
 }
 
-function seconds(value: unknown): number {
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) return invalidData();
-  return Math.floor(value / 1000);
+/** Feishu dates are milliseconds. Returns undefined for an empty or malformed cell. */
+function readSeconds(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? Math.floor(value / 1000) : undefined;
+}
+
+function readText(value: unknown): string | undefined {
+  try { return textField(value); } catch { return undefined; }
 }
 
 /** Of two rows for one device, keep the most recent renewal; on a tie, a release wins. */
@@ -179,42 +183,51 @@ export class FeishuStore implements LicenseStore {
     const names = this.config.fields.device;
     const rows = await this.search(this.config.deviceTableId, Object.values(names), names.licenseId, id, signal);
     // A create that timed out after Feishu stored it can leave a second row for the same device.
-    const devices = new Map<string, DeviceRecord>();
+    const devices = new Map<string, { device: DeviceRecord; seatKnown: boolean }>();
     for (const { recordId, fields } of rows) {
-      let device: DeviceRecord;
-      try {
-        const licenseId = textField(fields[names.licenseId]);
-        const digest = textField(fields[names.digest]);
-        const platform = fields[names.platform];
-        const choice = fields[names.status];
-        if (licenseId !== id || !digestPattern.test(digest) || !isPlatform(platform) ||
-            (choice !== status.active && choice !== status.released)) return invalidData();
-        device = {
-          recordId, licenseId, digest, platform,
-          firstActivatedAt: seconds(fields[names.firstActivatedAt]),
-          lastRenewedAt: seconds(fields[names.lastRenewedAt]),
-          status: choice === status.active ? 'active' : 'released',
-        };
-      } catch {
-        // One hand-edited row must not block every device on the license. A skipped device is treated as unregistered.
+      const licenseId = readText(fields[names.licenseId]);
+      const digest = readText(fields[names.digest]);
+      if (licenseId !== id || digest === undefined || !digestPattern.test(digest)) {
+        // No device can renew a row without its digest, so ignoring the row cannot free a seat a device still holds.
         this.warn('Skipped invalid Feishu device row ' + recordId);
         continue;
       }
-      const current = devices.get(device.digest);
-      if (!current || newerDevice(device, current)) devices.set(device.digest, device);
+      // A device whose seat cannot be read keeps its seat: count it as active and just renewed. Its next renewal or
+      // release rewrites these fields. Display fields fall back without touching the seat.
+      const problems: string[] = [];
+      const choice = fields[names.status];
+      if (choice !== status.active && choice !== status.released) problems.push('status');
+      let lastRenewedAt = readSeconds(fields[names.lastRenewedAt]);
+      if (lastRenewedAt === undefined) { problems.push('last renewal'); lastRenewedAt = Math.floor(this.now() / 1000); }
+      const seatKnown = !problems.length;
+      let firstActivatedAt = readSeconds(fields[names.firstActivatedAt]);
+      if (firstActivatedAt === undefined) { problems.push('first activation'); firstActivatedAt = lastRenewedAt; }
+      const value = fields[names.platform];
+      const platform = isPlatform(value) ? value : null;
+      if (!platform) problems.push('platform');
+      if (problems.length) this.warn(`Feishu device row ${recordId} has an invalid ${problems.join(', ')}`);
+      const device: DeviceRecord = {
+        recordId, licenseId, digest, platform, firstActivatedAt, lastRenewedAt,
+        status: choice === status.released ? 'released' : 'active',
+      };
+      // Between duplicates, a row with readable seat fields beats one without.
+      const current = devices.get(digest);
+      if (!current || (seatKnown && !current.seatKnown) ||
+          (seatKnown === current.seatKnown && newerDevice(device, current.device))) devices.set(digest, { device, seatKnown });
     }
-    return [...devices.values()];
+    return [...devices.values()].map(entry => entry.device);
   }
 
-  async saveDevice(device: DeviceFields, recordId: string | undefined, signal: AbortSignal): Promise<void> {
+  async saveDevice(device: DeviceUpdate, recordId: string | undefined, signal: AbortSignal): Promise<void> {
     const names = this.config.fields.device;
     const url = new URL(this.recordsUrl(this.config.deviceTableId) +
       (recordId ? '/' + encodeURIComponent(recordId) : ''));
-    const fields = {
-      [names.platform]: device.platform,
+    const fields: Record<string, unknown> = {
       [names.lastRenewedAt]: device.lastRenewedAt * 1000,
       [names.status]: status[device.status],
     };
+    // An unreadable platform is left for the operator rather than overwritten with a guess.
+    if (device.platform) fields[names.platform] = device.platform;
     if (!recordId) {
       // No client_token: a token reused for one device can replay a row that was deleted since, so the device
       // would get a lease without a counted seat. listDevices tolerates the rare duplicate this allows instead.

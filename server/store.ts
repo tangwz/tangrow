@@ -28,13 +28,18 @@ export interface DeviceFields {
   status: 'active' | 'released';
 }
 
-export interface DeviceRecord extends DeviceFields {
+/** A stored row. `platform` is null when Feishu holds an unreadable value; the device's next renewal rewrites it. */
+export interface DeviceRecord extends Omit<DeviceFields, 'platform'> {
   recordId: string;
+  platform: Platform | null;
 }
+
+/** What an update writes. A null platform leaves the stored value unchanged. */
+export type DeviceUpdate = Omit<DeviceFields, 'platform'> & { platform: Platform | null };
 
 export interface LicenseStore {
   findLicenseByCode(digest: string, signal: AbortSignal): Promise<LicenseRecord | undefined>;
   findLicenseById(id: string, signal: AbortSignal): Promise<LicenseRecord | undefined>;
   listDevices(id: string, signal: AbortSignal): Promise<DeviceRecord[]>;
-  saveDevice(device: DeviceFields, recordId: string | undefined, signal: AbortSignal): Promise<void>;
+  saveDevice(device: DeviceUpdate, recordId: string | undefined, signal: AbortSignal): Promise<void>;
 }

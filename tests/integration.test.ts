@@ -66,7 +66,7 @@ interface TestPlugin extends MockPlugin {
 }
 interface Harness {
   TangrowPlugin: new (app: MockApp) => TestPlugin;
-  CapturePanel: new (host: TestPlugin, surface: 'immersive' | 'window') => {
+  CapturePanel: new (host: TestPlugin, surface: 'immersive' | 'window' | 'sidebar') => {
     mount(container: GateElement): void; destroy(): void; editor: GateElement;
   };
   TangrowSidebar: new (leaf: unknown, host: TestPlugin) => TestSidebar;
@@ -2254,6 +2254,53 @@ for (const published of [false, true]) test(`two simultaneous capture preedits k
     await restarted.submitCaptureDraft(true);
     assert.equal(captureFiles(app).length, 2);
     for (const text of values) assert.equal(captureFiles(app).filter(file => file.content.endsWith(text + '\n')).length, 1);
+  }));
+});
+
+for (const closed of ['window', 'sidebar'] as const) test(`closing a ${closed} capture after the deadline but before its timer still rescues every preedit`, async () => {
+  await withClock(async advance => withWindow(async timers => {
+    const { plugin, app } = createPlugin();
+    plugin.savedData = { settings: { language: 'en' } };
+    await plugin.onload();
+    assert.ok(plugin.access.startTrial().ok);
+    const roots = [new GateElement(), new GateElement()];
+    const views = [new harness.CapturePanel(plugin, closed), new harness.CapturePanel(plugin, 'immersive')];
+    const values = ['Closed window preedit', 'Open window preedit'];
+    views.forEach((view, index) => {
+      view.mount(roots[index]!);
+      view.editor.dispatchEvent(new Event('compositionstart'));
+      view.editor.value = values[index]!;
+    });
+    advance(24 * 60);
+    // The first view closes before the expiry timer has run.
+    views[0]!.destroy();
+    timers.flush();
+    assert.equal(views[1]!.editor.readOnly, true);
+    for (const text of values) recoverySection(roots[1]!, text);
+    views[1]!.destroy();
+    plugin.onunload();
+    await plugin.writes;
+    const next = new harness.TangrowPlugin(app);
+    next.savedData = structuredClone(plugin.savedData);
+    await next.onload();
+    assert.deepEqual(new Set([next.loadComposer().capture, ...next.loadRecoveryDrafts().map(draft => draft.text)]), new Set(values));
+  }));
+});
+
+test('closing the sidebar after the deadline but before its timer keeps the writing preedit', async () => {
+  await withClock(async advance => withWindow(async timers => {
+    const { plugin } = createPlugin();
+    plugin.savedData = { settings: { language: 'en' } };
+    await plugin.onload();
+    assert.ok(plugin.access.startTrial().ok);
+    const studio = await mountedStudio(plugin, new GateElement());
+    const writing = studio.scratchEditor as unknown as StudioElement;
+    writing.dispatchEvent(new Event('compositionstart'));
+    writing.value = 'Writing preedit';
+    advance(24 * 60);
+    await studio.onClose();
+    timers.flush();
+    assert.equal(plugin.loadWritingDraft().text, 'Writing preedit');
   }));
 });
 

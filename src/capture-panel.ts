@@ -220,6 +220,12 @@ export class CapturePanel {
   }
 
   destroy(): void {
+    // The deadline can pass before its timer fires. Lock while this panel is still registered, so its unsaved
+    // buffer is rescued together with every other window's instead of disappearing with the control.
+    if (this.mounted && this.editor && !this.editor.readOnly && !this.host.access.canUse()) {
+      this.host.access.refresh();
+      if (this.editor && !this.editor.readOnly) this.protectDraft(true);
+    }
     openPanels.get(this.host)?.delete(this);
     this.gate?.dispose();
     this.gate = undefined;

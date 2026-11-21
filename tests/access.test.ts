@@ -139,6 +139,14 @@ test('frequent checks store the clock mark at most once a minute, and unload sto
   assert.equal(reopened.snapshot().remainingMs, 24 * hour - (latest - vector.payload.iat * 1000));
 });
 
+test('a device whose platform the server cannot read is listed as unknown', async () => {
+  const { access, state } = fixture();
+  const devices = [{ platform: null, lastRenewedAt: vector.payload.iat, isCurrent: false }];
+  state.request = async () => ({ status: 409, text: JSON.stringify({ error: 'device_limit', deviceLimit: 1, devices }) });
+  assert.deepEqual(await access.activate(vector.code), { ok: false, error: 'device_limit' });
+  assert.deepEqual(access.deviceList, { deviceLimit: 1, devices });
+});
+
 test('first activation verifies this device; expired signed leases renew with rotated keys', async () => {
   const { access, state, deps, records } = fixture();
   const sign = (overrides: Partial<Lease>) => signLease({ ...vector.payload, ...overrides } as Lease, Buffer.from(vector.seedHex, 'hex'));

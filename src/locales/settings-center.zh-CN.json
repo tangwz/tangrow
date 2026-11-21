@@ -102,5 +102,6 @@
   "This device was released.": "已解除本机绑定。",
   "Back to settings": "返回设置入口",
   "Search settings": "搜索设置",
-  "No matching settings": "没有找到匹配的设置"
+  "No matching settings": "没有找到匹配的设置",
+  "Unknown device": "未知设备"
 }

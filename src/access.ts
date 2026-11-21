@@ -10,7 +10,8 @@ export const LICENSE_ENDPOINT = licenseClient.endpoint;
 export const LICENSE_KEYS: PublicKeys = Object.freeze(licenseClient.keys);
 const platforms = ['macOS', 'Windows', 'Linux', 'iOS', 'Android'] as const;
 export type DevicePlatform = typeof platforms[number];
-type Device = { platform: DevicePlatform; lastRenewedAt: number; isCurrent: boolean };
+/** `platform` is null when the license server cannot read the stored value. */
+type Device = { platform: DevicePlatform | null; lastRenewedAt: number; isCurrent: boolean };
 type DeviceList = { devices: Device[]; deviceLimit: number };
 type RecordName = 'device' | 'trial' | 'lease';
 /** `trustedAt` is the signed issue time that last corrected `maxSeenAt`. */
@@ -24,7 +25,7 @@ const timestamp = (value: unknown): value is number => typeof value === 'number'
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object';
 function deviceList(value: Record<string, unknown>): DeviceList | null {
   if (!timestamp(value.deviceLimit) || !Array.isArray(value.devices) || !value.devices.every(device => object(device) &&
-    platforms.includes(device.platform as DevicePlatform) && timestamp(device.lastRenewedAt) && typeof device.isCurrent === 'boolean')) return null;
+    (device.platform === null || platforms.includes(device.platform as DevicePlatform)) && timestamp(device.lastRenewedAt) && typeof device.isCurrent === 'boolean')) return null;
   return { deviceLimit: value.deviceLimit, devices: value.devices };
 }
 

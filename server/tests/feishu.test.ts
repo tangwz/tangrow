@@ -6,6 +6,7 @@ import test from 'node:test';
 import vector from '../../tests/fixtures/license-vectors.json' with { type: 'json' };
 import { loadConfig } from '../config.js';
 import { FeishuStore } from '../feishu.js';
+import { LicenseService } from '../service.js';
 import defaults from '../fields.json' with { type: 'json' };
 
 const settings = {
@@ -147,10 +148,11 @@ test('duplicate rows for one device resolve to the latest renewal, with a releas
   assert.equal(device?.status, 'released');
 });
 
-test('a hand-edited device row is skipped and reported instead of blocking the license', async () => {
+test('a device row with unreadable seat fields keeps its seat; only rows without a digest are skipped', async () => {
   const config = loadConfig({ TANGROW_LICENSE_SETTINGS: JSON.stringify(settings) }).feishu;
   const names = config.fields.device;
   const lic = vector.payload.lic;
+  const now = 5_000_000;
   const fetcher: typeof fetch = async input => {
     if (new URL(String(input)).pathname.endsWith('/tenant_access_token/internal')) {
       return Response.json({ code: 0, tenant_access_token: 'test-token', expire: 7200 });
@@ -160,15 +162,59 @@ test('a hand-edited device row is skipped and reported instead of blocking the l
         [names.licenseId]: lic, [names.digest]: vector.deviceDigest, [names.platform]: 'macOS',
         [names.firstActivatedAt]: 1000, [names.lastRenewedAt]: 2000, [names.status]: defaults.status.active,
       } },
-      // An operator added this row by hand and left the renewal date and status empty.
-      { record_id: 'missing-date', fields: { [names.licenseId]: lic, [names.digest]: 'e'.repeat(64), [names.platform]: 'iOS' } },
+      // An operator added this row by hand and left the dates, status and platform empty.
+      { record_id: 'hand-edited', fields: { [names.licenseId]: lic, [names.digest]: 'e'.repeat(64) } },
+      // No device can ever renew a row without a valid digest.
+      { record_id: 'no-digest', fields: { [names.licenseId]: lic, [names.digest]: 'not a digest', [names.status]: defaults.status.active } },
     ] } });
   };
   const warnings: string[] = [];
-  const store = new FeishuStore(config, fetcher, Date.now, message => warnings.push(message));
+  const store = new FeishuStore(config, fetcher, () => now, message => warnings.push(message));
   const devices = await store.listDevices(lic, new AbortController().signal);
-  assert.deepEqual(devices.map(device => device.recordId), ['good']);
-  assert.deepEqual(warnings, ['Skipped invalid Feishu device row missing-date']);
+  assert.deepEqual(devices.map(device => device.recordId), ['good', 'hand-edited']);
+  assert.deepEqual(devices[1], {
+    recordId: 'hand-edited', licenseId: lic, digest: 'e'.repeat(64), platform: null,
+    firstActivatedAt: now / 1000, lastRenewedAt: now / 1000, status: 'active',
+  });
+  assert.deepEqual(warnings, [
+    'Feishu device row hand-edited has an invalid status, last renewal, first activation, platform',
+    'Skipped invalid Feishu device row no-digest',
+  ]);
+});
+
+test('a full license stays full when another device row lacks only its first activation date', async () => {
+  const config = loadConfig({ TANGROW_LICENSE_SETTINGS: JSON.stringify(settings) });
+  const names = config.feishu.fields;
+  const lic = vector.payload.lic;
+  const nowMs = vector.payload.iat * 1000;
+  const fetcher: typeof fetch = async input => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith('/tenant_access_token/internal')) {
+      return Response.json({ code: 0, tenant_access_token: 'test-token', expire: 7200 });
+    }
+    if (url.pathname.includes('/test-license/')) {
+      return Response.json({ code: 0, data: { has_more: false, items: [{ record_id: 'license-row', fields: {
+        [names.license.id]: lic, [names.license.codeDigest]: vector.codeDigest,
+        [names.license.deviceLimit]: 1, [names.license.status]: defaults.status.active,
+      } }] } });
+    }
+    if (url.pathname.endsWith('/search')) {
+      return Response.json({ code: 0, data: { has_more: false, items: [{ record_id: 'other-device', fields: {
+        [names.device.licenseId]: lic, [names.device.digest]: 'e'.repeat(64), [names.device.platform]: 'Windows',
+        [names.device.lastRenewedAt]: nowMs, [names.device.status]: defaults.status.active,
+      } }] } });
+    }
+    throw new Error('A full license must not write a device row');
+  };
+  const service = new LicenseService(new FeishuStore(config.feishu, fetcher, () => nowMs, () => {}), config.keys, () => nowMs);
+  const result = await service.handle('activate', {
+    code: vector.code, dev: vector.deviceDigest, platform: 'macOS', pluginVersion: '0.4.0',
+  }, new AbortController().signal, () => {});
+  assert.equal(result.status, 409);
+  assert.deepEqual(result.body, {
+    error: 'device_limit', deviceLimit: 1,
+    devices: [{ platform: 'Windows', lastRenewedAt: vector.payload.iat, isCurrent: false }],
+  });
 });
 
 test('duplicate license rows stay unavailable and name the rows to fix', async () => {
