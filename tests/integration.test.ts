@@ -81,7 +81,7 @@ interface Harness {
   ItemView: typeof MockItemView;
   notices: string[];
   Platform: { isDesktopApp: boolean; isMacOS: boolean; isMobile?: boolean; isAndroidApp?: boolean; isIosApp?: boolean };
-  compositionTiming: { later(callback: () => void): void };
+  compositionTiming: { later(callback: () => void, owner: Window): void };
   openCaptureWindow(app: unknown, host: unknown): Promise<void>;
 }
 
@@ -139,6 +139,7 @@ const moduleObject: { exports: unknown } = { exports: {} };
 new Function('module', 'exports', 'require', bundled.outputFiles[0]!.text)(moduleObject, moduleObject.exports, createRequire(import.meta.url));
 const harness = moduleObject.exports as Harness;
 // Settle each composition at once; tests that check the deferred verdict install their own queue.
+const nativeCompositionTiming = harness.compositionTiming.later;
 harness.compositionTiming.later = callback => callback();
 
 function createPlugin(): { plugin: TestPlugin; app: MockApp } {
@@ -2098,35 +2099,58 @@ test('capture keeps commits, including IME toggles and mouse picks, and drops co
   });
 });
 
-test('a composition ended by a window switch is judged after the blur that Chromium dispatches next', async () => {
+test('a popout keeps composition pending across an intervening timer before the window blurs', async () => {
   await withWindow(async () => {
-    const queue: (() => void)[] = [];
     const previous = harness.compositionTiming.later;
-    harness.compositionTiming.later = callback => { queue.push(callback); };
+    harness.compositionTiming.later = nativeCompositionTiming;
     try {
       const { plugin } = createPlugin();
       plugin.saveComposer({ capture: 'Kept' });
       const panel = new harness.CapturePanel(plugin, 'window');
       panel.mount(new GateElement());
       const editor = panel.editor;
+      const timers = new Map<() => void, number>();
+      Object.assign(editor.ownerDocument, { defaultView: {
+        setTimeout: (callback: () => void, delay: number) => timers.set(callback, delay)
+      } });
+      const runTimersUpTo = (delay: number) => {
+        for (const [callback, timeout] of timers) {
+          if (timeout > delay) continue;
+          timers.delete(callback);
+          callback();
+        }
+      };
       editor.dispatchEvent(new Event('compositionstart'));
       editor.value = 'Kept nihao';
       editor.dispatchEvent(new Event('input'));
-      // Chromium finishes the composition first, then blurs the control as the window deactivates.
+      // The popout ran a zero-delay task before dispatching the focus loss caused by its close button.
       editor.dispatchEvent(new Event('compositionend'));
-      editor.dispatchEvent(new Event('blur'));
+      assert.equal(timers.size, 1);
+      runTimersUpTo(0);
       assert.equal(plugin.loadComposer().capture, 'Kept');
-      for (const settle of queue.splice(0)) settle();
+      editor.dispatchEvent(new Event('blur'));
+      editor.dispatchEvent(new Event('focus'));
+      runTimersUpTo(Infinity);
       assert.equal(plugin.loadComposer().capture, 'Kept');
       assert.equal(editor.value, 'Kept');
-      // A confirmed composition with focus still in place is saved once it settles.
-      editor.dispatchEvent(new Event('focus'));
+
       editor.dispatchEvent(new Event('compositionstart'));
       editor.value = 'Kept 你好';
       editor.dispatchEvent(new Event('input'));
       editor.dispatchEvent(new Event('compositionend'));
-      for (const settle of queue.splice(0)) settle();
+      // Starting the next composition must preserve the first commit before the timer fires.
+      editor.dispatchEvent(new Event('compositionstart'));
       assert.equal(plugin.loadComposer().capture, 'Kept 你好');
+      editor.value = 'Kept 你好 再見';
+      editor.dispatchEvent(new Event('compositionend'));
+      editor.dispatchEvent(Object.assign(new Event('beforeinput'), { inputType: 'insertCompositionText' }));
+      assert.equal(plugin.loadComposer().capture, 'Kept 你好');
+      editor.dispatchEvent(Object.assign(new Event('beforeinput'), { inputType: 'insertText' }));
+      assert.equal(plugin.loadComposer().capture, 'Kept 你好 再見');
+      editor.value += '!';
+      editor.dispatchEvent(new Event('input'));
+      runTimersUpTo(Infinity);
+      assert.equal(plugin.loadComposer().capture, 'Kept 你好 再見!');
       panel.destroy();
     } finally { harness.compositionTiming.later = previous; }
   });

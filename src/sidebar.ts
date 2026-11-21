@@ -881,6 +881,8 @@ export class TangrowSidebar extends ItemView {
       });
       control.addEventListener('compositionstart', () => {
         if (!this.isStudioControl(control) || !tracksComposition()) return;
+        this.scratchComposition?.flush();
+        if (!this.isStudioControl(control)) return;
         if (this.host.beginWritingDraftComposition(this.viewId, this.scratchRevision)) {
           this.scratchComposition?.dispose();
           this.scratchComposition = new DraftComposition(control);
@@ -907,6 +909,10 @@ export class TangrowSidebar extends ItemView {
         composition.settle(confirmed => {
           // Closing, a lock or a new composition took over in the meantime and already released the lease.
           if (this.scratchComposition !== composition) return;
+          if (!this.host.access.canUse()) {
+            this.host.access.refresh();
+            return;
+          }
           composition.dispose();
           this.scratchComposition = undefined;
           if (this.isStudioControl(control)) {

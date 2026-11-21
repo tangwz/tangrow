@@ -101,6 +101,8 @@ export class CapturePanel {
     const canEdit = () => this.mounted && this.editor === editor && editor.isConnected && !editor.readOnly && !this.protecting;
     editor.addEventListener('compositionstart', () => {
       if (!canEdit() || !tracksComposition()) return;
+      this.composition?.flush();
+      if (!canEdit()) return;
       this.composition?.dispose();
       this.composition = new DraftComposition(editor);
       this.updateComposerControls();
@@ -117,7 +119,7 @@ export class CapturePanel {
       }
       composition.settle(confirmed => {
         // A new composition, a lock or closing the view took over in the meantime.
-        if (this.composition !== composition) return;
+        if (this.composition !== composition || this.rescueIfAccessEnded()) return;
         this.composition = undefined;
         composition.dispose();
         if (!canEdit()) return;
