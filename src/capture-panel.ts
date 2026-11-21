@@ -1,4 +1,4 @@
-import { AccessGate } from './access-gate';
+import { AccessGate, showRecoveryDrafts } from './access-gate';
 import { Notice, setIcon, setTooltip } from 'obsidian';
 import { captureCalendar, captureDay, groupCapturesByDay, shiftCaptureMonth } from './capture-data';
 import { capturePreview } from './capture-preview';
@@ -7,6 +7,7 @@ import { describeError, translate } from './i18n';
 import type { TranslationValues } from './i18n';
 import type { CaptureSummary, SidebarHost } from './types';
 import { JOURNAL_PERIODS, journalInterval, type JournalPeriod } from './periodic-notes';
+import { SidebarUI } from './ui';
 
 const PAGE_SIZE = 12;
 const PREVIEW_CONCURRENCY = 3;
@@ -14,12 +15,16 @@ const PREVIEW_CACHE_SIZE = 200;
 
 type CaptureSurface = 'sidebar' | 'window' | 'immersive';
 interface PreviewJob { key: string; path: string; targets: Set<HTMLElement> }
+const openPanels = new WeakMap<SidebarHost, Set<CapturePanel>>();
 
 export class CapturePanel {
   private readonly instanceId = `tangrow-capture-${crypto.randomUUID()}`;
+  private conflict?: { id: string; text: string };
   private gate?: AccessGate;
   private root?: HTMLElement;
   private editor?: HTMLTextAreaElement;
+  private syncedCapture = '';
+  private recoveryArea?: HTMLElement;
   private saveButton?: HTMLButtonElement;
   private count?: HTMLElement;
   private destination?: HTMLElement;
@@ -39,6 +44,7 @@ export class CapturePanel {
   private buttonLabels = new Map<HTMLButtonElement, { source: string; values?: TranslationValues }>();
   private unsubscribe?: () => void;
   private unsubscribeComposer?: () => void;
+  private unsubscribeRecovery?: () => void;
   private selectedDay: string | null = null;
   private focusedDay = captureDay(Date.now());
   private year = new Date().getFullYear();
@@ -49,6 +55,7 @@ export class CapturePanel {
   private language = '';
   private submitting = false;
   private composing = false;
+  private protecting = false;
   private mounted = false;
   private dayButtons = new Map<string, HTMLButtonElement>();
   private previewCache = new Map<string, string | null>();
@@ -69,10 +76,17 @@ export class CapturePanel {
   mount(container: HTMLElement): void {
     if (this.mounted) this.destroy();
     this.mounted = true;
+    const panels = openPanels.get(this.host) ?? new Set<CapturePanel>();
+    panels.add(this);
+    openPanels.set(this.host, panels);
     this.root = container.createDiv({ cls: 'tangrow-capture-panel' });
     if (this.surface !== 'sidebar') {
       this.gate = new AccessGate(this.host, this.root, locked => this.protectDraft(locked), () => {
-        if (this.editor) this.editor.readOnly = false;
+        if (this.editor) {
+          this.editor.readOnly = false;
+          this.syncedCapture = this.editor.value;
+        }
+        this.refreshRecoveryDrafts();
         this.refresh();
       });
     }
@@ -82,15 +96,15 @@ export class CapturePanel {
     this.label(this.root, 'p', 'A small note in your existing inbox, ready to organize when you are.', 'tangrow-section-caption');
     const composer = this.root.createDiv({ cls: 'tangrow-composer' });
     this.editor = composer.createEl('textarea', { cls: 'tangrow-textarea', attr: { rows: '6' } });
-    this.editor.value = this.host.loadComposer().capture;
-    this.editor.addEventListener('compositionstart', () => { this.composing = true; });
+    this.editor.value = this.syncedCapture = this.host.loadComposer().capture;
+    this.editor.addEventListener('compositionstart', () => { this.composing = !this.editor?.readOnly; });
     this.editor.addEventListener('compositionend', () => {
       this.composing = false;
-      if (this.editor && !this.editor.readOnly) this.host.saveComposer({ capture: this.editor.value });
+      if (this.editor && !this.editor.readOnly && !this.protecting) this.host.saveComposer({ capture: this.editor.value });
       this.syncComposer();
     });
     this.editor.addEventListener('input', () => {
-      if (this.editor && !this.editor.readOnly) this.host.saveComposer({ capture: this.editor.value });
+      if (this.editor && !this.editor.readOnly && !this.protecting) this.host.saveComposer({ capture: this.editor.value });
       this.updateComposerControls();
     });
     this.editor.addEventListener('keydown', (event) => {
@@ -108,6 +122,8 @@ export class CapturePanel {
     if (this.surface !== 'immersive') this.button(composerFooter, 'Immersive capture', () => this.host.openImmersiveCapture(), 'expand', 'tangrow-capture-icon-button');
     this.saveButton = this.button(composerFooter, 'Save capture', () => this.submit(), 'arrow-up-right', 'mod-cta');
     this.destination = this.root.createEl('p', { cls: 'tangrow-destination' });
+    this.recoveryArea = this.root.createDiv();
+    this.unsubscribeRecovery = this.host.subscribeRecoveryDrafts(() => this.refreshRecoveryDrafts());
     if (this.surface === 'immersive') {
       this.root.addClass('tangrow-capture-composer-only');
       this.label(this.root, 'p', 'Drafts sync automatically. Mod+Enter saves; Esc returns to your workspace.', 'tangrow-muted tangrow-immersive-hint');
@@ -170,6 +186,7 @@ export class CapturePanel {
     const scrollTop = scrollParent?.scrollTop;
     this.language = this.host.settings.language;
     if (languageChanged) {
+      this.refreshRecoveryDrafts();
       for (const { element, source, values } of this.labels) element.textContent = this.t(source, values);
       this.root.setAttribute('aria-label', this.t('Quick capture'));
       this.editor?.setAttribute('placeholder', this.t('An idea, a question, a link...'));
@@ -203,19 +220,23 @@ export class CapturePanel {
   }
 
   destroy(): void {
+    openPanels.get(this.host)?.delete(this);
     this.gate?.dispose();
     this.gate = undefined;
     this.mounted = false;
     this.unsubscribe?.();
     this.unsubscribeComposer?.();
+    this.unsubscribeRecovery?.();
     this.unsubscribe = undefined;
     this.unsubscribeComposer = undefined;
+    this.unsubscribeRecovery = undefined;
     this.previewQueue = [];
     this.previewJobs.clear();
     this.dayButtons.clear();
     this.root?.remove();
     this.root = undefined;
     this.editor = undefined;
+    this.recoveryArea = undefined;
     this.periodControls = undefined;
     this.statusFilter = undefined;
     this.labels = [];
@@ -251,28 +272,60 @@ export class CapturePanel {
   }
 
   protectDraft(locked: boolean): void {
-    if (!this.editor) return;
-    if (!this.editor.readOnly && this.editor.value !== this.host.loadComposer().capture) {
-      this.host.saveComposer({ capture: this.editor.value });
+    const editors = Array.from(openPanels.get(this.host) ?? []).flatMap(panel =>
+      panel.editor && !panel.editor.readOnly ? [{ panel, editor: panel.editor, text: panel.editor.value }] : []);
+    if (!editors.length) return;
+    // Snapshot every window before changing readOnly or notifying a shared composer listener.
+    const buffers = new Map<string, CapturePanel>();
+    for (const { panel, text } of editors) if (text && !buffers.has(text)) buffers.set(text, panel);
+    const shared = this.host.loadComposer().capture;
+    const primary = buffers.has(shared) ? shared : buffers.keys().next().value ?? '';
+    for (const { panel } of editors) panel.protecting = true;
+    try {
+      if (locked) {
+        for (const { panel, editor } of editors) {
+          editor.readOnly = true;
+          panel.composing = false;
+        }
+      }
+      if (primary !== shared) this.host.saveComposer({ capture: primary });
+      for (const [text, panel] of buffers) {
+        if (text === primary) continue;
+        if (panel.conflict?.text !== text) panel.conflict = { id: crypto.randomUUID(), text };
+        this.host.preserveRecoveryDraft(panel.conflict.id, 'Quick capture', text);
+      }
+    } finally {
+      for (const { panel } of editors) {
+        panel.protecting = false;
+        panel.refreshRecoveryDrafts();
+      }
     }
-    this.composing = false;
-    if (locked) this.editor.readOnly = true;
   }
 
   private syncComposer(): void {
-    if (!this.mounted || !this.editor) return;
+    if (!this.mounted || !this.editor || this.protecting) return;
+    if (this.editor.readOnly) return;
     const value = this.host.loadComposer().capture;
-    if (value !== this.editor.value && !this.composing) {
+    if (value === this.editor.value) this.syncedCapture = value;
+    else if (!this.composing && this.syncedCapture === this.editor.value) {
       const focused = this.editor.ownerDocument.activeElement === this.editor;
       const start = this.editor.selectionStart;
       const end = this.editor.selectionEnd;
       const direction = this.editor.selectionDirection;
       const scroll = this.editor.scrollTop;
-      this.editor.value = value;
+      this.editor.value = this.syncedCapture = value;
       if (focused) this.editor.setSelectionRange(Math.min(start, value.length), Math.min(end, value.length), direction);
       this.editor.scrollTop = scroll;
     }
     this.updateComposerControls();
+  }
+
+  private refreshRecoveryDrafts(): void {
+    if (!this.recoveryArea) return;
+    const drafts = this.editor?.readOnly ? [] : this.host.loadRecoveryDrafts();
+    this.recoveryArea.empty();
+    this.recoveryArea.hidden = !drafts.length;
+    if (drafts.length) showRecoveryDrafts(this.recoveryArea, new SidebarUI(() => this.host.settings.language), this.host, drafts);
   }
 
   private updateComposerControls(): void {

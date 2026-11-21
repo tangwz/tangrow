@@ -3,11 +3,12 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { build } from 'esbuild';
-import type { Access, AccessResult, AccessState } from '../src/access';
+import { Access, type AccessResult, type AccessState } from '../src/access';
 import type TangrowPlugin from '../src/main';
 import { ITEMS, SECTION_IDS, searchSettings } from '../src/settings/catalog';
 import { DEFAULT_SETTINGS } from '../src/types';
 import * as mock from './obsidian-mock';
+import vector from './fixtures/license-vectors.json';
 
 type ElementOptions = { text?: string; value?: string; type?: string; cls?: string; attr?: Record<string, string> };
 
@@ -46,11 +47,21 @@ class Element extends EventTarget {
 
   createDiv(options?: ElementOptions): Element { return this.createEl('div', options); }
   createSpan(options?: ElementOptions): Element { return this.createEl('span', options); }
+  addClass(name: string): void { this.classes.add(name); }
+  removeClass(name: string): void { this.classes.delete(name); }
   empty(): void { this.children = []; }
+  remove(): void { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter((child) => child !== this); }
   focus(): void { this.ownerDocument.activeElement = this; }
   scrollIntoView(): void {}
-  click(): void { void this.onclick?.(); }
+  click(): void {
+    if (!this.disabled) {
+      this.dispatchEvent(new Event('click'));
+      void this.onclick?.();
+    }
+  }
   setAttribute(key: string, value: string): void { this.attributes[key] = value; }
+  getAttribute(key: string): string | null { return this.attributes[key] ?? null; }
+  removeAttribute(key: string): void { delete this.attributes[key]; }
   insertBefore(child: Element, sibling: Element): void {
     this.children = this.children.filter((element) => element !== child);
     this.children.splice(this.children.indexOf(sibling), 0, child);
@@ -122,7 +133,7 @@ const repository = fileURLToPath(new URL('../', import.meta.url));
 const bundle = await build({
   absWorkingDir: repository,
   stdin: {
-    contents: "export { default as TangrowPlugin } from './src/main'; export { TangrowSettings } from './src/settings/tab';",
+    contents: "export { default as TangrowPlugin } from './src/main'; export { TangrowSettings } from './src/settings/tab'; export { AccessGate } from './src/access-gate';",
     resolveDir: repository
   },
   bundle: true, write: false, format: 'cjs', platform: 'node', target: 'node22', external: ['obsidian']
@@ -135,6 +146,7 @@ new Function('module', 'exports', 'require', bundle.outputFiles[0]!.text)(
 const harness = moduleObject.exports as {
   TangrowPlugin: new (app: mock.MockApp) => TangrowPlugin & { saveFailures: number; saveCalls: number; savedData: unknown };
   TangrowSettings: new (host: TangrowPlugin) => PluginSettingTab & { display(): void; hide(): void };
+  AccessGate: new (host: TangrowPlugin, root: Element, flush: () => void, restore: () => void) => { mount(): void; dispose(): void };
 };
 
 function fixture(language: 'en' | 'zh-CN' = 'en') {
@@ -148,10 +160,13 @@ function fixture(language: 'en' | 'zh-CN' = 'en') {
     state: 'active' as AccessState,
     snapshot() { return { state: this.state, remainingMs: 0 }; },
     canUse() { return this.state === 'active' || this.state === 'trial'; },
+    hasLease() { return this.state === 'active' || this.state === 'needs_network'; },
     subscribe(listener: (event: string) => void) { listeners.add(listener); return () => listeners.delete(listener); },
     change(state: AccessState) { this.state = state; for (const listener of listeners) listener('change'); },
     deviceList: null as Access['deviceList'],
+    deviceLimitReached: false,
     async activate(_code: string): Promise<AccessResult> { return { ok: true }; },
+    async renew(): Promise<AccessResult> { return { ok: true }; },
     async release(): Promise<AccessResult> { return { ok: true }; }
   };
   Object.assign(plugin, { access, register: (dispose: () => void) => cleanup.push(dispose) });
@@ -345,6 +360,55 @@ test('the settings toggle and sidebar action share the default width and clear p
   dispose();
 });
 
+test('a fourth device can open its rejected activation from the gate and review the linked devices', async (context) => {
+  const mainDocument = new EventTarget();
+  Object.defineProperty(globalThis, 'document', { value: mainDocument, configurable: true });
+  Object.defineProperty(globalThis, 'window', { value: { document: mainDocument }, configurable: true });
+  context.after(() => { Reflect.deleteProperty(globalThis, 'window'); Reflect.deleteProperty(globalThis, 'document'); });
+  const { app, plugin, tab, root, byText, dispose } = fixture();
+  context.after(dispose);
+  tab.hide();
+  Object.assign(app, { setting: { open() {}, openTabById() { tab.display(); } } });
+  const devices = ['macOS', 'Windows', 'Android'].map((platform, index) => ({
+    platform, isCurrent: false, lastRenewedAt: vector.payload.iat - index * 86400
+  }));
+  const storage = mock.memoryStorage();
+  const requests: string[] = [];
+  const access = plugin.access = new Access({
+    storage: () => storage, now: () => vector.payload.iat * 1000, bytes: () => Buffer.from(vector.deviceId, 'hex'),
+    coordination: { initializeDevice: async write => write(), tryActivate: send => send() },
+    jitter: () => 0, keys: {}, platform: 'iOS', version: '1',
+    request: async (path) => {
+      requests.push(path);
+      return { status: 409, text: JSON.stringify({ error: 'device_limit', deviceLimit: 3, devices }) };
+    },
+    later: () => 0, cancel() {}, warn() {}
+  });
+  access.start();
+  context.after(() => access.dispose());
+  const locked = new Element();
+  const gate = new harness.AccessGate(plugin, locked, () => {}, () => {});
+  gate.mount();
+  context.after(() => gate.dispose());
+  const clickGate = async (label: string) => {
+    const button = locked.descendants().find((item) => item.attributes['aria-label'] === label && item.tagName === 'BUTTON');
+    assert.ok(button, label);
+    button.click();
+    await new Promise(resolve => setImmediate(resolve));
+  };
+
+  locked.querySelector('input')!.value = vector.code;
+  await clickGate('Activate this device');
+  await clickGate('Activation and updates');
+  assert.deepEqual(requests, ['/v1/activate']);
+  assert.equal(byText('3/3').hidden, false);
+  const dates = new Intl.DateTimeFormat('en', { dateStyle: 'medium' });
+  assert.deepEqual(root.querySelector('ul')!.children.map((item) => item.textContent),
+    devices.map(({ platform, lastRenewedAt }) => `${platform} · Last used ${dates.format(lastRenewedAt * 1000)}`));
+  assert.equal(byText('Device limit reached. Release one of your old devices, wait until it has gone 45 days without renewal, or contact the seller.').hidden, false);
+  assert.equal(byText('Release this device').hidden, true);
+});
+
 test('activation shows the device limit response and releasing this device requires confirmation', async () => {
   const { access, root, row, navigate, byText, dispose } = fixture();
   access.change('not_started');
@@ -358,6 +422,7 @@ test('activation shows the device limit response and releasing this device requi
   access.activate = async (submitted) => {
     assert.equal(submitted, code.value);
     access.deviceList = { deviceLimit: 3, devices };
+    access.deviceLimitReached = true;
     access.change('not_started');
     return { ok: false, error: 'device_limit' };
   };
@@ -369,6 +434,7 @@ test('activation shows the device limit response and releasing this device requi
   assert.equal(byText('Device limit reached. Release one of your old devices, wait until it has gone 45 days without renewal, or contact the seller.').hidden, false);
 
   access.deviceList = { deviceLimit: 3, devices: [{ platform: 'iOS', lastRenewedAt, isCurrent: true }] };
+  access.deviceLimitReached = false;
   access.change('active');
   assert.equal(byText('1/3').tagName, 'SPAN');
   assert.match(root.querySelector('ul')!.children[0]!.textContent, /iOS \(this device\)/);
@@ -390,4 +456,33 @@ test('activation shows the device limit response and releasing this device requi
   assert.equal(releases, 1);
   assert.equal(byText('This device was released.').hidden, false);
   dispose();
+});
+
+test('renewal recovery explains how to reactivate and keeps the existing lease controls available', async () => {
+  for (const language of ['en', 'zh-CN'] as const) {
+    const { access, plugin, navigate, row, byText, dispose } = fixture(language);
+    access.change('needs_network');
+    navigate(plugin.t('Activation and updates'));
+    assert.equal(row('redemption').querySelector('input')!.disabled, true);
+    assert.equal(byText(plugin.t('Activate this device')).disabled, true);
+    access.renew = async () => ({ ok: false, error: 'reactivate_required' });
+    byText(plugin.t('Renew online')).click();
+    await Promise.resolve();
+    const instruction = 'In Activation and updates, release this device and enter your original redemption code to reactivate it.';
+    if (language === 'zh-CN') assert.notEqual(plugin.t(instruction), instruction);
+    assert.equal(byText(plugin.t(instruction)).hidden, false);
+    assert.equal(byText(plugin.t('Release this device')).hidden, false);
+
+    const locked = new Element();
+    const gate = new harness.AccessGate(plugin, locked, () => {}, () => {});
+    gate.mount();
+    assert.equal(locked.querySelector('input'), undefined);
+    const renew = locked.descendants().find((item) => item.attributes['aria-label'] === plugin.t('Renew now'));
+    assert.ok(renew);
+    renew.click();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(mock.notices.at(-1), plugin.t(instruction));
+    gate.dispose();
+    dispose();
+  }
 });

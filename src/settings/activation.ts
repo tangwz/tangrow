@@ -1,5 +1,6 @@
 import { Modal, Notice } from 'obsidian';
 import type { AccessResult } from '../access';
+import { accessErrorMessage } from '../access-messages';
 import type TangrowPlugin from '../main';
 import { settingRows } from './sections';
 
@@ -10,21 +11,6 @@ const stateLabels = {
   active: 'Activated',
   needs_network: 'Internet connection required'
 } as const;
-
-const errorLabels: Record<string, string> = {
-  invalid_code: 'Check your redemption code and try again.',
-  revoked: 'This redemption code has been revoked.',
-  rate_limited: 'Too many requests. Try again later.',
-  storage: 'Tangrow could not save access on this device.',
-  unavailable: 'The trial is unavailable on this device.',
-  no_lease: 'There is no activation to renew or release on this device.',
-  timeout: 'The activation service timed out. Try again.',
-  upstream_unavailable: 'The activation service is temporarily unavailable. Try again later.',
-  request_failed: 'Could not reach the activation service. Check your connection and try again.',
-  invalid_response: 'The activation service returned an unexpected response.',
-  bad_request: 'The activation service rejected the request.',
-  stale: 'Access changed during the request. Try again.'
-};
 
 export function renderAccessStatus(container: HTMLElement, plugin: TangrowPlugin): void {
   const { state } = plugin.access.snapshot();
@@ -55,6 +41,7 @@ export function renderActivation(container: HTMLElement, plugin: TangrowPlugin):
   const access = plugin.access;
   const rows = settingRows(plugin, 'activation');
   const redemption = rows.row(container, 'redemption');
+  const redemptionHelp = redemption.descEl.textContent;
   const code = redemption.controlEl.createEl('input', {
     type: 'text', placeholder: 'TGRW-XXXX-XXXX-XXXX-XXXX',
     attr: { 'aria-label': t('Redemption code'), autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false' }
@@ -80,7 +67,6 @@ export function renderActivation(container: HTMLElement, plugin: TangrowPlugin):
 
   let busy = false;
   let disposed = false;
-  let fullList: typeof access.deviceList = null;
   let confirmation: ReleaseConfirmation | undefined;
   let renderedList: typeof access.deviceList | undefined;
 
@@ -92,12 +78,12 @@ export function renderActivation(container: HTMLElement, plugin: TangrowPlugin):
       ? hours > 0 ? t('Trial remaining: {hours} h {minutes} min', { hours, minutes: minutes % 60 })
         : t('Trial remaining: {minutes} min', { minutes })
       : t(stateLabels[state]);
-    const linked = access.deviceList;
-    const includesThisDevice = linked?.devices.some((device) => device.isCurrent) === true;
-    const full = linked !== null && linked === fullList;
-    const hasLease = state === 'active' || state === 'needs_network' || includesThisDevice;
+    const hasLease = access.hasLease();
+    const full = access.deviceLimitReached;
+    redemption.descEl.textContent = hasLease ? t(accessErrorMessage('release_first')) : redemptionHelp;
+    code.disabled = hasLease;
+    activate.disabled = busy || hasLease;
     trialRow.settingEl.hidden = state !== 'not_started';
-    activate.disabled = busy;
     trial.disabled = busy;
     release.hidden = !hasLease;
     release.disabled = busy;
@@ -106,7 +92,7 @@ export function renderActivation(container: HTMLElement, plugin: TangrowPlugin):
     renew.textContent = t(state === 'needs_network' ? 'Renew online' : 'Refresh linked devices');
     message.hidden = !message.textContent;
     limitHelp.hidden = !full;
-    const visibleList = full || includesThisDevice ? linked : null;
+    const visibleList = full || hasLease ? access.deviceList : null;
     deviceCount.textContent = visibleList
       ? `${visibleList.devices.length}/${visibleList.deviceLimit}`
       : t(hasLease ? 'Refresh to load the device list.' : 'Activate to see linked devices.');
@@ -125,21 +111,15 @@ export function renderActivation(container: HTMLElement, plugin: TangrowPlugin):
   async function run(operation: () => AccessResult | Promise<AccessResult>, success: string): Promise<void> {
     if (busy || disposed) return;
     busy = true;
-    fullList = null;
     message.textContent = '';
     refresh();
     try {
       const result = await operation();
       if (disposed) {
-        if (!result.ok && result.error !== 'stale') new Notice(t(result.error === 'device_limit'
-          ? 'Device limit reached.' : errorLabels[result.error] ?? 'Access could not be updated.'));
+        if (!result.ok && result.error !== 'stale') new Notice(t(accessErrorMessage(result.error)));
         return;
       }
-      if (result.ok) message.textContent = t(success);
-      else if (result.error === 'device_limit') {
-        fullList = access.deviceList;
-        message.textContent = t('Device limit reached.');
-      } else message.textContent = t(errorLabels[result.error] ?? 'Access could not be updated.');
+      message.textContent = t(result.ok ? success : accessErrorMessage(result.error));
     } catch (error) {
       if (!disposed) message.textContent = plugin.error(error);
     } finally {

@@ -1,8 +1,10 @@
 import licenseClient from './license/client.json';
 import { DAY_SECONDS, deviceDigest, hex, normalizeCode, verifyLease, type Lease, type PublicKeys, type RandomBytes } from './license/format';
+import { INTERACTIVE_TIMEOUT_MS, type AccessCoordination } from './access-coordination';
 
 const HOUR = 3600000;
 const DAY = DAY_SECONDS * 1000;
+const FOREGROUND_COOLDOWN_MS = 60_000;
 export const LICENSE_ENDPOINT = licenseClient.endpoint;
 export const LICENSE_KEYS: PublicKeys = Object.freeze(licenseClient.keys);
 const platforms = ['macOS', 'Windows', 'Linux', 'iOS', 'Android'] as const;
@@ -26,6 +28,7 @@ function deviceList(value: Record<string, unknown>): DeviceList | null {
 
 export interface AccessDependencies {
   storage: () => Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+  coordination: AccessCoordination;
   now: () => number;
   bytes: RandomBytes;
   jitter: () => number;
@@ -46,12 +49,18 @@ export class Access {
   private checkTimer?: number;
   private expiryTimer?: number;
   private failures = 0;
+  private retryOnReconnect = false;
+  private lastResumeAttempt = -Infinity;
   private highWater = 0;
+  private initializingDevice?: Promise<void>;
   private cached?: { token: string; payload: Lease };
   private previous?: string;
   private readonly warned = new Set<string>();
   private readonly listeners = new Set<(event: AccessEvent) => void>();
-  deviceList: DeviceList | null = null;
+  private deviceResponse?: { list: DeviceList; limited: boolean; token: string | null };
+
+  get deviceList(): DeviceList | null { return this.deviceResponse?.list ?? null; }
+  get deviceLimitReached(): boolean { return this.deviceResponse?.limited ?? false; }
 
   constructor(private readonly deps: AccessDependencies) {}
 
@@ -91,6 +100,14 @@ export class Access {
     } catch { return this.invalid('device'); }
   }
 
+  private initializeDevice(): Promise<void> {
+    this.initializingDevice ??= this.deps.coordination.initializeDevice(() => {
+      // Another vault can initialize the shared record while this window waits for the lock.
+      if (this.alive) this.device(true);
+    }).catch(() => this.warn('device coordination')).finally(() => { this.initializingDevice = undefined; });
+    return this.initializingDevice;
+  }
+
   private clock(now: number, persist = true): ClockRecord {
     const saved = this.read('trial');
     const valid = object(saved) && timestamp(saved.maxSeenAt) && (saved.startedAt === null ||
@@ -127,6 +144,7 @@ export class Access {
   }
 
   canUse(now = this.deps.now()) { return ['trial', 'active'].includes(this.snapshot(now).state); }
+  hasLease(): boolean { return this.lease() !== null; }
   subscribe(listener: (event: AccessEvent) => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   private emit(event: AccessEvent) {
     for (const listener of this.listeners) { try { listener(event); } catch { this.warn('listener failed'); } }
@@ -135,7 +153,12 @@ export class Access {
   refresh(force = false, persist = true) {
     if (!this.alive) return;
     const current = this.snapshot(this.deps.now(), persist);
-    const key = `${current.state}:${current.expiresAt}`;
+    const token = this.lease()?.token ?? null;
+    if (this.deviceResponse && this.deviceResponse.token !== token) {
+      this.deviceResponse = undefined;
+      force = true;
+    }
+    const key = `${current.state}:${current.expiresAt}:${token !== null}`;
     if (this.expiryTimer !== undefined) this.deps.cancel(this.expiryTimer);
     if (current.expiresAt !== null) this.expiryTimer = this.deps.later(() => this.refresh(), Math.min(current.remainingMs, DAY));
     if (force || this.previous !== key) { this.previous = key; this.emit('change'); }
@@ -151,7 +174,10 @@ export class Access {
 
   start() {
     if (this.alive) return;
-    this.alive = true; this.device(true); this.refresh(); void this.check();
+    this.alive = true;
+    if (!this.device()) void this.initializeDevice();
+    this.refresh();
+    void this.check();
   }
 
   dispose() {
@@ -166,15 +192,40 @@ export class Access {
     this.checkTimer = this.deps.later(() => { void this.check(); }, delay);
   }
 
-  private async check() {
+  onResume(reason: 'online' | 'foreground'): void {
+    if (!this.alive) return;
+    this.refresh();
+    if (this.busy && reason === 'online') this.retryOnReconnect = true;
+    void this.check(reason);
+  }
+
+  private async check(reason?: 'online' | 'foreground') {
+    if (!this.alive || this.busy) return;
+    const now = this.deps.now();
     const lease = this.lease();
-    if (!this.busy && lease && this.clock(this.deps.now()).maxSeenAt > lease.payload.rnb * 1000) await this.call('renew', true);
-    else this.schedule(6 * HOUR);
+    if (!lease || this.clock(now).maxSeenAt < lease.payload.rnb * 1000) {
+      if (!reason) this.schedule(6 * HOUR);
+      return;
+    }
+    const elapsed = now - this.lastResumeAttempt;
+    if (reason === 'foreground' && elapsed >= 0 && elapsed < FOREGROUND_COOLDOWN_MS) return;
+    if (reason) this.lastResumeAttempt = now;
+    await this.call('renew', true);
   }
 
   async activate(code: string) {
+    if (!this.alive) return fail('stale');
+    if (this.hasLease()) return fail('release_first');
     try { code = normalizeCode(code); } catch { return fail('invalid_code'); }
-    return this.call('activate', false, code);
+    if (!this.device()) await this.initializeDevice();
+    if (!this.alive) return fail('stale');
+    if (!this.device()) return fail('storage');
+    try {
+      return await this.deps.coordination.tryActivate(() => this.call('activate', false, code)) ?? fail('activation_in_progress');
+    } catch {
+      this.warn('activation coordination');
+      return fail('storage');
+    }
   }
   renew() { return this.call('renew', false); }
   release() { return this.call('release', false); }
@@ -182,19 +233,27 @@ export class Access {
   private async call(action: 'activate' | 'renew' | 'release', background: boolean, code = ''): Promise<AccessResult> {
     if (!this.alive) return fail('stale');
     const current = this.lease();
+    // Recheck under the activation lock before the server can allocate a seat.
+    if (action === 'activate' && current) return fail('release_first');
     if (action !== 'activate' && !current) return fail('no_lease');
-    const dev = this.device(true);
+    const dev = this.device();
     if (!dev) return fail('storage');
+    if (action === 'activate' && this.deviceLimitReached) {
+      this.deviceResponse = undefined;
+      this.refresh(true);
+    }
     this.stopRequest?.();
     const generation = ++this.generation;
     this.busy = true;
+    this.retryOnReconnect = false;
+    if (this.checkTimer !== undefined) this.deps.cancel(this.checkTimer);
     let timer: number | undefined;
     let success = false;
     const stale = () => !this.alive || generation !== this.generation || this.lease()?.token !== current?.token || this.device() !== dev;
     try {
       const deadline = new Promise<never>((_, reject) => {
         this.stopRequest = () => reject(new Error('stale'));
-        timer = this.deps.later(() => reject(new Error('timeout')), background ? 5000 : 15000);
+        timer = this.deps.later(() => reject(new Error('timeout')), background ? 5000 : INTERACTIVE_TIMEOUT_MS);
       });
       const body: Record<string, string> = action === 'activate' ? { code, dev, platform: this.deps.platform, pluginVersion: this.deps.version } : { lease: current!.token };
       if (action === 'renew') body.platform = this.deps.platform;
@@ -208,8 +267,10 @@ export class Access {
         if (response.status === 409) {
           const list = deviceList(parsed);
           if (!list || action !== 'activate') return fail('invalid_response');
-          this.deviceList = list; this.refresh(true);
+          this.deviceResponse = { list, limited: true, token: null };
+          this.refresh(true);
         }
+        if (response.status === 400 && action === 'renew' && parsed.action === 'reactivate') return fail('reactivate_required');
         return fail(expected[response.status]!);
       }
       const list = deviceList(parsed);
@@ -227,7 +288,8 @@ export class Access {
         if (stale()) return fail('stale');
         if (!this.write('lease', null)) return fail('storage');
       }
-      this.deviceList = list; success = true; this.refresh(true); return ok;
+      this.deviceResponse = { list, limited: false, token: payload.st === 'active' ? parsed.lease : null };
+      success = true; this.refresh(true); return ok;
     } catch (error) {
       if (!this.alive || generation !== this.generation) return fail('stale');
       return fail(error instanceof SyntaxError ? 'invalid_response' : error instanceof Error && error.message === 'timeout' ? 'timeout' : 'request_failed');
@@ -237,7 +299,7 @@ export class Access {
         this.busy = false; this.stopRequest = undefined;
         if (!success && action === 'renew') {
           const hours = [1, 6, 24][Math.min(this.failures++, 2)]!;
-          this.schedule(hours * HOUR * (1 + this.deps.jitter() / 10));
+          this.schedule(this.retryOnReconnect ? 0 : hours * HOUR * (1 + this.deps.jitter() / 10));
         } else if (success) { this.failures = 0; this.schedule(6 * HOUR); }
         else this.schedule(6 * HOUR);
       }

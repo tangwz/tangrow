@@ -185,7 +185,7 @@ export class LicenseService {
     }
 
     const currentPlatform = action === 'renew' ? existing?.platform ?? platform : platform;
-    if (!currentPlatform) return failure('bad_request');
+    if (!currentPlatform) return { status: 400, body: { error: 'bad_request', action: 'reactivate' } };
     const updated: DeviceFields = {
       licenseId: license.id,
       digest: dev,

@@ -39,7 +39,7 @@ npm run server:test
 
 默认列名见 [fields.json](fields.json)。可在 `feishu.fields.license` 覆盖 `id`、`codeDigest`、`status`、`deviceLimit`，在 `feishu.fields.device` 覆盖 `licenseId`、`digest`、`platform`、`firstActivatedAt`、`lastRenewedAt`、`status`。若使用自定义列名，导入制卡 CSV 时要映射到实际列。服务按规格读取和写入原有中文状态值。
 
-续期请求可附带平台。已有设备行保留原平台；行缺失且名额有空时，服务器用请求平台补建；名额已满则签发 `released`。旧客户端未提供补建所需的平台时返回 `400 bad_request`，用户可用原兑换码重新激活。
+续期请求可附带平台。已有设备行保留原平台。行缺失且名额有空时，服务器用请求平台补建，名额已满则签发 `released`。旧客户端未提供补建所需的平台时，服务返回 HTTP 400 和 `{"error":"bad_request","action":"reactivate"}`。用户可打开「激活与更新」，解除本机绑定，再输入原兑换码恢复这台设备。
 
 ## 生成密钥与轮换
 

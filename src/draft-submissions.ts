@@ -4,20 +4,39 @@ import { safeFolder } from './model';
 export interface DraftSubmission { id: string; path: string | null }
 export interface DraftSubmissions { capture: DraftSubmission | null; writing: DraftSubmission | null }
 export type SubmissionKind = 'capture' | 'draft';
+export type RecoveryLabel = 'Quick capture' | 'Quick add';
+export interface RecoveryDraft { id: string; label: RecoveryLabel; text: string }
+export interface StoredRecoveryDraft extends RecoveryDraft { submission: DraftSubmission | null }
+
+const uuid = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i;
+
+function readSubmission(entry: unknown): DraftSubmission | null {
+  if (entry === null || entry === undefined) return null;
+  if (typeof entry !== 'object' || Array.isArray(entry)) throw new Error('Saved submission state is invalid.');
+  const { id, path } = entry as Partial<DraftSubmission>;
+  if (typeof id !== 'string' || !uuid.test(id)
+    || (path !== null && (typeof path !== 'string' || !path.endsWith('.md') || safeFolder(path) !== path))) throw new Error('Saved submission state is invalid.');
+  return { id, path };
+}
 
 export function readDraftSubmissions(value: unknown): DraftSubmissions {
   if (value === undefined) return { capture: null, writing: null };
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Saved submission state is invalid.');
-  const read = (entry: unknown): DraftSubmission | null => {
-    if (entry === null || entry === undefined) return null;
-    if (typeof entry !== 'object' || Array.isArray(entry)) throw new Error('Saved submission state is invalid.');
-    const { id, path } = entry as Partial<DraftSubmission>;
-    if (typeof id !== 'string' || !/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(id)
-      || (path !== null && (typeof path !== 'string' || !path.endsWith('.md') || safeFolder(path) !== path))) throw new Error('Saved submission state is invalid.');
-    return { id, path };
-  };
   const data = value as Partial<DraftSubmissions>;
-  return { capture: read(data.capture), writing: read(data.writing) };
+  return { capture: readSubmission(data.capture), writing: readSubmission(data.writing) };
+}
+
+export function readRecoveryDrafts(value: unknown): Map<string, StoredRecoveryDraft> {
+  const drafts = new Map<string, StoredRecoveryDraft>();
+  if (value === undefined) return drafts;
+  if (!Array.isArray(value)) throw new Error('Saved recovery drafts are invalid.');
+  for (const entry of value) {
+    const { id, label, text, submission } = entry ?? {};
+    if (typeof id !== 'string' || !uuid.test(id) || drafts.has(id)
+      || (label !== 'Quick capture' && label !== 'Quick add') || typeof text !== 'string' || !text) throw new Error('Saved recovery drafts are invalid.');
+    drafts.set(id, { id, label, text, submission: readSubmission(submission) });
+  }
+  return drafts;
 }
 
 async function matchesSubmission(app: App, file: TFile, submission: DraftSubmission, kind: SubmissionKind): Promise<boolean> {

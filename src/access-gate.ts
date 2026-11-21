@@ -1,17 +1,27 @@
 import { Notice } from 'obsidian';
 import { translate } from './i18n';
 import type { AccessResult } from './access';
+import { accessErrorMessage } from './access-messages';
 import { SidebarUI } from './ui';
 import type { SidebarHost } from './types';
 
+function showDraft(area: HTMLElement, ui: SidebarUI, label: string, value: string, save: () => Promise<void>, saving = false): void {
+  if (!value) return;
+  const section = area.createEl('section');
+  section.createEl('h4', { text: ui.t(label) });
+  const text = section.createEl('textarea', { attr: { readonly: '', 'aria-label': ui.t(label) } });
+  text.value = value;
+  ui.button(section, 'Save to Inbox', save, { disabled: saving });
+  ui.button(section, 'Copy to clipboard', () => text.ownerDocument.defaultView!.navigator.clipboard.writeText(value));
+}
+
+export function showRecoveryDrafts(area: HTMLElement, ui: SidebarUI, host: SidebarHost, drafts = host.loadRecoveryDrafts()): void {
+  for (const draft of drafts) {
+    showDraft(area, ui, draft.label, draft.text, () => host.submitRecoveryDraft(draft.id), draft.saving);
+  }
+}
+
 const guardedEvents = ['click', 'keydown', 'beforeinput', 'change', 'submit'] as const;
-const failures: Record<string, string> = {
-  invalid_code: 'Check the redemption code and try again.',
-  device_limit: 'Device limit reached. Review your devices in Activation and updates.',
-  revoked: 'This redemption code has been revoked.',
-  storage: 'Could not save access on this device.',
-  rate_limited: 'Too many requests. Try again later.'
-};
 
 /** Keep the ordinary view mounted so locking never replaces a composing control. */
 export class AccessGate {
@@ -34,7 +44,7 @@ export class AccessGate {
     this.subscriptions.push(this.host.access.subscribe(event => {
       if (event !== 'change') this.flush(false);
       else this.refresh();
-    }), this.host.subscribeComposer(() => this.renderDrafts()), this.host.subscribe(() => this.renderJobs()));
+    }), this.host.subscribeComposer(() => this.renderDrafts()), this.host.subscribeRecoveryDrafts(() => this.renderDrafts()), this.host.subscribe(() => this.renderJobs()));
     for (const type of guardedEvents) this.root.addEventListener(type, this.guard, true);
     this.refresh();
   }
@@ -75,10 +85,14 @@ export class AccessGate {
     const page = this.page = this.root.createDiv({ cls: 'tangrow-access-gate' });
     const heading = state === 'expired' ? 'Your trial has ended' : state === 'needs_network' ? 'Connect to renew access' : 'Activate Tangrow';
     page.createEl('h3', { text: this.ui.t(heading) });
-    const input = page.createEl('input', { type: 'text', value: code, attr: { placeholder: 'TGRW-XXXX-XXXX-XXXX-XXXX', 'aria-label': this.ui.t('Redemption code') } });
-    this.ui.button(page, 'Activate this device', async () => this.result(await this.host.access.activate(input.value)));
+    if (state === 'needs_network') {
+      this.ui.button(page, 'Renew now', async () => this.result(await this.host.access.renew()));
+      this.ui.paragraph(page, accessErrorMessage('release_first'));
+    } else {
+      const input = page.createEl('input', { type: 'text', value: code, attr: { placeholder: 'TGRW-XXXX-XXXX-XXXX-XXXX', 'aria-label': this.ui.t('Redemption code') } });
+      this.ui.button(page, 'Activate this device', async () => this.result(await this.host.access.activate(input.value)));
+    }
     if (state === 'not_started') this.ui.button(page, 'Start 24-hour trial', () => this.result(this.host.access.startTrial()));
-    if (state === 'needs_network') this.ui.button(page, 'Renew now', async () => this.result(await this.host.access.renew()));
     this.ui.button(page, 'Activation and updates', () => this.host.openActivationSettings());
     const next = this.language === 'en' ? 'zh-CN' : 'en';
     this.ui.userButton(page, next === 'en' ? 'English' : translate('zh-CN', 'Simplified Chinese'), async () => {
@@ -107,7 +121,8 @@ export class AccessGate {
   }
 
   private result(result: AccessResult): void {
-    if (!result.ok) new Notice(this.ui.t(failures[result.error] ?? 'Could not complete activation. Check your connection and try again.'));
+    if (!result.ok) new Notice(this.ui.t(result.error === 'device_limit'
+      ? 'Device limit reached. Review your devices in Activation and updates.' : accessErrorMessage(result.error)));
   }
 
   private renderDrafts(): void {
@@ -115,18 +130,9 @@ export class AccessGate {
     this.draftArea.empty();
     const capture = this.host.loadComposer().capture;
     const writing = this.host.loadWritingDraft();
-    this.draft('Quick capture', capture, () => this.host.submitCaptureDraft(true));
-    this.draft('Writing scratchpad', [writing.title, writing.text].filter(Boolean).join('\n\n'), () => this.host.submitWritingDraft(writing.revision, undefined, true));
-  }
-
-  private draft(label: string, value: string, save: () => Promise<void>): void {
-    if (!value || !this.draftArea) return;
-    const section = this.draftArea.createEl('section');
-    section.createEl('h4', { text: this.ui.t(label) });
-    const text = section.createEl('textarea', { attr: { readonly: '', 'aria-label': this.ui.t(label) } });
-    text.value = value;
-    this.ui.button(section, 'Save to Inbox', save);
-    this.ui.button(section, 'Copy to clipboard', () => text.ownerDocument.defaultView!.navigator.clipboard.writeText(value));
+    showDraft(this.draftArea, this.ui, 'Quick capture', capture, () => this.host.submitCaptureDraft(true));
+    showDraft(this.draftArea, this.ui, 'Writing scratchpad', [writing.title, writing.text].filter(Boolean).join('\n\n'), () => this.host.submitWritingDraft(writing.revision, undefined, true));
+    showRecoveryDrafts(this.draftArea, this.ui, this.host);
   }
 
   dispose(): void {

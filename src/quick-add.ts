@@ -1,4 +1,5 @@
 import { Modal, Notice } from 'obsidian';
+import { AccessGate } from './access-gate';
 import type { QuickKind } from './ai';
 import { describeError } from './i18n';
 import { dayKey, safeTitle } from './model';
@@ -27,6 +28,12 @@ function offsetDay(days: number): string {
 
 export class QuickAddModal extends Modal {
   private readonly ui: SidebarUI;
+  private readonly draftId = crypto.randomUUID();
+  private gate?: AccessGate;
+  private editor?: HTMLTextAreaElement;
+  private unsubscribeRecovery?: () => void;
+  private recovering = false;
+  private closed = false;
   private kind: QuickKind;
   private text: string;
   private due = '';
@@ -39,7 +46,7 @@ export class QuickAddModal extends Modal {
   private reason = '';
   private includeSource = true;
 
-  constructor(private readonly host: SidebarHost, kind: QuickKind = 'capture', text = '', private source?: CardSource) {
+  constructor(private readonly host: SidebarHost, kind: QuickKind = 'capture', text = '', private source?: CardSource, private readonly onDismiss?: () => void) {
     super(host.app);
     this.ui = new SidebarUI(() => this.host.settings.language);
     this.kind = kind === 'card' && !host.settings.knowledgeEnabled ? 'capture' : kind;
@@ -47,20 +54,66 @@ export class QuickAddModal extends Modal {
   }
 
   onOpen(): void {
+    this.closed = false;
     this.modalEl.addClass('tangrow-quick-modal');
     this.contentEl.addClass('tangrow-dialog', 'tangrow-quick');
     this.scope.register(['Mod'], 'Enter', () => { void this.save(); return false; });
     quickKinds(this.host.settings.knowledgeEnabled).forEach((entry, index) => this.scope.register(['Mod'], String(index + 1), () => { this.setKind(entry.id); return false; }));
+    this.gate = new AccessGate(this.host, this.contentEl, locked => this.protectDraft(locked), () => this.render());
+    this.unsubscribeRecovery = this.host.subscribeRecoveryDrafts(() => {
+      if (!this.recovering || this.saving || this.host.loadRecoveryDrafts().some(draft => draft.id === this.draftId)) return;
+      if (this.editor && !this.editor.readOnly && this.editor.value !== this.text) {
+        // An export from another window can finish before the next native input event.
+        this.text = this.editor.value;
+        this.syncRecovery();
+        return;
+      }
+      this.recovering = false;
+      this.text = '';
+      if (this.editor) this.editor.value = '';
+      if (!this.gate?.locked) this.render();
+    });
     this.render();
+    this.gate.mount();
   }
 
   onClose(): void {
+    // Escape can beat the deadline timer after the device wakes up.
+    this.editable();
+    this.closed = true;
+    this.gate?.dispose();
+    this.unsubscribeRecovery?.();
     this.suggesting?.abort();
+    this.editor = undefined;
     this.contentEl.empty();
+    this.onDismiss?.();
+  }
+
+  private protectDraft(locked: boolean): void {
+    if (!this.editor || this.editor.readOnly) return;
+    if (!this.saving) this.text = this.editor.value;
+    if (locked) {
+      this.editor.readOnly = true;
+      this.suggesting?.abort();
+    }
+    this.recovering = true;
+    this.syncRecovery();
+  }
+
+  private syncRecovery(): void | Promise<void> {
+    if (!this.recovering) return;
+    if (!this.text) this.recovering = false;
+    return this.host.preserveRecoveryDraft(this.draftId, 'Quick add', this.text, this.saving && !!this.text);
+  }
+
+  private editable(): boolean {
+    if (this.closed) return false;
+    if (this.gate && !this.gate.locked && !this.host.access.canUse()) this.host.access.refresh();
+    return !this.gate?.locked;
   }
 
   private setKind(kind: QuickKind): void {
-    if (this.saving || this.kind === kind || (kind === 'card' && !this.host.settings.knowledgeEnabled)) return;
+    if (this.saving || !this.editable() || this.kind === kind || (kind === 'card' && !this.host.settings.knowledgeEnabled)) return;
     this.kind = kind;
     this.render();
   }
@@ -90,6 +143,8 @@ export class QuickAddModal extends Modal {
   }
 
   private render(): void {
+    if (this.closed || this.gate?.locked) return;
+    this.syncRecovery();
     const kinds = quickKinds(this.host.settings.knowledgeEnabled);
     const entry = kinds.find((item) => item.id === this.kind) ?? kinds[0]!;
     this.setTitle(this.ui.t('Quick add'));
@@ -110,8 +165,9 @@ export class QuickAddModal extends Modal {
       });
     });
 
-    const editor = this.contentEl.createEl('textarea', { cls: 'tangrow-quick-input', attr: { rows: '5', placeholder: this.ui.t(entry.placeholder), 'aria-label': this.ui.t(entry.label) } });
+    const editor = this.editor = this.contentEl.createEl('textarea', { cls: 'tangrow-quick-input', attr: { rows: '5', placeholder: this.ui.t(entry.placeholder), 'aria-label': this.ui.t(entry.label) } });
     editor.value = this.text;
+    editor.disabled = this.saving;
     this.contentEl.createEl('p', { cls: 'tangrow-muted tangrow-quick-hint', text: this.ui.t(entry.hint) });
 
     const options = this.contentEl.createDiv({ cls: 'tangrow-quick-options' });
@@ -192,7 +248,12 @@ export class QuickAddModal extends Modal {
         }, { cls: 'tangrow-text-button' });
       }
     };
-    editor.addEventListener('input', () => { this.text = editor.value; update(); });
+    editor.addEventListener('input', () => {
+      if (editor !== this.editor || this.saving || editor.readOnly) return;
+      this.text = editor.value;
+      this.syncRecovery();
+      update();
+    });
     update();
     editor.focus();
     editor.setSelectionRange(editor.value.length, editor.value.length);
@@ -200,11 +261,11 @@ export class QuickAddModal extends Modal {
 
   private async suggest(): Promise<void> {
     const source = this.text;
-    if (!source.trim() || this.suggesting || !this.host.requireAccess()) return;
-    this.suggesting = new AbortController();
+    if (!source.trim() || this.suggesting || !this.editable() || !this.host.requireAccess()) return;
+    const controller = this.suggesting = new AbortController();
     try {
-      const result = await this.host.suggestCapture(source, this.suggesting.signal);
-      if (this.text !== source) return;
+      const result = await this.host.suggestCapture(source, controller.signal);
+      if (controller.signal.aborted || this.saving || !this.editable() || this.text !== source) return;
       this.original = source;
       this.reason = result.reason || this.ui.t('Suggestion ready. Review it before saving.');
       this.kind = result.kind;
@@ -212,15 +273,22 @@ export class QuickAddModal extends Modal {
       else if (result.kind === 'note' || result.kind === 'project') this.text = result.title ? `${result.title}\n${source}` : source;
       if (result.kind === 'project') this.projectFolder = '';
       this.render();
+    } catch (error) {
+      if (!controller.signal.aborted) throw error;
     } finally { this.suggesting = undefined; }
   }
 
   private async save(): Promise<void> {
-    if (this.saving || this.problem() !== null || !this.host.requireAccess()) return;
+    if (this.saving || !this.editable() || !this.host.requireAccess()) return;
+    if (this.recovering && this.host.loadRecoveryDrafts().some(draft => draft.id === this.draftId && draft.saving)) return;
+    if (this.editor) this.text = this.editor.value;
+    if (this.problem() !== null) return;
     const lines = this.lines();
     const first = lines[0] ?? '';
     const body = this.text.slice(this.text.indexOf(first) + first.length).trim();
     this.saving = true;
+    this.suggesting?.abort();
+    this.syncRecovery();
     this.contentEl.querySelectorAll<HTMLButtonElement | HTMLTextAreaElement>('button, textarea').forEach((control) => { control.disabled = true; });
     try {
       if (this.kind === 'capture') await this.host.capture(this.text);
@@ -229,6 +297,8 @@ export class QuickAddModal extends Modal {
         for (const line of lines) {
           await this.host.addTask(line, { due: this.due || undefined, target: this.target });
           this.text = this.text.split(/\r?\n/).filter((entry, index, all) => entry.trim() !== line || all.findIndex((other) => other.trim() === line) !== index).join('\n');
+          if (this.editor) this.editor.value = this.text;
+          await this.syncRecovery();
         }
       } else if (this.kind === 'project') await this.host.createNote('project', first, this.projectFolder || undefined, body);
       else if (this.kind === 'card') {
@@ -239,16 +309,21 @@ export class QuickAddModal extends Modal {
         else await this.host.createNote('note', first);
       }
       this.text = '';
+      if (this.editor) this.editor.value = '';
       this.original = null;
       this.reason = '';
       this.saving = false;
+      await this.syncRecovery();
       this.source = undefined;
-      if (this.keepOpen) this.render();
-      else this.close();
+      if (this.editable()) {
+        if (this.keepOpen) this.render();
+        else this.close();
+      }
     } catch (error) {
       this.saving = false;
+      await this.syncRecovery();
       new Notice(describeError(this.host.settings.language, error));
-      this.render();
+      if (this.editable()) this.render();
     }
   }
 }

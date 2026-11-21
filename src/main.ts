@@ -2,6 +2,7 @@ import { FileView, MarkdownView, Menu, Modal, Notice, Plugin, Setting, TFile, TF
 import { baseDefinitions, setupReadme, managedFileTranslations } from './bases';
 import { Platform, requestUrl } from 'obsidian';
 import { Access, LICENSE_KEYS, LICENSE_ENDPOINT } from './access';
+import { accessCoordination } from './access-coordination';
 import { TangrowSettings } from './settings/tab';
 import { randomBytes } from './license/format';
 import { focusMinutes, pauseSession, remainingMs, resumeSession, startSession } from './focus';
@@ -17,7 +18,7 @@ import { CLAUDIAN_OPEN_COMMAND, CLAUDIAN_TURN_ENDED, WORKFLOWS, claudianApi, ski
 import { runPrompt } from './ai-client';
 import { QuickAddModal } from './quick-add';
 import { appendTaskLine, completeTaskLine, openTaskLabel, taskLine } from './task-tools';
-import { findSubmittedNote, readDraftSubmissions, type DraftSubmission, type DraftSubmissions, type SubmissionKind } from './draft-submissions';
+import { findSubmittedNote, readDraftSubmissions, readRecoveryDrafts, type DraftSubmission, type DraftSubmissions, type RecoveryLabel, type StoredRecoveryDraft, type SubmissionKind } from './draft-submissions';
 import { JOURNAL_PERIODS, JOURNAL_LABELS, defaultJournal, journalInterval, journalPath, journalTemplate, type JournalPeriod } from './periodic-notes';
 import { ImmersiveCapture, NoteImmersion } from './immersive';
 import { normalizeRecentOpened, recordRecentOpened, renameRecentOpened, removeRecentOpened } from './recent-opened';
@@ -40,7 +41,7 @@ import { DEFAULT_SETTINGS, type CaptureRequest, type CardSource, type ComposerSt
 
 const dateTime = moment as unknown as (input?: number | string | Date) => { format(pattern: string): string };
 
-interface SavedData { version: number; settings: Settings; focus: FocusSession | null; scratch: string; composer: ComposerState; submissions: DraftSubmissions; recentOpened: string[]; activity: EditingActivityState; cardReviews: CardReviewQueue[] }
+interface SavedData { version: number; settings: Settings; focus: FocusSession | null; scratch: string; composer: ComposerState; submissions: DraftSubmissions; recoveryDrafts: StoredRecoveryDraft[]; recentOpened: string[]; activity: EditingActivityState; cardReviews: CardReviewQueue[] }
 interface PersistenceCoordinator { owner?: symbol; tail: Promise<void> }
 type WorkbenchCards = Awaited<ReturnType<SidebarHost['loadWorkbenchCards']>>;
 const PERSISTENCE_COORDINATOR = Symbol.for('tangrow.persistence-coordinator');
@@ -81,6 +82,10 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   private captureRevision = 0;
   private captureSubmissions = new Map<number, Promise<void>>();
   private submissions: DraftSubmissions = { capture: null, writing: null };
+  private recoveryDrafts = new Map<string, StoredRecoveryDraft>();
+  private recoveryListeners = new Set<() => void>();
+  private quickAddSaves = new Set<string>();
+  private recoverySaves = new Map<StoredRecoveryDraft, Promise<void>>();
   private recentOpened: string[] = [];
   private listeners = new Set<() => void>();
   private writes: Promise<void> = Promise.resolve();
@@ -105,7 +110,8 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   private editingActivity = createActivityState();
   private lastActivityEvent: number | null = null;
   private activityTimer: number | undefined;
-  private activityWindows = new WeakSet<Window>();
+  private watchedWindows = new WeakSet<Window>();
+  private quickAdds = new Set<QuickAddModal>();
   private immersiveCapture?: ImmersiveCapture;
   private noteImmersion?: NoteImmersion;
   private noteImmersionAction?: HTMLElement;
@@ -140,6 +146,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       scratchTitle: typeof stored?.composer?.scratchTitle === 'string' ? stored.composer.scratchTitle : ''
     };
     this.submissions = readDraftSubmissions(stored?.submissions);
+    this.recoveryDrafts = readRecoveryDrafts(stored?.recoveryDrafts);
     const hasHistory = stored !== null && Object.hasOwn(stored, 'recentOpened');
     this.recentOpened = normalizeRecentOpened(hasHistory ? stored.recentOpened : this.app.workspace.getLastOpenFiles(), (path) => this.app.vault.getAbstractFileByPath(path) instanceof TFile);
     this.dataLoaded = true;
@@ -159,7 +166,8 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     }
     if (!this.alive) return;
     this.access = new Access({
-      storage: () => window.localStorage, now: Date.now, bytes: randomBytes, jitter: Math.random, keys: LICENSE_KEYS,
+      storage: () => window.localStorage, coordination: accessCoordination(window),
+      now: Date.now, bytes: randomBytes, jitter: Math.random, keys: LICENSE_KEYS,
       platform: Platform.isIosApp ? 'iOS' : Platform.isAndroidApp ? 'Android' : Platform.isMacOS ? 'macOS' : Platform.isWin ? 'Windows' : 'Linux',
       version: this.manifest.version, later: (callback, delay) => window.setTimeout(callback, delay), cancel: timer => window.clearTimeout(timer),
       warn: message => console.warn(message), request: (path, body) => requestUrl({ url: LICENSE_ENDPOINT + path, method: 'POST',
@@ -179,6 +187,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     this.registerDomEvent(window, 'storage', event => {
       if (event.key === null || /^tangrow:(device|lease|trial):v1$/.test(event.key)) this.access.refresh(false, false);
     });
+    this.registerDomEvent(window, 'online', () => this.access.onResume('online'));
     this.registerView(VIEW_TYPE, (leaf: WorkspaceLeaf) => new TangrowSidebar(leaf, this));
     this.registerView(REPORT_VIEW_TYPE, (leaf: WorkspaceLeaf) => new TangrowReport(leaf, this));
     this.registerView(CAPTURE_VIEW_TYPE, (leaf: WorkspaceLeaf) => new TangrowCapture(leaf, this));
@@ -226,8 +235,8 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     // Claudian announces every finished turn; only the session a workflow was sent to matters here.
     this.registerEvent((this.app.workspace as unknown as { on(name: string, callback: (event: { sessionId?: string }) => void): EventRef })
       .on(CLAUDIAN_TURN_ENDED, (event) => { void this.finishWorkflow(event?.sessionId); }));
-    this.registerEvent(this.app.workspace.on('window-open', (_workspaceWindow, win) => this.watchActivityWindow(win)));
-    if (typeof window !== 'undefined' && window.document) this.watchActivityWindow(window);
+    this.registerEvent(this.app.workspace.on('window-open', (_workspaceWindow, win) => this.watchWindow(win)));
+    if (typeof window !== 'undefined' && window.document) this.watchWindow(window);
     this.registerEvent(this.app.metadataCache.on('changed', () => { this.reportSource.markLinksDirty(); refresh(); }));
     this.registerEvent(this.app.metadataCache.on('resolved', () => { this.reportSource.markLinksResolved(); refresh(); }));
     this.registerEvent(this.app.vault.on('create', (file) => { if (file instanceof TFile && file.extension === 'md') this.reportSource.markLinksDirty(); refresh(); }));
@@ -268,6 +277,8 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   }
 
   onunload(): void {
+    this.access?.refresh();
+    for (const modal of this.quickAdds) modal.close();
     this.access?.dispose();
     this.immersiveCapture?.close();
     this.noteImmersion?.close();
@@ -291,6 +302,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     this.lastActivityEvent = null;
     this.listeners.clear();
     this.composerListeners.clear();
+    this.recoveryListeners.clear();
   }
 
   t(source: string, values?: TranslationValues): string { return translate(this.settings.language, source, values); }
@@ -422,7 +434,11 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     const leaf = await this.app.workspace.ensureSideLeaf(VIEW_TYPE, 'right', { active: true });
     if (leaf.view instanceof TangrowSidebar) leaf.view.showSection('ai');
   }
-  openQuickAdd(kind: QuickKind = 'capture', text = '', source?: CardSource): void { new QuickAddModal(this, kind, text, source).open(); }
+  openQuickAdd(kind: QuickKind = 'capture', text = '', source?: CardSource): void {
+    const modal = new QuickAddModal(this, kind, text, source, () => this.quickAdds.delete(modal));
+    this.quickAdds.add(modal);
+    modal.open();
+  }
   openCaptureWindow(): Promise<void> { return revealCaptureWindow(this.app, this); }
   openImmersiveCapture(): void {
     if (this.immersiveCapture) { this.immersiveCapture.contentEl.querySelector('textarea')?.focus(); return; }
@@ -519,6 +535,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   }
   subscribe(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   subscribeComposer(listener: () => void): () => void { this.composerListeners.add(listener); return () => this.composerListeners.delete(listener); }
+  subscribeRecoveryDrafts(listener: () => void): () => void { this.recoveryListeners.add(listener); return () => this.recoveryListeners.delete(listener); }
   private updateRecentOpened(paths: string[]): void {
     if (JSON.stringify(paths) === JSON.stringify(this.recentOpened)) return;
     this.recentOpened = paths;
@@ -540,7 +557,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     return app[PERSISTENCE_COORDINATOR] ??= { tail: Promise.resolve() };
   }
   private persistenceSnapshot(): SavedData {
-    return structuredClone({ version: 5, settings: this.settings, focus: this.focus, scratch: this.scratch, composer: this.composer, submissions: this.submissions, recentOpened: this.recentOpened, activity: this.editingActivity, cardReviews: [...this.cardReviews.values()] });
+    return structuredClone({ version: 5, settings: this.settings, focus: this.focus, scratch: this.scratch, composer: this.composer, submissions: this.submissions, recoveryDrafts: [...this.recoveryDrafts.values()], recentOpened: this.recentOpened, activity: this.editingActivity, cardReviews: [...this.cardReviews.values()] });
   }
   private persist(finalFlush = false): Promise<void> {
     if (!this.alive && !finalFlush) return Promise.resolve();
@@ -702,11 +719,15 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       new Notice(this.t('Report preferences saved. Existing notes and Bases were preserved.'));
     });
   }
-  private watchActivityWindow(win: Window): void {
-    if (this.activityWindows.has(win) || typeof this.registerDomEvent !== 'function') return;
-    this.activityWindows.add(win);
+  private watchWindow(win: Window): void {
+    if (this.watchedWindows.has(win) || typeof this.registerDomEvent !== 'function') return;
+    this.watchedWindows.add(win);
+    this.registerDomEvent(win, 'focus', () => this.access.onResume('foreground'));
     this.registerDomEvent(win, 'blur', () => { this.lastActivityEvent = null; });
-    this.registerDomEvent(win.document, 'visibilitychange', () => { this.lastActivityEvent = null; });
+    this.registerDomEvent(win.document, 'visibilitychange', () => {
+      this.lastActivityEvent = null;
+      if (win.document.visibilityState === 'visible') this.access.onResume('foreground');
+    });
   }
   private recordEditingActivity(info: unknown): void {
     if (!this.alive || !this.settings.trackEditingActivity || !this.access.canUse() || !(info instanceof MarkdownView) || !info.file) { this.lastActivityEvent = null; return; }
@@ -715,7 +736,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     const excluded = (hasValidSupportFolder(this.settings) && inFolder(path, this.settings.supportFolder))
       || this.settings.reportExcludedFolders.some((folder) => inFolder(path, folder));
     if (!doc || doc.hidden || !doc.hasFocus() || this.activeFile()?.path !== path || excluded) { this.lastActivityEvent = null; return; }
-    this.watchActivityWindow(doc.defaultView ?? window);
+    this.watchWindow(doc.defaultView ?? window);
     const now = Date.now();
     if (this.lastActivityEvent !== null && now >= this.lastActivityEvent && now - this.lastActivityEvent < 1000) return;
     const result = addEditingActivity(this.editingActivity, now, this.lastActivityEvent);
@@ -754,6 +775,31 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   }
   loadScratch(): string { return this.scratch; }
   loadComposer(): ComposerState { return { ...this.composer }; }
+  loadRecoveryDrafts(): ReturnType<SidebarHost['loadRecoveryDrafts']> {
+    return Array.from(this.recoveryDrafts.values(), draft => ({
+      id: draft.id, label: draft.label, text: draft.text, saving: this.quickAddSaves.has(draft.id) || this.recoverySaves.has(draft)
+    }));
+  }
+  preserveRecoveryDraft(id: string, label: RecoveryLabel, text: string, saving = false): void | Promise<void> {
+    if (!this.alive) return;
+    const previous = this.recoveryDrafts.get(id);
+    const changed = (previous?.text ?? '') !== text;
+    const wasSaving = this.quickAddSaves.has(id);
+    if (!changed && saving === wasSaving) return;
+    if (saving) this.quickAddSaves.add(id);
+    else this.quickAddSaves.delete(id);
+    if (changed) {
+      if (text) this.recoveryDrafts.set(id, { id, label, text, submission: null });
+      else this.recoveryDrafts.delete(id);
+      if (!saving && !wasSaving) this.scheduleComposerSave();
+    }
+    for (const listener of this.recoveryListeners) listener();
+    // Commit partial task progress and completed saves before the original submission returns.
+    if (changed && (saving || wasSaving)) return this.persist().catch(error => {
+      new Notice(this.error(error));
+      this.scheduleComposerSave();
+    });
+  }
   loadWritingDraft(): WritingDraft {
     return { text: this.scratch, title: this.composer.scratchTitle, revision: this.scratchRevision, ...(this.scratchEditingView ? { editingView: this.scratchEditingView } : {}) };
   }
@@ -966,6 +1012,15 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       if (key === 'capture') { this.composer.capture = ''; this.captureRevision++; }
       else { this.scratch = ''; this.composer.scratchTitle = ''; this.scratchRevision++; }
       recovered = true;
+    }
+    for (const draft of this.recoveryDrafts.values()) {
+      if (!draft.submission?.path) continue;
+      const file = await findSubmittedNote(this.app, draft.submission, 'capture');
+      if (!this.alive) return;
+      if (file && this.recoveryDrafts.get(draft.id) === draft) {
+        this.recoveryDrafts.delete(draft.id);
+        recovered = true;
+      }
     }
     if (recovered) {
       try { await this.persist(); }
@@ -1309,6 +1364,28 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     }).finally(() => { this.captureSubmissions.delete(revision); });
     this.captureSubmissions.set(revision, submission);
     return submission;
+  }
+  submitRecoveryDraft(id: string): Promise<void> {
+    const draft = this.recoveryDrafts.get(id);
+    if (!draft || this.quickAddSaves.has(id)) return Promise.resolve();
+    const pending = this.recoverySaves.get(draft);
+    if (pending) return pending;
+    const receipt = draft.submission ??= { id: uid(), path: null };
+    const saving = this.capture(draft.text, receipt, true).then(async () => {
+      if (!this.alive || this.recoveryDrafts.get(id) !== draft) return;
+      this.preserveRecoveryDraft(id, draft.label, '');
+      try { await this.persist(); }
+      catch {
+        new Notice(this.t('Capture saved, but draft state could not be saved. It will be retried.'));
+        this.scheduleComposerSave();
+      }
+    }).finally(() => {
+      this.recoverySaves.delete(draft);
+      for (const listener of this.recoveryListeners) listener();
+    });
+    this.recoverySaves.set(draft, saving);
+    for (const listener of this.recoveryListeners) listener();
+    return saving;
   }
   async readCapture(path: string): Promise<string> {
     const file = this.app.vault.getAbstractFileByPath(path);

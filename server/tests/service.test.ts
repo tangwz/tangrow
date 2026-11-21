@@ -295,15 +295,30 @@ test('HTTP enforces JSON and body limits, sanitizes logs, and maps upstream fail
 test('renewal uses the supplied platform only when rebuilding a missing device row', async () => {
   const { activate, call, store } = setup();
   const lease = token(await activate(device(1)));
+  token(await call('renew', { lease }));
+  assert.equal(store.devices[0]!.platform, 'macOS');
   store.devices = [];
 
-  assert.deepEqual(await call('renew', { lease }), { status: 400, body: { error: 'bad_request' } });
+  assert.deepEqual(await call('renew', { lease }), { status: 400, body: { error: 'bad_request', action: 'reactivate' } });
   assert.equal(store.devices.length, 0);
-  assert.equal((await call('renew', { lease, platform: 'unknown' })).status, 400);
+  assert.deepEqual(await call('renew', { lease, platform: 'unknown' }), { status: 400, body: { error: 'bad_request' } });
   token(await call('renew', { lease, platform: 'iOS' }));
   token(await call('renew', { lease, platform: 'Android' }));
   assert.equal(store.devices.length, 1);
   assert.equal(store.devices[0]!.platform, 'iOS');
+});
+
+test('a legacy client can restore a missing device with its original redemption code', async () => {
+  const { activate, call, store } = setup();
+  const digest = device(1);
+  const lease = token(await activate(digest));
+  store.devices = [];
+  const renewal = await call('renew', { lease });
+  assert.deepEqual(renewal, { status: 400, body: { error: 'bad_request', action: 'reactivate' } });
+  assert.equal(verifyLease(token(await call('release', { lease })), keys.publicKeys).st, 'released');
+  assert.equal(verifyLease(token(await activate(digest, vector.normalized, 'iOS')), keys.publicKeys).st, 'active');
+  assert.equal(store.devices.length, 1);
+  assert.equal(store.devices[0]?.platform, 'iOS');
 });
 
 test('renewal cannot rebuild a missing row when the last seat is occupied', async () => {
@@ -312,7 +327,9 @@ test('renewal cannot rebuild a missing row when the last seat is occupied', asyn
   const lease = token(await activate(device(1)));
   store.devices = [];
   token(await activate(device(2)));
-  const result = await call('renew', { lease, platform: 'iOS' });
-  assert.equal(verifyLease(token(result), keys.publicKeys).st, 'released');
+  for (const request of [{ lease }, { lease, platform: 'iOS' }]) {
+    const result = await call('renew', request);
+    assert.equal(verifyLease(token(result), keys.publicKeys).st, 'released');
+  }
   assert.equal(store.devices.length, 1);
 });

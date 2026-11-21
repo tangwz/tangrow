@@ -4,6 +4,7 @@ import type { CardFilter, CardReport, MaterialReportRow } from './card-report-da
 import type { CardReviewQueue } from './card-review';
 import type { JournalPeriod } from './periodic-notes';
 import type { CaptureSuggestion, QuickKind } from './ai';
+import type { RecoveryDraft, RecoveryLabel } from './draft-submissions';
 import type { AgentStatus, WorkflowId, WorkflowRun } from './claudian';
 
 export type Locale = 'zh-CN' | 'en';
@@ -147,6 +148,10 @@ export interface SidebarHost {
   openAiGuide(): Promise<void>;
   capture(text: string): Promise<void>;
   submitCaptureDraft(rescue?: boolean): Promise<void>;
+  loadRecoveryDrafts(): (RecoveryDraft & { saving: boolean })[];
+  subscribeRecoveryDrafts(listener: () => void): () => void;
+  preserveRecoveryDraft(id: string, label: RecoveryLabel, text: string, saving?: boolean): void | Promise<void>;
+  submitRecoveryDraft(id: string): Promise<void>;
   openCaptureWindow(): Promise<void>;
   openImmersiveCapture(): void;
   openPeriodicNote(period: JournalPeriod, date?: string, immersive?: boolean): Promise<void>;
