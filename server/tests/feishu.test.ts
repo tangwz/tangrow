@@ -108,11 +108,41 @@ test('Bitable uses filtered pagination, coalesced token refresh, and millisecond
     [names.device.status]: defaults.status.released,
   });
   assert.equal(writes[1]!.fields[names.device.firstActivatedAt], nowSeconds * 1000);
-  const token = writes[1]!.url.searchParams.get('client_token');
-  assert.match(token ?? '', /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
-  assert.equal(writes[2]!.url.searchParams.get('client_token'), token);
+  // A fixed idempotency token could replay a deleted row instead of creating one.
+  assert.ok(writes.every(write => !write.url.searchParams.has('client_token')));
 
   now += 7200 * 1000;
   await store.findLicenseById(lic, signal);
   assert.equal(tokenRequests, 2);
+});
+
+test('duplicate rows for one device resolve to the latest renewal, with a release winning ties', async () => {
+  const config = loadConfig({ TANGROW_LICENSE_SETTINGS: JSON.stringify(settings) }).feishu;
+  const names = config.fields.device;
+  const lic = vector.payload.lic;
+  const row = (recordId: string, renewedAt: number, state: 'active' | 'released', digest = vector.deviceDigest) => ({
+    record_id: recordId,
+    fields: {
+      [names.licenseId]: lic, [names.digest]: digest, [names.platform]: 'macOS',
+      [names.firstActivatedAt]: 1000, [names.lastRenewedAt]: renewedAt, [names.status]: defaults.status[state],
+    },
+  });
+  let items: ReturnType<typeof row>[] = [];
+  const fetcher: typeof fetch = async input => {
+    if (new URL(String(input)).pathname.endsWith('/tenant_access_token/internal')) {
+      return Response.json({ code: 0, tenant_access_token: 'test-token', expire: 7200 });
+    }
+    return Response.json({ code: 0, data: { has_more: false, items } });
+  };
+  const store = new FeishuStore(config, fetcher);
+  const signal = new AbortController().signal;
+  const other = 'e'.repeat(64);
+
+  items = [row('old', 2000, 'active'), row('new', 3000, 'active'), row('other', 2000, 'active', other)];
+  assert.deepEqual((await store.listDevices(lic, signal)).map(device => device.recordId).sort(), ['new', 'other']);
+
+  items = [row('kept', 3000, 'active'), row('released', 3000, 'released')];
+  const [device] = await store.listDevices(lic, signal);
+  assert.equal(device?.recordId, 'released');
+  assert.equal(device?.status, 'released');
 });

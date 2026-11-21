@@ -12,7 +12,8 @@ export type DevicePlatform = typeof platforms[number];
 type Device = { platform: DevicePlatform; lastRenewedAt: number; isCurrent: boolean };
 type DeviceList = { devices: Device[]; deviceLimit: number };
 type RecordName = 'device' | 'trial' | 'lease';
-type ClockRecord = { startedAt: number | null; maxSeenAt: number };
+/** `trustedAt` is the signed issue time that last corrected `maxSeenAt`. */
+type ClockRecord = { startedAt: number | null; maxSeenAt: number; trustedAt?: number };
 export type AccessState = 'active' | 'trial' | 'needs_network' | 'expired' | 'not_started';
 export type AccessEvent = 'change' | 'revoked' | 'released';
 export type AccessResult = { ok: true } | { ok: false; error: string };
@@ -52,6 +53,7 @@ export class Access {
   private retryOnReconnect = false;
   private lastResumeAttempt = -Infinity;
   private highWater = 0;
+  private trustedAt?: number;
   private initializingDevice?: Promise<void>;
   private cached?: { token: string; payload: Lease };
   private previous?: string;
@@ -111,10 +113,15 @@ export class Access {
   private clock(now: number, persist = true): ClockRecord {
     const saved = this.read('trial');
     const valid = object(saved) && timestamp(saved.maxSeenAt) && (saved.startedAt === null ||
-      timestamp(saved.startedAt) && saved.startedAt <= saved.maxSeenAt);
+      timestamp(saved.startedAt) && saved.startedAt <= saved.maxSeenAt) &&
+      (saved.trustedAt === undefined || timestamp(saved.trustedAt));
     if (saved !== null && !valid) this.invalid('trial');
+    const trustedAt = valid ? saved.trustedAt as number | undefined : undefined;
+    // Another window corrected the clock from a signed lease. Marks seen before that correction may be ahead of real time.
+    if (trustedAt !== undefined && trustedAt !== this.trustedAt) { this.trustedAt = trustedAt; this.highWater = 0; }
     this.highWater = Math.max(this.highWater, now, valid ? saved.maxSeenAt as number : 0);
-    const clock = { startedAt: valid ? saved.startedAt as number | null : null, maxSeenAt: this.highWater };
+    const clock: ClockRecord = { startedAt: valid ? saved.startedAt as number | null : null, maxSeenAt: this.highWater,
+      ...(this.trustedAt === undefined ? {} : { trustedAt: this.trustedAt }) };
     if (persist && valid && saved.maxSeenAt !== this.highWater) this.write('trial', clock);
     return clock;
   }
@@ -279,9 +286,17 @@ export class Access {
       if (payload.dev !== dev || (current && (payload.lic !== current.payload.lic || payload.iat < current.payload.iat))) return fail('invalid_response');
       if (payload.st === 'active') {
         const clock = this.clock(this.deps.now());
-        clock.maxSeenAt = Math.max(clock.maxSeenAt, payload.iat * 1000);
-        if (action === 'release' || payload.exp * 1000 <= clock.maxSeenAt) return fail('invalid_response');
-        if (!this.write('trial', clock) || !this.write('lease', parsed.lease)) return fail('storage');
+        // The signed issue time is real time. It also repairs a high-water mark left by a clock that once ran ahead,
+        // and a rolled-back clock still cannot move the mark before it.
+        const trustedAt = payload.iat * 1000;
+        const maxSeenAt = Math.max(this.deps.now(), trustedAt);
+        if (action === 'release' || payload.exp * 1000 <= maxSeenAt) return fail('invalid_response');
+        // A trial started while the clock ran ahead counts as used, which keeps the record valid.
+        const startedAt = clock.startedAt !== null && clock.startedAt > maxSeenAt ? Math.max(0, maxSeenAt - DAY) : clock.startedAt;
+        if (!this.write('trial', { startedAt, maxSeenAt, trustedAt } satisfies ClockRecord)) return fail('storage');
+        this.trustedAt = trustedAt;
+        this.highWater = maxSeenAt;
+        if (!this.write('lease', parsed.lease)) return fail('storage');
       } else {
         if (!current || action === 'activate' || (action === 'release' && payload.st !== 'released')) return fail('invalid_response');
         this.emit(payload.st);

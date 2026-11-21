@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import defaultFields from './fields.json' with { type: 'json' };
 import { digestPattern, isObject, isPlatform, licenseIdPattern } from './store.js';
 import type { DeviceFields, DeviceRecord, LicenseRecord, LicenseStore } from './store.js';
@@ -37,12 +36,10 @@ function seconds(value: unknown): number {
   return Math.floor(value / 1000);
 }
 
-function creationToken(device: DeviceFields): string {
-  const bytes = createHash('sha256').update(device.licenseId + ':' + device.digest).digest().subarray(0, 16);
-  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
-  const hex = bytes.toString('hex');
-  return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join('-');
+/** Of two rows for one device, keep the most recent renewal; on a tie, a release wins. */
+function newerDevice(candidate: DeviceRecord, current: DeviceRecord): boolean {
+  return candidate.lastRenewedAt > current.lastRenewedAt ||
+    (candidate.lastRenewedAt === current.lastRenewedAt && candidate.status === 'released' && current.status !== 'released');
 }
 
 interface Row {
@@ -162,22 +159,25 @@ export class FeishuStore implements LicenseStore {
   async listDevices(id: string, signal: AbortSignal): Promise<DeviceRecord[]> {
     const names = this.config.fields.device;
     const rows = await this.search(this.config.deviceTableId, Object.values(names), names.licenseId, id, signal);
-    const seen = new Set<string>();
-    return rows.map(({ recordId, fields }) => {
+    // A create that timed out after Feishu stored it can leave a second row for the same device.
+    const devices = new Map<string, DeviceRecord>();
+    for (const { recordId, fields } of rows) {
       const licenseId = textField(fields[names.licenseId]);
       const digest = textField(fields[names.digest]);
       const platform = fields[names.platform];
       const choice = fields[names.status];
-      if (licenseId !== id || !digestPattern.test(digest) || seen.has(digest) || !isPlatform(platform) ||
+      if (licenseId !== id || !digestPattern.test(digest) || !isPlatform(platform) ||
           (choice !== status.active && choice !== status.released)) return invalidData();
-      seen.add(digest);
-      return {
+      const device: DeviceRecord = {
         recordId, licenseId, digest, platform,
         firstActivatedAt: seconds(fields[names.firstActivatedAt]),
         lastRenewedAt: seconds(fields[names.lastRenewedAt]),
         status: choice === status.active ? 'active' : 'released',
       };
-    });
+      const current = devices.get(digest);
+      if (!current || newerDevice(device, current)) devices.set(digest, device);
+    }
+    return [...devices.values()];
   }
 
   async saveDevice(device: DeviceFields, recordId: string | undefined, signal: AbortSignal): Promise<void> {
@@ -190,7 +190,8 @@ export class FeishuStore implements LicenseStore {
       [names.status]: status[device.status],
     };
     if (!recordId) {
-      url.searchParams.set('client_token', creationToken(device));
+      // No client_token: a token reused for one device can replay a row that was deleted since, so the device
+      // would get a lease without a counted seat. listDevices tolerates the rare duplicate this allows instead.
       Object.assign(fields, {
         [names.licenseId]: device.licenseId,
         [names.digest]: device.digest,

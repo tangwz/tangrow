@@ -81,6 +81,36 @@ function terminal(st: 'released' | 'revoked', overrides: Partial<Lease> = {}) {
   return signLease({ ...base, st, ...overrides } as Lease, Buffer.from(vector.seedHex, 'hex'));
 }
 
+test('a signed lease repairs a clock that once ran ahead in every window', async () => {
+  const { access, deps, state, records, warnings } = fixture();
+  const sibling = new Access(deps); sibling.start();
+  const real = vector.payload.iat * 1000;
+  const trialKey = 'tangrow:trial:v1';
+  state.now = real + 400 * DAY_SECONDS * 1000;
+  assert.ok(access.startTrial().ok);
+  sibling.snapshot();
+  state.now = real;
+  assert.ok((await access.activate(vector.code)).ok);
+  assert.equal(access.snapshot().state, 'active');
+  // The sibling saw the future time in memory and must not write it back.
+  assert.equal(sibling.snapshot().state, 'active');
+  assert.equal(access.snapshot().state, 'active');
+  const saved = JSON.parse(records.get(trialKey)!);
+  assert.equal(saved.maxSeenAt, real);
+  assert.ok(saved.startedAt <= saved.maxSeenAt);
+  const reopened = new Access(deps); reopened.start(); assert.equal(reopened.snapshot().state, 'active');
+  // Rolling back after the repair still cannot reach before the highest time observed since.
+  state.now = vector.payload.exp * 1000; assert.equal(access.snapshot().state, 'needs_network');
+  state.now -= hour; assert.equal(access.canUse(), false);
+  state.now = real;
+  state.request = async () => response(terminal('released'));
+  assert.ok((await access.release()).ok);
+  // The trial that started while the clock ran ahead stays used.
+  assert.equal(access.snapshot().state, 'expired');
+  assert.equal(access.startTrial().ok, false);
+  assert.ok(!warnings.includes('Tangrow access: trial'));
+});
+
 test('first activation verifies this device; expired signed leases renew with rotated keys', async () => {
   const { access, state, deps, records } = fixture();
   const sign = (overrides: Partial<Lease>) => signLease({ ...vector.payload, ...overrides } as Lease, Buffer.from(vector.seedHex, 'hex'));
