@@ -225,7 +225,8 @@
 激活方案随正式版本上线时，须在同一发布提交中同步完成以下修改：
 
 - [ ] 更新 [README.md](../README.md)、[LICENSING.md](LICENSING.md)、[DESIGN.md](DESIGN.md)、[NOTICE](../NOTICE) 与 [bases.zh-CN.json](../src/locales/bases.zh-CN.json)，统一 GPLv3 软门禁定位、24 小时试用、买断范围（不含第三方 AI API 费用）、3 台设备上限、联网与隐私说明以及停服兜底承诺。
-- [ ] 在 [scripts/package.mjs](../scripts/package.mjs) 增加发布校验，核对生产授权接口的域名与内置公钥表。
+- [x] [打包脚本](../scripts/package.mjs) 检查授权接口、公钥和待分发的构建产物。
+- [ ] 发布时将[客户端配置](../src/license/client.json)替换为实际生产 HTTPS 源站与公钥，并经真实授权服务验签。
 - [ ] 商品页写明：一个兑换码最多 3 台设备，激活需要联网，之后每 30 天内至少联网一次，不含 AI 费用。
 
 ### 发布前验收场景

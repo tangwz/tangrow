@@ -1,7 +1,7 @@
 import { FileView, MarkdownView, Menu, Modal, Notice, Plugin, Setting, TFile, TFolder, moment, parseYaml, getFrontMatterInfo, resolveSubpath, stringifyYaml, stripHeadingForLink, setTooltip, type Command, type EventRef, type WorkspaceLeaf } from 'obsidian';
 import { baseDefinitions, setupReadme, managedFileTranslations } from './bases';
 import { Platform, requestUrl } from 'obsidian';
-import { Access, DEVELOPMENT_KEYS, LICENSE_ENDPOINT } from './access';
+import { Access, LICENSE_KEYS, LICENSE_ENDPOINT } from './access';
 import { TangrowSettings } from './settings/tab';
 import { randomBytes } from './license/format';
 import { focusMinutes, pauseSession, remainingMs, resumeSession, startSession } from './focus';
@@ -159,7 +159,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     }
     if (!this.alive) return;
     this.access = new Access({
-      storage: () => window.localStorage, now: Date.now, bytes: randomBytes, jitter: Math.random, keys: DEVELOPMENT_KEYS,
+      storage: () => window.localStorage, now: Date.now, bytes: randomBytes, jitter: Math.random, keys: LICENSE_KEYS,
       platform: Platform.isIosApp ? 'iOS' : Platform.isAndroidApp ? 'Android' : Platform.isMacOS ? 'macOS' : Platform.isWin ? 'Windows' : 'Linux',
       version: this.manifest.version, later: (callback, delay) => window.setTimeout(callback, delay), cancel: timer => window.clearTimeout(timer),
       warn: message => console.warn(message), request: (path, body) => requestUrl({ url: LICENSE_ENDPOINT + path, method: 'POST',

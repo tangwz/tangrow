@@ -1,9 +1,10 @@
+import licenseClient from './license/client.json';
 import { DAY_SECONDS, deviceDigest, hex, normalizeCode, verifyLease, type Lease, type PublicKeys, type RandomBytes } from './license/format';
 
 const HOUR = 3600000;
 const DAY = DAY_SECONDS * 1000;
-export const LICENSE_ENDPOINT = 'https://license.tangrow.invalid';
-export const DEVELOPMENT_KEYS: PublicKeys = Object.freeze({ 'dev-1': 'toLDfPrO8fWXuTTZlHlMvkN7bmE8ISLj0dwgpPq0FX4' });
+export const LICENSE_ENDPOINT = licenseClient.endpoint;
+export const LICENSE_KEYS: PublicKeys = Object.freeze(licenseClient.keys);
 const platforms = ['macOS', 'Windows', 'Linux', 'iOS', 'Android'] as const;
 export type DevicePlatform = typeof platforms[number];
 type Device = { platform: DevicePlatform; lastRenewedAt: number; isCurrent: boolean };
