@@ -3,6 +3,7 @@ import { Notice, setIcon, setTooltip } from 'obsidian';
 import { captureCalendar, captureDay, groupCapturesByDay, shiftCaptureMonth } from './capture-data';
 import { capturePreview } from './capture-preview';
 import { CaptureProcessingModal } from './capture-processing-modal';
+import { DraftComposition } from './draft-composition';
 import { describeError, translate } from './i18n';
 import type { TranslationValues } from './i18n';
 import type { CaptureSummary, SidebarHost } from './types';
@@ -54,7 +55,7 @@ export class CapturePanel {
   private timelineSignature = '';
   private language = '';
   private submitting = false;
-  private composing = false;
+  private composition?: DraftComposition;
   private protecting = false;
   private mounted = false;
   private dayButtons = new Map<string, HTMLButtonElement>();
@@ -95,23 +96,39 @@ export class CapturePanel {
     this.label(this.root, 'h3', 'Capture a thought', 'tangrow-section-title');
     this.label(this.root, 'p', 'A small note in your existing inbox, ready to organize when you are.', 'tangrow-section-caption');
     const composer = this.root.createDiv({ cls: 'tangrow-composer' });
-    this.editor = composer.createEl('textarea', { cls: 'tangrow-textarea', attr: { rows: '6' } });
-    this.editor.value = this.syncedCapture = this.host.loadComposer().capture;
-    this.editor.addEventListener('compositionstart', () => { this.composing = !this.editor?.readOnly; });
-    this.editor.addEventListener('compositionend', () => {
-      this.composing = false;
-      if (this.editor && !this.editor.readOnly && !this.protecting) this.host.saveComposer({ capture: this.editor.value });
-      this.syncComposer();
-    });
-    this.editor.addEventListener('input', () => {
-      if (this.editor && !this.editor.readOnly && !this.protecting) this.host.saveComposer({ capture: this.editor.value });
+    const editor = this.editor = composer.createEl('textarea', { cls: 'tangrow-textarea', attr: { rows: '6' } });
+    editor.value = this.syncedCapture = this.host.loadComposer().capture;
+    const canEdit = () => this.mounted && this.editor === editor && editor.isConnected && !editor.readOnly && !this.protecting;
+    editor.addEventListener('compositionstart', () => {
+      if (!canEdit()) return;
+      this.composition = new DraftComposition(editor);
       this.updateComposerControls();
     });
-    this.editor.addEventListener('keydown', (event) => {
-      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !event.isComposing) {
+    editor.addEventListener('compositionend', () => {
+      const composition = this.composition;
+      if (!canEdit() || composition?.control !== editor) return;
+      if (this.rescueIfAccessEnded()) return;
+      this.composition = undefined;
+      if (composition.finish()) this.host.saveComposer({ capture: editor.value });
+      this.syncComposer();
+    });
+    editor.addEventListener('input', event => {
+      if (!canEdit()) return;
+      if (this.composition) { this.composition.input(); return; }
+      if ((event as InputEvent).isComposing) return;
+      this.host.saveComposer({ capture: editor.value });
+      this.updateComposerControls();
+    });
+    editor.addEventListener('keydown', event => {
+      if (!canEdit()) return;
+      this.composition?.keyDown(event);
+      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !this.composition && !event.isComposing) {
         event.preventDefault();
         this.saveButton?.click();
       }
+    });
+    editor.addEventListener('keyup', event => {
+      if (canEdit()) this.composition?.keyUp(event);
     });
     if (this.surface === 'sidebar') {
       composer.addClass('tangrow-composer-with-popout');
@@ -220,16 +237,12 @@ export class CapturePanel {
   }
 
   destroy(): void {
-    // The deadline can pass before its timer fires. Lock while this panel is still registered, so its unsaved
-    // buffer is rescued together with every other window's instead of disappearing with the control.
-    if (this.mounted && this.editor && !this.editor.readOnly && !this.host.access.canUse()) {
-      this.host.access.refresh();
-      if (this.editor && !this.editor.readOnly) this.protectDraft(true);
-    }
+    if (this.mounted && this.editor && !this.editor.readOnly) this.rescueIfAccessEnded();
     openPanels.get(this.host)?.delete(this);
     this.gate?.dispose();
     this.gate = undefined;
     this.mounted = false;
+    this.composition = undefined;
     this.unsubscribe?.();
     this.unsubscribeComposer?.();
     this.unsubscribeRecovery?.();
@@ -277,13 +290,24 @@ export class CapturePanel {
     return control;
   }
 
+  private rescueIfAccessEnded(): boolean {
+    if (this.host.access.canUse()) return false;
+    // Rescue the live buffers before composition or teardown can discard them ahead of the deadline timer.
+    this.host.access.refresh();
+    if (this.editor && !this.editor.readOnly) this.protectDraft(true);
+    return true;
+  }
+
   protectDraft(locked: boolean): void {
     const editors = Array.from(openPanels.get(this.host) ?? []).flatMap(panel =>
-      panel.editor && !panel.editor.readOnly ? [{ panel, editor: panel.editor, text: panel.editor.value }] : []);
+      panel.editor && !panel.editor.readOnly ? [{ panel, editor: panel.editor }] : []);
     if (!editors.length) return;
     // Snapshot every window before changing readOnly or notifying a shared composer listener.
     const buffers = new Map<string, CapturePanel>();
-    for (const { panel, text } of editors) if (text && !buffers.has(text)) buffers.set(text, panel);
+    for (const { panel, editor } of editors) {
+      panel.composition?.restoreIfCancelled();
+      if (editor.value && !buffers.has(editor.value)) buffers.set(editor.value, panel);
+    }
     const shared = this.host.loadComposer().capture;
     const primary = buffers.has(shared) ? shared : buffers.keys().next().value ?? '';
     for (const { panel } of editors) panel.protecting = true;
@@ -291,7 +315,7 @@ export class CapturePanel {
       if (locked) {
         for (const { panel, editor } of editors) {
           editor.readOnly = true;
-          panel.composing = false;
+          panel.composition = undefined;
         }
       }
       if (primary !== shared) this.host.saveComposer({ capture: primary });
@@ -311,9 +335,10 @@ export class CapturePanel {
   private syncComposer(): void {
     if (!this.mounted || !this.editor || this.protecting) return;
     if (this.editor.readOnly) return;
+    if (this.composition) { this.updateComposerControls(); return; }
     const value = this.host.loadComposer().capture;
     if (value === this.editor.value) this.syncedCapture = value;
-    else if (!this.composing && this.syncedCapture === this.editor.value) {
+    else if (this.syncedCapture === this.editor.value) {
       const focused = this.editor.ownerDocument.activeElement === this.editor;
       const start = this.editor.selectionStart;
       const end = this.editor.selectionEnd;
@@ -338,7 +363,7 @@ export class CapturePanel {
     const text = this.host.loadComposer().capture;
     if (this.count) this.count.textContent = text.length ? this.t('{count} characters', { count: this.number(Array.from(text).length) }) : this.t('Saved as Markdown');
     if (this.saveButton) {
-      this.saveButton.disabled = this.submitting || !text.trim();
+      this.saveButton.disabled = this.submitting || !!this.composition || !text.trim();
       this.saveButton.setAttribute('aria-label', this.t(this.submitting ? 'Saving capture...' : 'Save capture'));
       const label = this.saveButton.querySelector('.tangrow-capture-button-label');
       if (label) label.textContent = this.t(this.submitting ? 'Saving capture...' : 'Save capture');
@@ -349,7 +374,7 @@ export class CapturePanel {
   }
 
   private async submit(): Promise<void> {
-    if (this.submitting || !this.host.loadComposer().capture.trim()) return;
+    if (this.submitting || this.composition || !this.host.loadComposer().capture.trim()) return;
     this.submitting = true;
     this.updateComposerControls();
     const editor = this.editor;

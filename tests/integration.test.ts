@@ -103,7 +103,7 @@ interface TestSidebar {
   scratchRevision: number;
   scratchEditor?: DraftControl;
   scratchTitleInput?: DraftControl;
-  scratchComposingControl?: DraftControl;
+  scratchComposition?: { control: DraftControl };
   contentEl: { empty(): void };
   onOpen(): Promise<void>;
   onClose(): Promise<void>;
@@ -935,7 +935,7 @@ test('IME composition protects pending input from remote updates and cleanup rel
       first.scratchEditor = firstControl;
       second.scratchEditor = secondControl;
       assert.equal(plugin.beginWritingDraftComposition(first.viewId, first.scratchRevision), true);
-      first.scratchComposingControl = firstControl;
+      first.scratchComposition = { control: firstControl };
       assert.equal(firstControl.readOnly, false);
       assert.equal(secondControl.readOnly, true);
       firstControl.value = 'The uncommitted composition text.';
@@ -994,7 +994,10 @@ class StudioElement extends EventTarget {
   createDiv(): StudioElement { return new StudioElement(); }
   createEl(): StudioElement { return new StudioElement(); }
   createSpan(): StudioElement { return new StudioElement(); }
-  setSelectionRange(): void {}
+  setSelectionRange(start: number, end: number): void {
+    this.selectionStart = start;
+    this.selectionEnd = end;
+  }
 }
 
 async function mountedStudio(plugin: TestPlugin, root?: GateElement): Promise<TestSidebar> {
@@ -1070,6 +1073,44 @@ test('IME completion publishes the selected title or body and ordinary input sti
       assert.equal(plugin.loadWritingDraft()[field], 'ni');
       await view.onClose();
     }
+  });
+});
+
+for (const field of ['text', 'title'] as const) test(`Escape discards an IME completion that still contains preedit in the writing ${field}`, async () => {
+  await withWindow(async timers => {
+    const { plugin } = createPlugin();
+    await plugin.onload();
+    assert.ok(plugin.access.startTrial().ok);
+    plugin.updateWritingDraft({ text: 'Committed body', title: 'Committed title' }, 0);
+    const initial = plugin.loadWritingDraft();
+    const view = await mountedStudio(plugin);
+    const peer = await mountedStudio(plugin);
+    const control = (field === 'text' ? view.scratchEditor : view.scratchTitleInput) as unknown as StudioElement;
+    control.setSelectionRange(2, 5);
+    control.dispatchEvent(new Event('compositionstart'));
+    control.value = 'Copreedit' + initial[field].slice(5);
+    control.setSelectionRange(9, 9);
+    control.dispatchEvent(new Event('input'));
+    assert.equal(peer.scratchEditor?.readOnly, true);
+
+    const escape = Object.assign(new Event('keydown', { cancelable: true }), { key: 'Escape', code: 'Escape', isComposing: true });
+    control.dispatchEvent(escape);
+    assert.equal(escape.defaultPrevented, false);
+    control.dispatchEvent(Object.assign(new Event('compositionend'), { data: 'preedit' }));
+    assert.deepEqual(plugin.loadWritingDraft(), initial);
+    assert.equal(control.value, initial[field]);
+    assert.deepEqual([control.selectionStart, control.selectionEnd], [2, 5]);
+    assert.equal(peer.scratchEditor?.readOnly, false);
+
+    timers.flush();
+    await plugin.writes;
+    const saved = plugin.savedData as { scratch: string; composer: ComposerState };
+    assert.deepEqual([saved.scratch, saved.composer.scratchTitle], [initial.text, initial.title]);
+    control.value += ' with normal input';
+    control.dispatchEvent(new Event('input'));
+    assert.equal(plugin.loadWritingDraft()[field], initial[field] + ' with normal input');
+    await view.onClose();
+    await peer.onClose();
   });
 });
 
@@ -1733,7 +1774,7 @@ test('Scratchpad language refresh keeps the composing inputs and editing lease w
       querySelector: (): null => null
     };
     Object.assign(view, {
-      section: 'compose', composeTab: 'scratchpad', scratchComposingControl: text, contentEl: content,
+      section: 'compose', composeTab: 'scratchpad', scratchComposition: { control: text }, contentEl: content,
       workspacePane: { querySelectorAll: () => [] },
       pane: { contains: (control: unknown) => control === text || control === title, querySelectorAll: () => [] },
       setupBanner: { empty: () => undefined }, studioHeading: heading, studioCaption: caption,
@@ -1785,7 +1826,7 @@ test('plugin unload discards pending IME text while preserving the other field',
     view.scratchEditor = text;
     view.scratchTitleInput = title;
     assert.equal(plugin.beginWritingDraftComposition(view.viewId, view.scratchRevision), true);
-    view.scratchComposingControl = text;
+    view.scratchComposition = { control: text };
     text.value = 'The latest IME body not yet published by an input event.';
     title.value = 'The latest unpublished title';
     const previousLeaves = app.workspace.getLeavesOfType;
@@ -1942,6 +1983,88 @@ class GateElement extends StudioElement {
     await new Promise(resolve => setImmediate(resolve));
   }
 }
+
+test('capture preedit stays in its window until commit, and closing discards an unfinished candidate', async () => {
+  await withWindow(async timers => {
+    const { plugin, app } = createPlugin();
+    plugin.savedData = { settings: { language: 'en' } };
+    await plugin.onload();
+    assert.ok(plugin.access.startTrial().ok);
+    const sidebar = new harness.CapturePanel(plugin, 'sidebar');
+    const popout = new harness.CapturePanel(plugin, 'window');
+    const root = new GateElement();
+    const committed = 'Committed capture';
+    plugin.saveComposer({ capture: committed });
+    sidebar.mount(new GateElement());
+    popout.mount(root);
+    const editor = popout.editor;
+    editor.dispatchEvent(new Event('compositionstart'));
+    editor.value = committed + ' preedit';
+    editor.dispatchEvent(new Event('input'));
+    assert.equal(plugin.loadComposer().capture, committed);
+    assert.equal(sidebar.editor.value, committed);
+    const save = root.all().find(el => el.getAttribute('aria-label') === 'Save capture');
+    assert.equal(save?.disabled, true);
+    await root.clickButton('Save capture');
+    assert.equal(captureFiles(app).length, 0);
+    timers.flush();
+    await plugin.writes;
+    assert.equal((plugin.savedData as { composer: ComposerState }).composer.capture, committed);
+
+    editor.dispatchEvent(Object.assign(new Event('keyup'), { key: 't', isComposing: true }));
+    editor.dispatchEvent(Object.assign(new Event('compositionend'), { data: 'preedit' }));
+    assert.equal(editor.value, committed);
+    popout.destroy();
+    editor.dispatchEvent(Object.assign(new Event('compositionend'), { data: 'preedit' }));
+    assert.equal(plugin.loadComposer().capture, committed);
+    assert.equal(sidebar.editor.value, committed);
+
+    const reopened = new GateElement();
+    popout.mount(reopened);
+    popout.editor.dispatchEvent(new Event('compositionstart'));
+    popout.editor.value = committed + ' latin';
+    popout.editor.dispatchEvent(new Event('input'));
+    popout.editor.dispatchEvent(Object.assign(new Event('keyup'), { key: 'n', isComposing: true }));
+    popout.editor.dispatchEvent(Object.assign(new Event('keydown'), { key: 'Enter', isComposing: true }));
+    popout.editor.dispatchEvent(new Event('compositionend'));
+    assert.equal(sidebar.editor.value, committed + ' latin');
+
+    popout.editor.dispatchEvent(new Event('compositionstart'));
+    popout.editor.value = committed + ' preedit';
+    popout.editor.dispatchEvent(new Event('input'));
+    popout.editor.dispatchEvent(Object.assign(new Event('keyup'), { key: 't', isComposing: true }));
+    popout.editor.value = committed + ' selected candidate';
+    popout.editor.dispatchEvent(new Event('input'));
+    popout.editor.dispatchEvent(new Event('compositionend'));
+    assert.equal(sidebar.editor.value, committed + ' selected candidate');
+    await reopened.clickButton('Save capture');
+    assert.equal(captureFiles(app).length, 1);
+    assert.equal(captureFiles(app)[0]?.content.endsWith(committed + ' selected candidate\n'), true);
+    popout.destroy();
+    sidebar.destroy();
+  });
+});
+
+test('Escape in a composing capture synchronizes the latest committed text from another window', async () => {
+  await withWindow(async () => {
+    const { plugin } = createPlugin();
+    const sidebar = new harness.CapturePanel(plugin, 'sidebar');
+    const popout = new harness.CapturePanel(plugin, 'window');
+    plugin.saveComposer({ capture: 'Shared draft' });
+    sidebar.mount(new GateElement());
+    popout.mount(new GateElement());
+    popout.editor.dispatchEvent(new Event('compositionstart'));
+    popout.editor.value = 'Shared draft with unconfirmed preedit';
+    sidebar.editor.value = 'An edit in the other window';
+    sidebar.editor.dispatchEvent(new Event('input'));
+    popout.editor.dispatchEvent(Object.assign(new Event('keydown'), { key: 'Escape', isComposing: true }));
+    popout.editor.dispatchEvent(Object.assign(new Event('compositionend'), { data: 'with unconfirmed preedit' }));
+    assert.equal(popout.editor.value, sidebar.editor.value);
+    assert.equal(plugin.loadComposer().capture, 'An edit in the other window');
+    popout.destroy();
+    sidebar.destroy();
+  });
+});
 
 function openQuickAdd(plugin: TestPlugin, kind: QuickKind, text: string) {
   const modal = new harness.QuickAddModal(plugin, kind, text);
@@ -2202,7 +2325,7 @@ test('every Quick Add mode preserves its live textarea alongside the shared draf
   }));
 });
 
-for (const published of [false, true]) test(`two simultaneous capture preedits keep their controls, exports and restart receipts (first input published: ${published})`, async () => {
+for (const dispatchedInput of [false, true]) test(`two simultaneous capture preedits keep their controls, exports and restart receipts (input dispatched: ${dispatchedInput})`, async () => {
   await withClock(async advance => withWindow(async timers => {
     const { plugin, app } = createPlugin();
     plugin.savedData = { settings: { language: 'en' } };
@@ -2215,8 +2338,9 @@ for (const published of [false, true]) test(`two simultaneous capture preedits k
       view.mount(roots[index]!);
       view.editor.dispatchEvent(new Event('compositionstart'));
       view.editor.value = values[index]!;
-      if (published && index === 0) view.editor.dispatchEvent(new Event('input'));
+      if (dispatchedInput) view.editor.dispatchEvent(new Event('input'));
     });
+    assert.equal(plugin.loadComposer().capture, '');
     advance(24 * 60);
     timers.flush();
     for (const [index, view] of views.entries()) {
@@ -2271,8 +2395,11 @@ for (const closed of ['window', 'sidebar'] as const) test(`closing a ${closed} c
       view.editor.dispatchEvent(new Event('compositionstart'));
       view.editor.value = values[index]!;
     });
+    const closingEditor = views[0]!.editor;
+    closingEditor.dispatchEvent(Object.assign(new Event('keyup'), { key: 't', isComposing: true }));
     advance(24 * 60);
-    // The first view closes before the expiry timer has run.
+    // Obsidian can end composition before it reports that the popout has closed.
+    if (closed === 'window') closingEditor.dispatchEvent(new Event('compositionend'));
     views[0]!.destroy();
     timers.flush();
     assert.equal(views[1]!.editor.readOnly, true);
@@ -2297,7 +2424,9 @@ test('closing the sidebar after the deadline but before its timer keeps the writ
     const writing = studio.scratchEditor as unknown as StudioElement;
     writing.dispatchEvent(new Event('compositionstart'));
     writing.value = 'Writing preedit';
+    writing.dispatchEvent(Object.assign(new Event('keyup'), { key: 't', isComposing: true }));
     advance(24 * 60);
+    writing.dispatchEvent(new Event('compositionend'));
     await studio.onClose();
     timers.flush();
     assert.equal(plugin.loadWritingDraft().text, 'Writing preedit');
