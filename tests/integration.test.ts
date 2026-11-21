@@ -46,9 +46,10 @@ interface TestPlugin extends MockPlugin {
   saveComposer(patch: Partial<ComposerState>): void;
   subscribe(listener: () => void): () => void;
   subscribeComposer(listener: () => void): () => void;
-  submitCaptureDraft(): Promise<void>;
+  submitCaptureDraft(rescue?: boolean): Promise<void>;
   loadRecoveryDrafts(): (RecoveryDraft & { saving: boolean })[];
   submitRecoveryDraft(id: string): Promise<void>;
+  discardRecoveryDraft(id: string): void;
   readCapture(path: string): Promise<string>;
   openPeriodicNote(period: JournalPeriod, date?: string, immersive?: boolean): Promise<void>;
   updateJournalSettings(period: JournalPeriod, format: string, template: string): Promise<void>;
@@ -1202,6 +1203,20 @@ test('concurrent submissions of the same shared capture create one record and cl
   });
 });
 
+test('an ordinary capture trims surrounding whitespace while a rescue keeps it', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    plugin.saveComposer({ capture: '\n    Indented thought  \n\n' });
+    await plugin.submitCaptureDraft();
+    plugin.saveComposer({ capture: '  Rescued as typed  ' });
+    await plugin.submitCaptureDraft(true);
+    const contents = captureFiles(app).map(file => file.content);
+    assert.equal(contents.length, 2);
+    assert.equal(contents.filter(content => content.endsWith('\n\nIndented thought\n')).length, 1);
+    assert.equal(contents.filter(content => content.endsWith('\n\n  Rescued as typed  \n')).length, 1);
+  });
+});
+
 test('text entered while a shared capture is being saved remains available for the next submission', async () => {
   await withWindow(async () => {
     const { plugin, app } = createPlugin();
@@ -2222,7 +2237,8 @@ for (const published of [false, true]) test(`two simultaneous capture preedits k
     restarted.savedData = structuredClone(next.savedData);
     await restarted.onload();
     assert.deepEqual(restarted.loadRecoveryDrafts(), []);
-    await restarted.submitCaptureDraft();
+    // The gate exports the protected shared capture as a rescue, which keeps it exactly as typed.
+    await restarted.submitCaptureDraft(true);
     assert.equal(captureFiles(app).length, 2);
     for (const text of values) assert.equal(captureFiles(app).filter(file => file.content.endsWith(text + '\n')).length, 1);
   }));
@@ -2266,6 +2282,34 @@ test('a Quick Add task save that crosses expiry exposes only the unfinished line
     assert.equal(captureFiles(app).length, 1);
     assert.ok(captureFiles(app)[0]!.content.endsWith(unfinished + '\n'));
     quick.modal.onClose();
+  }));
+});
+
+test('a rescued Quick Add draft can be discarded after confirmation without creating a note', async () => {
+  await withClock(async advance => withWindow(async timers => {
+    const { plugin, app } = createPlugin();
+    plugin.savedData = { settings: { language: 'en' } };
+    await plugin.onload();
+    assert.ok(plugin.access.startTrial().ok);
+    const quick = openQuickAdd(plugin, 'capture', 'Not worth keeping');
+    advance(24 * 60);
+    timers.flush();
+    assert.deepEqual(plugin.loadRecoveryDrafts().map(draft => draft.text), ['Not worth keeping']);
+    quick.modal.onClose();
+    const root = new GateElement();
+    const panel = new harness.CapturePanel(plugin, 'immersive');
+    panel.mount(root);
+    const section = recoverySection(root, 'Not worth keeping');
+    await section.clickButton('Discard');
+    // The first click only asks for confirmation.
+    assert.equal(plugin.loadRecoveryDrafts().length, 1);
+    await section.clickButton('Confirm discard');
+    assert.deepEqual(plugin.loadRecoveryDrafts(), []);
+    timers.flush();
+    await plugin.writes;
+    assert.deepEqual((plugin.savedData as { recoveryDrafts: RecoveryDraft[] }).recoveryDrafts, []);
+    assert.deepEqual(captureFiles(app), []);
+    panel.destroy();
   }));
 });
 

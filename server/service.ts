@@ -127,10 +127,9 @@ export class LicenseService {
 
     const renewalPlatform = action === 'renew' ? input.platform : undefined;
     if (renewalPlatform !== undefined && !isPlatform(renewalPlatform)) return failure('bad_request');
-    if (action === 'renew') {
-      const digest = createHash('sha256').update(input.lease).digest('hex');
-      if (!this.limits.allow('lease:' + digest, 5, hourMs, this.now())) return failure('rate_limited');
-    }
+    // Each lease gets its own budget per action, so retried renewals never block a release.
+    const leaseDigest = createHash('sha256').update(input.lease).digest('hex');
+    if (!this.limits.allow(action + ':' + leaseDigest, 5, hourMs, this.now())) return failure('rate_limited');
 
     return this.withLicense(lease.lic, signal, async () => {
       const license = await this.store.findLicenseById(lease.lic, signal);

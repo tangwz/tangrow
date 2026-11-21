@@ -146,3 +146,74 @@ test('duplicate rows for one device resolve to the latest renewal, with a releas
   assert.equal(device?.recordId, 'released');
   assert.equal(device?.status, 'released');
 });
+
+test('a hand-edited device row is skipped and reported instead of blocking the license', async () => {
+  const config = loadConfig({ TANGROW_LICENSE_SETTINGS: JSON.stringify(settings) }).feishu;
+  const names = config.fields.device;
+  const lic = vector.payload.lic;
+  const fetcher: typeof fetch = async input => {
+    if (new URL(String(input)).pathname.endsWith('/tenant_access_token/internal')) {
+      return Response.json({ code: 0, tenant_access_token: 'test-token', expire: 7200 });
+    }
+    return Response.json({ code: 0, data: { has_more: false, items: [
+      { record_id: 'good', fields: {
+        [names.licenseId]: lic, [names.digest]: vector.deviceDigest, [names.platform]: 'macOS',
+        [names.firstActivatedAt]: 1000, [names.lastRenewedAt]: 2000, [names.status]: defaults.status.active,
+      } },
+      // An operator added this row by hand and left the renewal date and status empty.
+      { record_id: 'missing-date', fields: { [names.licenseId]: lic, [names.digest]: 'e'.repeat(64), [names.platform]: 'iOS' } },
+    ] } });
+  };
+  const warnings: string[] = [];
+  const store = new FeishuStore(config, fetcher, Date.now, message => warnings.push(message));
+  const devices = await store.listDevices(lic, new AbortController().signal);
+  assert.deepEqual(devices.map(device => device.recordId), ['good']);
+  assert.deepEqual(warnings, ['Skipped invalid Feishu device row missing-date']);
+});
+
+test('duplicate license rows stay unavailable and name the rows to fix', async () => {
+  const config = loadConfig({ TANGROW_LICENSE_SETTINGS: JSON.stringify(settings) }).feishu;
+  const names = config.fields.license;
+  const lic = vector.payload.lic;
+  const row = (recordId: string) => ({ record_id: recordId, fields: {
+    [names.id]: lic, [names.codeDigest]: vector.codeDigest, [names.deviceLimit]: 3, [names.status]: defaults.status.active,
+  } });
+  const fetcher: typeof fetch = async input => {
+    if (new URL(String(input)).pathname.endsWith('/tenant_access_token/internal')) {
+      return Response.json({ code: 0, tenant_access_token: 'test-token', expire: 7200 });
+    }
+    return Response.json({ code: 0, data: { has_more: false, items: [row('first'), row('second')] } });
+  };
+  const warnings: string[] = [];
+  const store = new FeishuStore(config, fetcher, Date.now, message => warnings.push(message));
+  await assert.rejects(store.findLicenseById(lic, new AbortController().signal));
+  assert.deepEqual(warnings, ['Several Feishu license rows match one lookup: first, second']);
+});
+
+test('a rejected call drops the cached token so the next request fetches a fresh one', async () => {
+  const config = loadConfig({ TANGROW_LICENSE_SETTINGS: JSON.stringify(settings) }).feishu;
+  const names = config.fields.license;
+  const lic = vector.payload.lic;
+  let tokenRequests = 0;
+  let reject = true;
+  const fetcher: typeof fetch = async (input, init) => {
+    if (new URL(String(input)).pathname.endsWith('/tenant_access_token/internal')) {
+      tokenRequests += 1;
+      return Response.json({ code: 0, tenant_access_token: 'token-' + tokenRequests, expire: 7200 });
+    }
+    if (reject) {
+      reject = false;
+      // Feishu reports an early-revoked token as an API error.
+      return Response.json({ code: 99991663, msg: 'invalid access token' });
+    }
+    assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer token-2');
+    return Response.json({ code: 0, data: { has_more: false, items: [{ record_id: 'license-row', fields: {
+      [names.id]: lic, [names.codeDigest]: vector.codeDigest, [names.deviceLimit]: 3, [names.status]: defaults.status.active,
+    } }] } });
+  };
+  const store = new FeishuStore(config, fetcher, Date.now, () => {});
+  const signal = new AbortController().signal;
+  await assert.rejects(store.findLicenseById(lic, signal));
+  assert.equal((await store.findLicenseById(lic, signal))?.id, lic);
+  assert.equal(tokenRequests, 2);
+});

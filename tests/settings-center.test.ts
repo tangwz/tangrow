@@ -237,26 +237,38 @@ test('selecting a weekly template result opens Defaults, expands the group, and 
   dispose();
 });
 
-test('valid integers save immediately, out of range values show a hint, and access changes lock editing', async () => {
+test('valid integers save when committed, out of range values show a hint, and access changes lock editing', async () => {
   const { plugin, root, row, access, navigate, byText, dispose } = fixture();
   navigate('Sidebar components');
   const duration = row('focusMinutes').querySelector('input')!;
+  const original = plugin.settings.focusMinutes;
   for (const value of ['0', '241', '1.5', '']) {
     duration.value = value;
     await duration.oninput?.();
+    await duration.onchange?.();
     assert.equal(plugin.saveCalls, 0);
     assert.equal(duration.attributes['aria-invalid'], 'true');
     assert.equal(byText('Enter a whole number from 1 to 240.').hidden, false);
   }
+  // Intermediate values while typing 300 are never stored.
+  for (const value of ['3', '30', '300']) {
+    duration.value = value;
+    await duration.oninput?.();
+  }
+  await duration.onchange?.();
+  assert.equal(plugin.saveCalls, 0);
+  assert.equal(plugin.settings.focusMinutes, original);
   duration.value = '120';
   await duration.oninput?.();
+  assert.equal(plugin.saveCalls, 0);
+  await duration.onchange?.();
   assert.equal(plugin.settings.focusMinutes, 120);
   assert.equal(plugin.saveCalls, 1);
   access.change('needs_network');
   assert.equal(root.querySelector('fieldset')?.disabled, true);
   assert.equal(byText('Connect to the internet to renew access and edit local settings.').hidden, false);
   duration.value = '180';
-  await duration.oninput?.();
+  await duration.onchange?.();
   assert.equal(plugin.saveCalls, 1);
   byText('Back to settings').click();
   navigate('Defaults');

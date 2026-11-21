@@ -12,6 +12,14 @@ test('card text and scoped digests match the shared wire vectors', () => {
   assert.throws(() => normalizeCode('U'.repeat(16)));
 });
 
+test('codes typed with a Chinese input method or copied from chat normalize to the same value', () => {
+  const fullWidth = (text: string) => text.replace(/[!-~]/g, char => String.fromCharCode(char.charCodeAt(0) + 0xfee0));
+  const dashed = vector.code.replace(/-/g, '—');
+  for (const typed of [fullWidth(vector.code), dashed, vector.code.replace(/-/g, '–'), vector.code.replace(/-/g, '　'), fullWidth(vector.code.toLowerCase())]) {
+    assert.equal(normalizeCode(typed), vector.normalized, typed);
+  }
+});
+
 test('independent Ed25519 vector matches exact UTF-8 payload bytes', () => {
   const keys = { 'test-1': vector.publicKey };
   assert.equal(signLease(vector.payload as Lease, Buffer.from(vector.seedHex, 'hex')), vector.lease);

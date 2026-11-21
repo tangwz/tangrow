@@ -5,7 +5,7 @@ import { accessErrorMessage } from './access-messages';
 import { SidebarUI } from './ui';
 import type { SidebarHost } from './types';
 
-function showDraft(area: HTMLElement, ui: SidebarUI, label: string, value: string, save: () => Promise<void>, saving = false): void {
+function showDraft(area: HTMLElement, ui: SidebarUI, label: string, value: string, save: () => Promise<void>, saving = false, discard?: () => void): void {
   if (!value) return;
   const section = area.createEl('section');
   section.createEl('h4', { text: ui.t(label) });
@@ -13,11 +13,17 @@ function showDraft(area: HTMLElement, ui: SidebarUI, label: string, value: strin
   text.value = value;
   ui.button(section, 'Save to Inbox', save, { disabled: saving });
   ui.button(section, 'Copy to clipboard', () => text.ownerDocument.defaultView!.navigator.clipboard.writeText(value));
+  if (!discard) return;
+  // Discarding cannot be undone, so the first click only asks for confirmation.
+  const ask = ui.button(section, 'Discard', () => {
+    ask.remove();
+    ui.button(section, 'Confirm discard', discard, { cls: 'mod-warning' });
+  }, { disabled: saving });
 }
 
 export function showRecoveryDrafts(area: HTMLElement, ui: SidebarUI, host: SidebarHost, drafts = host.loadRecoveryDrafts()): void {
   for (const draft of drafts) {
-    showDraft(area, ui, draft.label, draft.text, () => host.submitRecoveryDraft(draft.id), draft.saving);
+    showDraft(area, ui, draft.label, draft.text, () => host.submitRecoveryDraft(draft.id), draft.saving, () => host.discardRecoveryDraft(draft.id));
   }
 }
 

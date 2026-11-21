@@ -13,5 +13,7 @@
   "Save to Inbox": "保存到收件箱",
   "Copy to clipboard": "复制到剪贴板",
   "Continue processing: {name}": "继续处理：{name}",
-  "Device limit reached. Review your devices in Activation and updates.": "设备名额已满，请到「激活与更新」查看已绑定设备。"
+  "Device limit reached. Review your devices in Activation and updates.": "设备名额已满，请到「激活与更新」查看已绑定设备。",
+  "Discard": "丢弃",
+  "Confirm discard": "确认丢弃"
 }

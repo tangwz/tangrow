@@ -152,6 +152,7 @@ export interface SidebarHost {
   subscribeRecoveryDrafts(listener: () => void): () => void;
   preserveRecoveryDraft(id: string, label: RecoveryLabel, text: string, saving?: boolean): void | Promise<void>;
   submitRecoveryDraft(id: string): Promise<void>;
+  discardRecoveryDraft(id: string): void;
   openCaptureWindow(): Promise<void>;
   openImmersiveCapture(): void;
   openPeriodicNote(period: JournalPeriod, date?: string, immersive?: boolean): Promise<void>;

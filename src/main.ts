@@ -1340,7 +1340,8 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     const title = this.t('Capture {date}', { date: dateTime().format('YYYY-MM-DD HHmmss') });
     await this.exclusive(() => {
       const fields = { tangrow_kind: 'capture', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') };
-      return submission ? this.createSubmittedNote(submission, 'capture', title, text, fields) : this.createUnique(this.settings.inboxFolder, title, text, fields);
+      // Only a rescue keeps surrounding whitespace; ordinary saves match createUnique and trim it.
+      return submission ? this.createSubmittedNote(submission, 'capture', title, rescue ? text : text.trim(), fields) : this.createUnique(this.settings.inboxFolder, title, text, fields);
     });
     if (!this.alive) return;
     this.notify();
@@ -1387,6 +1388,12 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     for (const listener of this.recoveryListeners) listener();
     return saving;
   }
+  discardRecoveryDraft(id: string): void {
+    const draft = this.recoveryDrafts.get(id);
+    // A draft that is being saved may already have become a note; let that save finish instead.
+    if (!draft || this.quickAddSaves.has(id) || this.recoverySaves.has(draft)) return;
+    this.preserveRecoveryDraft(id, draft.label, '');
+  }
   async readCapture(path: string): Promise<string> {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile) || file.extension !== 'md' || this.app.metadataCache.getFileCache(file)?.frontmatter?.tangrow_kind !== 'capture') throw new Error('This capture no longer exists.');
@@ -1410,7 +1417,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       const file = await this.exclusive(() => {
         const name = title || this.t('Draft {date}', { date: dateTime().format('YYYY-MM-DD HHmmss') });
         const fields = { tangrow_kind: 'draft', tangrow_status: 'draft', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') };
-        return submission ? this.createSubmittedNote(submission, 'draft', name, text, fields) : this.createUnique(this.settings.inboxFolder, name, text, fields);
+        return submission ? this.createSubmittedNote(submission, 'draft', name, rescue ? text : text.trim(), fields) : this.createUnique(this.settings.inboxFolder, name, text, fields);
       });
       if (!this.alive || this.scratchRevision !== revision || this.scratchEditingView !== undefined) return;
       const target = navigation.destination();

@@ -118,12 +118,18 @@ export function renderSection(container: HTMLElement, id: Exclude<SectionId, 'ac
     control.setAttribute('aria-describedby', error.id);
     error.hidden = true;
     let revision = 0;
-    control.oninput = async () => {
-      const inputRevision = ++revision;
+    const check = (): number | null => {
       const value = wholeMinutes(control.value, max);
       error.hidden = value !== null;
       error.textContent = value === null ? t('Enter a whole number from 1 to {max}.', { max }) : '';
       control.setAttribute('aria-invalid', String(value === null));
+      return value;
+    };
+    // Validate while typing, but save only the committed value: typing 300 must not store 3 and 30 on the way.
+    control.oninput = () => { check(); };
+    control.onchange = async () => {
+      const inputRevision = ++revision;
+      const value = check();
       if (value === null || !canEdit()) return;
       try { await save(value); }
       catch (failure) {

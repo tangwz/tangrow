@@ -55,7 +55,14 @@ export class FeishuStore implements LicenseStore {
     private readonly config: FeishuConfig,
     private readonly fetcher = fetch,
     private readonly now = Date.now,
+    // Row problems are reported by record ID so an operator can find them in Feishu. Rows hold no buyer data.
+    private readonly warn: (message: string) => void = message => console.warn(message),
   ) {}
+
+  /** A rejected call may mean the cached token was revoked early, so fetch a fresh one next time. */
+  private dropToken(token: string | undefined) {
+    if (token && this.cachedToken?.value === token) this.cachedToken = undefined;
+  }
 
   private async call(url: string, method: 'POST' | 'PUT', body: object, signal: AbortSignal, token?: string) {
     signal.throwIfAborted();
@@ -71,10 +78,14 @@ export class FeishuStore implements LicenseStore {
     });
     if (!response.ok) {
       await response.body?.cancel();
+      this.dropToken(token);
       throw new Error('Feishu HTTP error');
     }
     const data: unknown = await response.json();
-    if (!isObject(data) || data.code !== 0) throw new Error('Feishu API error');
+    if (!isObject(data) || data.code !== 0) {
+      this.dropToken(token);
+      throw new Error('Feishu API error');
+    }
     return data;
   }
 
@@ -136,7 +147,12 @@ export class FeishuStore implements LicenseStore {
     const names = this.config.fields.license;
     const rows = await this.search(this.config.licenseTableId, Object.values(names), field, value, signal);
     if (!rows.length) return undefined;
-    if (rows.length !== 1) return invalidData();
+    // A license row decides revocation and the device limit. Guessing between rows could revoke or restore the wrong
+    // license, so stay unavailable (devices keep their current leases) and name the rows to fix.
+    if (rows.length !== 1) {
+      this.warn('Several Feishu license rows match one lookup: ' + rows.map(row => row.recordId).join(', '));
+      return invalidData();
+    }
     const fields = rows[0]!.fields;
     const id = textField(fields[names.id]);
     const codeDigest = textField(fields[names.codeDigest]);
@@ -144,7 +160,10 @@ export class FeishuStore implements LicenseStore {
     const choice = fields[names.status];
     if (!licenseIdPattern.test(id) || !digestPattern.test(codeDigest) || textField(fields[field]) !== value ||
         typeof deviceLimit !== 'number' || !Number.isSafeInteger(deviceLimit) || deviceLimit < 0 ||
-        (choice !== status.active && choice !== status.revoked)) return invalidData();
+        (choice !== status.active && choice !== status.revoked)) {
+      this.warn('Invalid Feishu license row ' + rows[0]!.recordId);
+      return invalidData();
+    }
     return { id, codeDigest, deviceLimit, status: choice === status.active ? 'active' : 'revoked' };
   }
 
@@ -162,20 +181,27 @@ export class FeishuStore implements LicenseStore {
     // A create that timed out after Feishu stored it can leave a second row for the same device.
     const devices = new Map<string, DeviceRecord>();
     for (const { recordId, fields } of rows) {
-      const licenseId = textField(fields[names.licenseId]);
-      const digest = textField(fields[names.digest]);
-      const platform = fields[names.platform];
-      const choice = fields[names.status];
-      if (licenseId !== id || !digestPattern.test(digest) || !isPlatform(platform) ||
-          (choice !== status.active && choice !== status.released)) return invalidData();
-      const device: DeviceRecord = {
-        recordId, licenseId, digest, platform,
-        firstActivatedAt: seconds(fields[names.firstActivatedAt]),
-        lastRenewedAt: seconds(fields[names.lastRenewedAt]),
-        status: choice === status.active ? 'active' : 'released',
-      };
-      const current = devices.get(digest);
-      if (!current || newerDevice(device, current)) devices.set(digest, device);
+      let device: DeviceRecord;
+      try {
+        const licenseId = textField(fields[names.licenseId]);
+        const digest = textField(fields[names.digest]);
+        const platform = fields[names.platform];
+        const choice = fields[names.status];
+        if (licenseId !== id || !digestPattern.test(digest) || !isPlatform(platform) ||
+            (choice !== status.active && choice !== status.released)) return invalidData();
+        device = {
+          recordId, licenseId, digest, platform,
+          firstActivatedAt: seconds(fields[names.firstActivatedAt]),
+          lastRenewedAt: seconds(fields[names.lastRenewedAt]),
+          status: choice === status.active ? 'active' : 'released',
+        };
+      } catch {
+        // One hand-edited row must not block every device on the license. A skipped device is treated as unregistered.
+        this.warn('Skipped invalid Feishu device row ' + recordId);
+        continue;
+      }
+      const current = devices.get(device.digest);
+      if (!current || newerDevice(device, current)) devices.set(device.digest, device);
     }
     return [...devices.values()];
   }

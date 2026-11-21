@@ -17,7 +17,8 @@ export function generateCode(random: RandomBytes = randomBytes): string {
 }
 
 export function normalizeCode(input: string): string {
-  let code = input.replace(/[\s-]/g, '').toUpperCase();
+  // NFKC folds full-width letters, digits and hyphens typed by Chinese input methods; dashes from chat apps are separators too.
+  let code = input.normalize('NFKC').replace(/[\s\-‐-―−]/g, '').toUpperCase();
   if (code.length === 20 && code.startsWith('TGRW')) code = code.slice(4);
   code = code.replace(/[IL]/g, '1').replace(/O/g, '0');
   if (!/^[0-9A-HJKMNP-TV-Z]{16}$/.test(code)) throw new Error('Invalid code');

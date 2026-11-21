@@ -239,6 +239,17 @@ test('renewal is limited per lease without blocking release', async () => {
   token(await call('release', { lease }));
 });
 
+test('release is limited per lease so a copied lease cannot drain the Feishu quota', async () => {
+  const { activate, advance, call } = setup();
+  const lease = token(await activate(device(1)));
+  for (let count = 0; count < 5; count += 1) token(await call('release', { lease }));
+  assert.deepEqual(await call('release', { lease }), { status: 429, body: { error: 'rate_limited' } });
+  // Its own budget leaves renewal available.
+  token(await call('renew', { lease }));
+  advance(3600 * 1000);
+  token(await call('release', { lease }));
+});
+
 test('HTTP enforces JSON and body limits, sanitizes logs, and maps upstream failures to 503', async t => {
   const { store, service } = setup();
   const logs: string[] = [];
