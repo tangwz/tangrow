@@ -1,13 +1,17 @@
 import type { App, TFile } from 'obsidian';
 
-type SettingsAccess = { open: () => void; openTabById: (id: string) => void };
+type SettingsAccess = { open: () => void; openTabById: (id: string) => unknown };
 type CommandAccess = { commands: Record<string, unknown>; executeCommandById: (id: string) => boolean };
 
 // These optional host features are not part of the published API. Keep them isolated.
 export function openNativeSettings(app: App, tab: string): boolean {
   const settings = (app as unknown as { setting?: Partial<SettingsAccess> }).setting;
   if (typeof settings?.open !== 'function' || typeof settings.openTabById !== 'function') return false;
-  try { settings.open(); settings.openTabById(tab); return true; } catch { return false; }
+  try {
+    settings.open();
+    const result = settings.openTabById(tab);
+    return result !== false && result !== null;
+  } catch { return false; }
 }
 
 export function runNativeCommand(app: App, ids: readonly string[]): boolean {
@@ -25,4 +29,10 @@ export async function revealInFileList(app: App, file: TFile): Promise<boolean> 
   const view = leaf.view as unknown as { revealInFolder?: (file: TFile) => Promise<void> | void };
   if (typeof view.revealInFolder !== 'function') return false;
   try { await view.revealInFolder(file); return true; } catch { return false; }
+}
+
+export function openActivationSettings(app: App, pluginId: string): boolean {
+  if (!openNativeSettings(app, pluginId)) return false;
+  window.document.dispatchEvent(new Event('tangrow:open-activation'));
+  return true;
 }

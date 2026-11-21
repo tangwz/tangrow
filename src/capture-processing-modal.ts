@@ -39,7 +39,7 @@ export class CaptureProcessingModal extends Modal {
       const suggest = form.createEl('button', { cls: 'tangrow-button tangrow-capture-suggest', text: t('Suggest with AI'), attr: { type: 'button' } });
       suggestButton = suggest;
       suggest.addEventListener('click', () => {
-        if (suggest.disabled) return;
+        if (suggest.disabled || !this.host.requireAccess()) return;
         const controller = new AbortController();
         this.suggestionController = controller;
         const current = (): boolean => this.suggestionController === controller && !controller.signal.aborted;
@@ -98,7 +98,7 @@ export class CaptureProcessingModal extends Modal {
     });
     form.addEventListener('submit', (event) => {
       event.preventDefault();
-      if (saving || save.disabled) return;
+      if (saving || save.disabled || !this.host.requireAccess()) return;
       const request: CaptureRequest = action.value === 'note' ? { action: 'note', title: title.value, ...(project.value ? { projectPath: project.value } : {}) }
         : action.value === 'task' ? { action: 'task', title: title.value }
         : action.value === 'project' ? { action: 'project', projectPath: project.value } : { action: 'done' };

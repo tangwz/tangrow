@@ -1,9 +1,16 @@
+import type { Command } from 'obsidian';
+import { memoryStorage, testWebLocks } from './obsidian-mock';
+import { Access } from '../src/access';
+import { signLease, type Lease } from '../src/license/format';
+import vector from './fixtures/license-vectors.json';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
+import type { QuickKind } from '../src/ai';
+import type { RecoveryDraft } from '../src/draft-submissions';
 import { baseDefinitions, setupReadme } from '../src/bases';
 import { aggregateReport } from '../src/report-data';
 import type { ActionId, ComposerState, FocusSession, Locale, NoteKind, Settings, Snapshot, WritingDraft } from '../src/types';
@@ -13,6 +20,7 @@ import type { FileView as MockFileView, ItemView as MockItemView, MarkdownView a
 type FolderSettingKey = keyof Pick<Settings, 'supportFolder' | 'inboxFolder' | 'projectFolder' | 'areaFolder' | 'resourcesFolder' | 'archiveFolder' | 'journalFolder'>;
 
 interface TestPlugin extends MockPlugin {
+  access: Access;
   settings: Settings;
   focus: FocusSession | null;
   scratch: string;
@@ -38,7 +46,10 @@ interface TestPlugin extends MockPlugin {
   saveComposer(patch: Partial<ComposerState>): void;
   subscribe(listener: () => void): () => void;
   subscribeComposer(listener: () => void): () => void;
-  submitCaptureDraft(): Promise<void>;
+  submitCaptureDraft(rescue?: boolean): Promise<void>;
+  loadRecoveryDrafts(): (RecoveryDraft & { saving: boolean })[];
+  submitRecoveryDraft(id: string): Promise<void>;
+  discardRecoveryDraft(id: string): void;
   readCapture(path: string): Promise<string>;
   openPeriodicNote(period: JournalPeriod, date?: string, immersive?: boolean): Promise<void>;
   updateJournalSettings(period: JournalPeriod, format: string, template: string): Promise<void>;
@@ -55,7 +66,13 @@ interface TestPlugin extends MockPlugin {
 }
 interface Harness {
   TangrowPlugin: new (app: MockApp) => TestPlugin;
+  CapturePanel: new (host: TestPlugin, surface: 'immersive' | 'window' | 'sidebar') => {
+    mount(container: GateElement): void; destroy(): void; editor: GateElement;
+  };
   TangrowSidebar: new (leaf: unknown, host: TestPlugin) => TestSidebar;
+  QuickAddModal: new (host: TestPlugin, kind: QuickKind, text: string) => {
+    onOpen(): void; onClose(): void; save(): Promise<void>; suggest(): Promise<void>; setKind(kind: QuickKind): void;
+  };
   createMockApp: typeof MockAppFactory;
   TFile: typeof MockFile;
   TFolder: typeof MockFolder;
@@ -63,7 +80,8 @@ interface Harness {
   FileView: typeof MockFileView;
   ItemView: typeof MockItemView;
   notices: string[];
-  Platform: { isDesktopApp: boolean; isMacOS: boolean };
+  Platform: { isDesktopApp: boolean; isMacOS: boolean; isMobile?: boolean; isAndroidApp?: boolean; isIosApp?: boolean };
+  compositionTiming: { later(callback: () => void): void };
   openCaptureWindow(app: unknown, host: unknown): Promise<void>;
 }
 
@@ -86,7 +104,7 @@ interface TestSidebar {
   scratchRevision: number;
   scratchEditor?: DraftControl;
   scratchTitleInput?: DraftControl;
-  scratchComposingControl?: DraftControl;
+  scratchComposition?: { control: DraftControl; dispose(): void };
   contentEl: { empty(): void };
   onOpen(): Promise<void>;
   onClose(): Promise<void>;
@@ -103,7 +121,7 @@ const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 const bundled = await build({
   absWorkingDir: repository,
   stdin: {
-    contents: "export { default as TangrowPlugin } from './src/main'; export { TangrowSidebar } from './src/sidebar'; export { openCaptureWindow } from './src/capture-window'; export * from './tests/obsidian-mock';",
+    contents: "export { default as TangrowPlugin } from './src/main'; export { TangrowSidebar } from './src/sidebar'; export { CapturePanel } from './src/capture-panel'; export { QuickAddModal } from './src/quick-add'; export { openCaptureWindow } from './src/capture-window'; export { compositionTiming } from './src/draft-composition'; export * from './tests/obsidian-mock';",
     resolveDir: repository,
     sourcefile: 'integration-entry.ts',
     loader: 'ts'
@@ -120,10 +138,13 @@ const bundled = await build({
 const moduleObject: { exports: unknown } = { exports: {} };
 new Function('module', 'exports', 'require', bundled.outputFiles[0]!.text)(moduleObject, moduleObject.exports, createRequire(import.meta.url));
 const harness = moduleObject.exports as Harness;
+// Settle each composition at once; tests that check the deferred verdict install their own queue.
+harness.compositionTiming.later = callback => callback();
 
 function createPlugin(): { plugin: TestPlugin; app: MockApp } {
   const app = harness.createMockApp();
   const plugin = new harness.TangrowPlugin(app);
+  Object.assign(plugin, { access: { canUse: () => true, subscribe: () => () => {}, snapshot: () => ({ state: 'active' }) } });
   return { plugin, app };
 }
 
@@ -446,12 +467,14 @@ async function withWindow(run: (timers: TestTimers) => Promise<void>): Promise<v
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'window');
   let nextId = 1;
   const timeouts = new Map<number, () => void>();
-  const fakeWindow = {
+  const fakeWindow = Object.assign(new EventTarget(), {
+    localStorage: memoryStorage(),
+    navigator: { locks: testWebLocks() },
     setTimeout(callback: () => void): number { const id = nextId++; timeouts.set(id, callback); return id; },
     clearTimeout(id: number | undefined): void { if (id !== undefined) timeouts.delete(id); },
     setInterval(): number { return nextId++; },
     clearInterval(): void {}
-  };
+  });
   Object.defineProperty(globalThis, 'window', { value: fakeWindow, configurable: true });
   try {
     await run({ flush: () => {
@@ -464,6 +487,30 @@ async function withWindow(run: (timers: TestTimers) => Promise<void>): Promise<v
     else Reflect.deleteProperty(globalThis, 'window');
   }
 }
+
+test('the vault checks access on reconnect and when a main or popout window returns to the foreground', async () => {
+  await withWindow(async () => {
+    const document = Object.assign(new EventTarget(), { visibilityState: 'hidden' });
+    Object.assign(window, { document });
+    const { app, plugin } = createPlugin();
+    Object.assign(plugin, {
+      registerDomEvent: (target: EventTarget, name: string, handler: EventListener) => target.addEventListener(name, handler)
+    });
+    await plugin.onload();
+    const wakes: string[] = [];
+    plugin.access.onResume = reason => { wakes.push(reason); };
+    window.dispatchEvent(new Event('online'));
+    document.dispatchEvent(new Event('visibilitychange'));
+    document.visibilityState = 'visible';
+    document.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new Event('focus'));
+    const popout = Object.assign(new EventTarget(), { document: new EventTarget() });
+    app.workspace.trigger('window-open', {}, popout);
+    popout.dispatchEvent(new Event('focus'));
+    assert.deepEqual(wakes, ['online', 'foreground', 'foreground', 'foreground']);
+    plugin.onunload();
+  });
+});
 
 test('legacy composer defaults preserve scratch text and debounced patches recover after reload', async () => {
   await withWindow(async (timers) => {
@@ -828,7 +875,7 @@ test('open Studio instances share body and title changes and closing one removes
       view.renderShell = () => undefined;
       view.refresh = () => undefined;
       view.registerInterval = () => undefined;
-      view.contentEl = { empty: () => undefined };
+      view.contentEl = Object.assign(new EventTarget(), { empty: () => undefined, removeClass: () => undefined });
       return view;
     };
     const first = createView();
@@ -874,7 +921,7 @@ test('IME composition protects pending input from remote updates and cleanup rel
         view.renderShell = () => undefined;
         view.refresh = () => undefined;
         view.registerInterval = () => undefined;
-        view.contentEl = { empty: () => undefined };
+        view.contentEl = Object.assign(new EventTarget(), { empty: () => undefined, removeClass: () => undefined });
         return view;
       };
       const createControl = (): DraftControl => ({
@@ -891,7 +938,7 @@ test('IME composition protects pending input from remote updates and cleanup rel
       first.scratchEditor = firstControl;
       second.scratchEditor = secondControl;
       assert.equal(plugin.beginWritingDraftComposition(first.viewId, first.scratchRevision), true);
-      first.scratchComposingControl = firstControl;
+      first.scratchComposition = { control: firstControl, dispose() {} };
       assert.equal(firstControl.readOnly, false);
       assert.equal(secondControl.readOnly, true);
       firstControl.value = 'The uncommitted composition text.';
@@ -946,19 +993,23 @@ class StudioElement extends EventTarget {
   selectionEnd = 0;
   selectionDirection = 'none' as const;
   scrollTop = 0;
-  ownerDocument = { activeElement: null };
+  // A document that dispatches events, so a press outside a composing control can be simulated.
+  ownerDocument = Object.assign(new EventTarget(), { activeElement: null });
   createDiv(): StudioElement { return new StudioElement(); }
   createEl(): StudioElement { return new StudioElement(); }
   createSpan(): StudioElement { return new StudioElement(); }
-  setSelectionRange(): void {}
+  setSelectionRange(start: number, end: number): void {
+    this.selectionStart = start;
+    this.selectionEnd = end;
+  }
 }
 
-async function mountedStudio(plugin: TestPlugin): Promise<TestSidebar> {
+async function mountedStudio(plugin: TestPlugin, root?: GateElement): Promise<TestSidebar> {
   const view = new harness.TangrowSidebar({}, plugin);
   view.renderShell = () => undefined;
   view.refresh = () => undefined;
   view.registerInterval = () => undefined;
-  view.contentEl = { empty: () => undefined };
+  view.contentEl = root ?? Object.assign(new EventTarget(), { empty: () => undefined, removeClass: () => undefined });
   await view.onOpen();
   Object.assign(view, {
     pane: new StudioElement(),
@@ -973,6 +1024,7 @@ test('IME preedit is not persisted when a writing view closes during composition
     for (const field of ['text', 'title'] as const) {
       const { plugin } = createPlugin();
       await plugin.onload();
+      if (!plugin.access.canUse()) assert.ok(plugin.access.startTrial().ok);
       plugin.updateWritingDraft({ text: 'Committed body', title: 'Committed title' }, 0);
       const view = await mountedStudio(plugin);
       const control = (field === 'text' ? view.scratchEditor : view.scratchTitleInput) as unknown as StudioElement;
@@ -1025,6 +1077,44 @@ test('IME completion publishes the selected title or body and ordinary input sti
       assert.equal(plugin.loadWritingDraft()[field], 'ni');
       await view.onClose();
     }
+  });
+});
+
+for (const field of ['text', 'title'] as const) test(`Escape discards an IME completion that still contains preedit in the writing ${field}`, async () => {
+  await withWindow(async timers => {
+    const { plugin } = createPlugin();
+    await plugin.onload();
+    assert.ok(plugin.access.startTrial().ok);
+    plugin.updateWritingDraft({ text: 'Committed body', title: 'Committed title' }, 0);
+    const initial = plugin.loadWritingDraft();
+    const view = await mountedStudio(plugin);
+    const peer = await mountedStudio(plugin);
+    const control = (field === 'text' ? view.scratchEditor : view.scratchTitleInput) as unknown as StudioElement;
+    control.setSelectionRange(2, 5);
+    control.dispatchEvent(new Event('compositionstart'));
+    control.value = 'Copreedit' + initial[field].slice(5);
+    control.setSelectionRange(9, 9);
+    control.dispatchEvent(new Event('input'));
+    assert.equal(peer.scratchEditor?.readOnly, true);
+
+    const escape = Object.assign(new Event('keydown', { cancelable: true }), { key: 'Escape', code: 'Escape', isComposing: true });
+    control.dispatchEvent(escape);
+    assert.equal(escape.defaultPrevented, false);
+    control.dispatchEvent(Object.assign(new Event('compositionend'), { data: 'preedit' }));
+    assert.deepEqual(plugin.loadWritingDraft(), initial);
+    assert.equal(control.value, initial[field]);
+    assert.deepEqual([control.selectionStart, control.selectionEnd], [2, 5]);
+    assert.equal(peer.scratchEditor?.readOnly, false);
+
+    timers.flush();
+    await plugin.writes;
+    const saved = plugin.savedData as { scratch: string; composer: ComposerState };
+    assert.deepEqual([saved.scratch, saved.composer.scratchTitle], [initial.text, initial.title]);
+    control.value += ' with normal input';
+    control.dispatchEvent(new Event('input'));
+    assert.equal(plugin.loadWritingDraft()[field], initial[field] + ' with normal input');
+    await view.onClose();
+    await peer.onClose();
   });
 });
 
@@ -1155,6 +1245,20 @@ test('concurrent submissions of the same shared capture create one record and cl
     assert.equal(plugin.loadComposer().capture, '');
     assert.equal(firstClient.at(-1), '');
     assert.deepEqual(secondClient, firstClient);
+  });
+});
+
+test('an ordinary capture trims surrounding whitespace while a rescue keeps it', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    plugin.saveComposer({ capture: '\n    Indented thought  \n\n' });
+    await plugin.submitCaptureDraft();
+    plugin.saveComposer({ capture: '  Rescued as typed  ' });
+    await plugin.submitCaptureDraft(true);
+    const contents = captureFiles(app).map(file => file.content);
+    assert.equal(contents.length, 2);
+    assert.equal(contents.filter(content => content.endsWith('\n\nIndented thought\n')).length, 1);
+    assert.equal(contents.filter(content => content.endsWith('\n\n  Rescued as typed  \n')).length, 1);
   });
 });
 
@@ -1640,7 +1744,7 @@ test('Scratchpad language refresh keeps the composing inputs and editing lease w
     view.renderShell = () => undefined;
     view.refresh = () => undefined;
     view.registerInterval = () => undefined;
-    view.contentEl = { empty: () => undefined };
+    view.contentEl = Object.assign(new EventTarget(), { empty: () => undefined, removeClass: () => undefined });
     await view.onOpen();
     let focused = 0;
     let selected = 0;
@@ -1674,7 +1778,7 @@ test('Scratchpad language refresh keeps the composing inputs and editing lease w
       querySelector: (): null => null
     };
     Object.assign(view, {
-      section: 'compose', composeTab: 'scratchpad', scratchComposingControl: text, contentEl: content,
+      section: 'compose', composeTab: 'scratchpad', scratchComposition: { control: text, dispose() {} }, contentEl: content,
       workspacePane: { querySelectorAll: () => [] },
       pane: { contains: (control: unknown) => control === text || control === title, querySelectorAll: () => [] },
       setupBanner: { empty: () => undefined }, studioHeading: heading, studioCaption: caption,
@@ -1709,12 +1813,13 @@ test('plugin unload discards pending IME text while preserving the other field',
   await withWindow(async () => {
     const { plugin, app } = createPlugin();
     await plugin.onload();
+    assert.ok(plugin.access.startTrial().ok);
     plugin.updateWritingDraft({ text: 'The body before composition.', title: 'The title before composition' }, plugin.loadWritingDraft().revision);
     const view = new harness.TangrowSidebar({}, plugin);
     view.renderShell = () => undefined;
     view.refresh = () => undefined;
     view.registerInterval = () => undefined;
-    view.contentEl = { empty: () => undefined };
+    view.contentEl = Object.assign(new EventTarget(), { empty: () => undefined, removeClass: () => undefined });
     await view.onOpen();
     const control = (value: string): DraftControl => ({
       value, isConnected: true, readOnly: false, ownerDocument: { activeElement: null }, selectionStart: 0, selectionEnd: 0,
@@ -1725,7 +1830,7 @@ test('plugin unload discards pending IME text while preserving the other field',
     view.scratchEditor = text;
     view.scratchTitleInput = title;
     assert.equal(plugin.beginWritingDraftComposition(view.viewId, view.scratchRevision), true);
-    view.scratchComposingControl = text;
+    view.scratchComposition = { control: text, dispose() {} };
     text.value = 'The latest IME body not yet published by an input event.';
     title.value = 'The latest unpublished title';
     const previousLeaves = app.workspace.getLeavesOfType;
@@ -1842,4 +1947,746 @@ test('the note header immersion action stays attached to its native view when th
   assert.equal(removed, 1);
   assert.equal(callbacks.length, 1);
   assert.equal(note.content, '# Existing\n');
+});
+
+class GateElement extends StudioElement {
+  attributes = new Map<string, string>();
+  children: GateElement[] = [];
+  parent?: GateElement;
+  dataset: Record<string, string> = {};
+  prepend(child: GateElement): void { this.children = [child, ...this.children.filter(entry => entry !== child)]; }
+  constructor(readonly tag = 'div') { super(); }
+  createEl(tag = 'div', options: { attr?: Record<string, string>; text?: string; value?: string } = {}): GateElement {
+    const child = new GateElement(tag);
+    child.attributes = new Map(Object.entries(options.attr ?? {}));
+    child.textContent = options.text ?? '';
+    child.value = options.value ?? '';
+    child.parent = this;
+    this.children.push(child);
+    return child;
+  }
+  createDiv(): GateElement { return this.createEl(); }
+  createSpan(options = {}): GateElement { return this.createEl('span', options); }
+  addClass(): void {}
+  removeClass(): void {}
+  closest(): null { return null; }
+  contains(node: GateElement): boolean { return this === node || this.children.some(child => child.contains(node)); }
+  empty(): void { this.children = []; }
+  remove(): void { if (this.parent) this.parent.children = this.parent.children.filter(child => child !== this); }
+  setAttribute(key: string, value: string): void { this.attributes.set(key, value); }
+  getAttribute(key: string): string | null { return this.attributes.get(key) ?? null; }
+  removeAttribute(key: string): void { this.attributes.delete(key); }
+  all(): GateElement[] { return [this, ...this.children.flatMap(child => child.all())]; }
+  focus(): void {}
+  querySelectorAll(tags: string): GateElement[] { return this.all().filter(el => tags.split(',').some(tag => tag.trim() === el.tag)); }
+  querySelector(tag: string): GateElement | undefined { return this.all().find(child => child.tag === tag); }
+  async clickButton(label: string): Promise<void> {
+    const button = this.all().find(el => el.tag === 'button' && el.getAttribute('aria-label') === label);
+    assert.ok(button, label);
+    button.dispatchEvent(new Event('click'));
+    await new Promise(resolve => setImmediate(resolve));
+  }
+}
+
+test('capture preedit stays in its window until commit, and closing discards an unfinished candidate', async () => {
+  await withWindow(async timers => {
+    const { plugin, app } = createPlugin();
+    plugin.savedData = { settings: { language: 'en' } };
+    await plugin.onload();
+    assert.ok(plugin.access.startTrial().ok);
+    const sidebar = new harness.CapturePanel(plugin, 'sidebar');
+    const popout = new harness.CapturePanel(plugin, 'window');
+    const root = new GateElement();
+    const committed = 'Committed capture';
+    plugin.saveComposer({ capture: committed });
+    sidebar.mount(new GateElement());
+    popout.mount(root);
+    const editor = popout.editor;
+    editor.dispatchEvent(new Event('compositionstart'));
+    editor.value = committed + ' preedit';
+    editor.dispatchEvent(new Event('input'));
+    assert.equal(plugin.loadComposer().capture, committed);
+    assert.equal(sidebar.editor.value, committed);
+    const save = root.all().find(el => el.getAttribute('aria-label') === 'Save capture');
+    assert.equal(save?.disabled, true);
+    await root.clickButton('Save capture');
+    assert.equal(captureFiles(app).length, 0);
+    timers.flush();
+    await plugin.writes;
+    assert.equal((plugin.savedData as { composer: ComposerState }).composer.capture, committed);
+
+    // Pressing the close button moves focus away from the composing control.
+    editor.dispatchEvent(new Event('blur'));
+    editor.dispatchEvent(Object.assign(new Event('compositionend'), { data: 'preedit' }));
+    assert.equal(editor.value, committed);
+    popout.destroy();
+    editor.dispatchEvent(Object.assign(new Event('compositionend'), { data: 'preedit' }));
+    assert.equal(plugin.loadComposer().capture, committed);
+    assert.equal(sidebar.editor.value, committed);
+
+    const reopened = new GateElement();
+    popout.mount(reopened);
+    popout.editor.dispatchEvent(new Event('compositionstart'));
+    popout.editor.value = committed + ' latin';
+    popout.editor.dispatchEvent(new Event('input'));
+    popout.editor.dispatchEvent(Object.assign(new Event('keyup'), { key: 'n', isComposing: true }));
+    popout.editor.dispatchEvent(Object.assign(new Event('keydown'), { key: 'Enter', isComposing: true }));
+    popout.editor.dispatchEvent(new Event('compositionend'));
+    assert.equal(sidebar.editor.value, committed + ' latin');
+
+    popout.editor.dispatchEvent(new Event('compositionstart'));
+    popout.editor.value = committed + ' preedit';
+    popout.editor.dispatchEvent(new Event('input'));
+    popout.editor.dispatchEvent(Object.assign(new Event('keyup'), { key: 't', isComposing: true }));
+    popout.editor.value = committed + ' selected candidate';
+    popout.editor.dispatchEvent(new Event('input'));
+    popout.editor.dispatchEvent(new Event('compositionend'));
+    assert.equal(sidebar.editor.value, committed + ' selected candidate');
+    await reopened.clickButton('Save capture');
+    assert.equal(captureFiles(app).length, 1);
+    assert.equal(captureFiles(app)[0]?.content.endsWith(committed + ' selected candidate\n'), true);
+    popout.destroy();
+    sidebar.destroy();
+  });
+});
+
+test('capture keeps commits, including IME toggles and mouse picks, and drops compositions that lost focus', async () => {
+  await withWindow(async () => {
+    const { plugin } = createPlugin();
+    const panel = new harness.CapturePanel(plugin, 'window');
+    panel.mount(new GateElement());
+    const editor = panel.editor;
+    const compose = (text: string) => {
+      editor.dispatchEvent(new Event('compositionstart'));
+      editor.value = text;
+      editor.dispatchEvent(new Event('input'));
+      editor.dispatchEvent(Object.assign(new Event('keyup'), { key: 'Process', isComposing: true }));
+    };
+    const keydown = (fields: Record<string, unknown>) => editor.dispatchEvent(Object.assign(new Event('keydown'), { isComposing: true, ...fields }));
+    // Windows IMEs report commit keys as Process; Shift and Ctrl+Space commit Latin text exactly as composed.
+    const commits = [['nihao', { key: 'Process' }], ['nihao shift', { key: 'Shift', shiftKey: true }], ['nihao toggle', { key: ' ', ctrlKey: true }]] as const;
+    for (const [text, key] of commits) {
+      compose(text);
+      keydown(key);
+      editor.dispatchEvent(new Event('compositionend'));
+      assert.equal(plugin.loadComposer().capture, text);
+      assert.equal(editor.value, text);
+    }
+    // A Japanese IME reverts only the conversion on Escape; typing on and confirming keeps the result.
+    compose('nihao toggle きょう');
+    keydown({ key: 'Escape', code: 'Escape' });
+    keydown({ key: 'Process' });
+    editor.value = 'nihao toggle 京';
+    editor.dispatchEvent(new Event('input'));
+    keydown({ key: 'Enter' });
+    editor.dispatchEvent(new Event('compositionend'));
+    assert.equal(plugin.loadComposer().capture, 'nihao toggle 京');
+    // A press elsewhere that keeps focus does not end the composition; a candidate picked with the mouse is kept.
+    compose('nihao toggle 京 ni');
+    editor.ownerDocument.dispatchEvent(new Event('pointerdown'));
+    editor.value = 'nihao toggle 京 你';
+    editor.dispatchEvent(new Event('input'));
+    editor.dispatchEvent(new Event('compositionend'));
+    assert.equal(plugin.loadComposer().capture, 'nihao toggle 京 你');
+    // Switching to another window or app blurs the control, so its unconfirmed preedit is dropped.
+    compose('nihao toggle 京 你 unfinished');
+    editor.dispatchEvent(new Event('blur'));
+    editor.dispatchEvent(new Event('compositionend'));
+    assert.equal(plugin.loadComposer().capture, 'nihao toggle 京 你');
+    assert.equal(editor.value, 'nihao toggle 京 你');
+    panel.destroy();
+  });
+});
+
+test('a composition ended by a window switch is judged after the blur that Chromium dispatches next', async () => {
+  await withWindow(async () => {
+    const queue: (() => void)[] = [];
+    const previous = harness.compositionTiming.later;
+    harness.compositionTiming.later = callback => { queue.push(callback); };
+    try {
+      const { plugin } = createPlugin();
+      plugin.saveComposer({ capture: 'Kept' });
+      const panel = new harness.CapturePanel(plugin, 'window');
+      panel.mount(new GateElement());
+      const editor = panel.editor;
+      editor.dispatchEvent(new Event('compositionstart'));
+      editor.value = 'Kept nihao';
+      editor.dispatchEvent(new Event('input'));
+      // Chromium finishes the composition first, then blurs the control as the window deactivates.
+      editor.dispatchEvent(new Event('compositionend'));
+      editor.dispatchEvent(new Event('blur'));
+      assert.equal(plugin.loadComposer().capture, 'Kept');
+      for (const settle of queue.splice(0)) settle();
+      assert.equal(plugin.loadComposer().capture, 'Kept');
+      assert.equal(editor.value, 'Kept');
+      // A confirmed composition with focus still in place is saved once it settles.
+      editor.dispatchEvent(new Event('focus'));
+      editor.dispatchEvent(new Event('compositionstart'));
+      editor.value = 'Kept 你好';
+      editor.dispatchEvent(new Event('input'));
+      editor.dispatchEvent(new Event('compositionend'));
+      for (const settle of queue.splice(0)) settle();
+      assert.equal(plugin.loadComposer().capture, 'Kept 你好');
+      panel.destroy();
+    } finally { harness.compositionTiming.later = previous; }
+  });
+});
+
+for (const platform of ['android', 'ios'] as const) test(`on ${platform}, capture ${platform === 'android' ? 'saves the word a keyboard is still composing' : 'keeps unconfirmed pinyin out of the draft'}`, async () => {
+  await withWindow(async () => {
+    const keys = ['isMobile', 'isAndroidApp', 'isIosApp'] as const;
+    const previous = keys.map(key => [key, Object.getOwnPropertyDescriptor(harness.Platform, key)] as const);
+    Object.assign(harness.Platform, { isMobile: true, isAndroidApp: platform === 'android', isIosApp: platform === 'ios' });
+    try {
+      const { plugin } = createPlugin();
+      plugin.settings.language = 'en';
+      const panel = new harness.CapturePanel(plugin, 'window');
+      const root = new GateElement();
+      panel.mount(root);
+      const editor = panel.editor;
+      const text = platform === 'android' ? 'buy milk' : 'ni hao';
+      editor.dispatchEvent(new Event('compositionstart'));
+      editor.value = text;
+      editor.dispatchEvent(Object.assign(new Event('input'), { isComposing: true }));
+      const save = root.all().find(el => el.getAttribute('aria-label') === 'Save capture');
+      // Tapping elsewhere ends the composition.
+      editor.dispatchEvent(new Event('blur'));
+      if (platform === 'android') {
+        assert.equal(plugin.loadComposer().capture, text);
+        assert.equal(save?.disabled, false);
+        editor.dispatchEvent(new Event('compositionend'));
+        assert.equal(editor.value, text);
+        assert.equal(plugin.loadComposer().capture, text);
+      } else {
+        assert.equal(plugin.loadComposer().capture, '');
+        assert.equal(save?.disabled, true);
+        editor.dispatchEvent(new Event('compositionend'));
+        assert.equal(editor.value, '');
+        assert.equal(plugin.loadComposer().capture, '');
+      }
+      panel.destroy();
+    } finally {
+      for (const [key, descriptor] of previous) {
+        if (descriptor) Object.defineProperty(harness.Platform, key, descriptor);
+        else delete harness.Platform[key];
+      }
+    }
+  });
+});
+
+test('Escape in a composing capture synchronizes the latest committed text from another window', async () => {
+  await withWindow(async () => {
+    const { plugin } = createPlugin();
+    const sidebar = new harness.CapturePanel(plugin, 'sidebar');
+    const popout = new harness.CapturePanel(plugin, 'window');
+    plugin.saveComposer({ capture: 'Shared draft' });
+    sidebar.mount(new GateElement());
+    popout.mount(new GateElement());
+    popout.editor.dispatchEvent(new Event('compositionstart'));
+    popout.editor.value = 'Shared draft with unconfirmed preedit';
+    sidebar.editor.value = 'An edit in the other window';
+    sidebar.editor.dispatchEvent(new Event('input'));
+    popout.editor.dispatchEvent(Object.assign(new Event('keydown'), { key: 'Escape', isComposing: true }));
+    popout.editor.dispatchEvent(Object.assign(new Event('compositionend'), { data: 'with unconfirmed preedit' }));
+    assert.equal(popout.editor.value, sidebar.editor.value);
+    assert.equal(plugin.loadComposer().capture, 'An edit in the other window');
+    popout.destroy();
+    sidebar.destroy();
+  });
+});
+
+function openQuickAdd(plugin: TestPlugin, kind: QuickKind, text: string) {
+  const modal = new harness.QuickAddModal(plugin, kind, text);
+  const root = new GateElement();
+  Object.assign(modal, { modalEl: new GateElement(), contentEl: root, scope: { register() {} }, setTitle() {}, close: () => modal.onClose() });
+  modal.onOpen();
+  return { modal, root, editor: root.querySelector('textarea')! };
+}
+
+function recoverySection(root: GateElement, text: string): GateElement {
+  const section = root.all().find(node => node.tag === 'section' && node.children.some(el => el.tag === 'textarea' && el.attributes.has('readonly') && el.value === text));
+  assert.ok(section, `Missing recovery actions for ${JSON.stringify(text)}`);
+  return section;
+}
+
+test('every registered command and editor menu item has a purchase-scope classification', async () => {
+  await withWindow(async () => {
+    const { app, plugin } = createPlugin();
+    plugin.savedData = { settings: { language: 'en' } };
+    const commands = new Map<string, Command>();
+    let shown = 0;
+    let opened = 0;
+    let ribbons = 0;
+    Object.assign(window, { document: new EventTarget() });
+    window.document.addEventListener('tangrow:open-activation', () => { shown++; });
+    Object.assign(app, { setting: { open() {}, openTabById(id: string) { assert.equal(id, 'tangrow'); } } });
+    Object.assign(plugin, {
+      addCommand(command: Command) { commands.set(command.id, command); },
+      openSidebar: async () => { opened++; },
+      addRibbonIcon(_icon: string, _title: string, open: () => void) { open(); ribbons++; }
+    });
+    await plugin.onload();
+    const restricted = [
+      'quick-add', 'new-note', 'new-task', 'new-project', 'new-card', 'quick-capture', 'open-capture-window',
+      'open-immersive-capture', 'open-assistant', 'open-report', 'pin-note', 'setup-bases', 'migrate-companion-folder',
+      'open-daily-note', 'open-weekly-note', 'open-monthly-note', 'open-quarterly-note', 'open-yearly-note'
+    ];
+    assert.deepEqual([...commands.keys()].sort(), [...restricted, 'open-companion', 'toggle-note-immersion'].sort());
+    // Note commands are only offered with an open note, locked or not.
+    const open = new harness.MarkdownView();
+    open.file = app.vault.seedFile('Open note.md', '# Open note\n');
+    app.workspace.setActiveView(open);
+    for (const id of [...restricted, 'toggle-note-immersion']) {
+      const command = commands.get(id)!;
+      const before = shown;
+      if (command.checkCallback) {
+        assert.equal(command.checkCallback(true), true, id);
+        assert.equal(shown, before, id);
+        command.checkCallback(false);
+      } else command.callback!();
+      assert.equal(shown, before + 1, id);
+      assert.equal(harness.notices.at(-1), 'Activate Tangrow to use this feature.');
+    }
+    // A command that is unavailable anyway stays hidden instead of prompting for activation.
+    app.workspace.setActiveFile(null);
+    plugin.settings.knowledgeEnabled = false;
+    for (const id of ['pin-note', 'toggle-note-immersion', 'new-card']) {
+      const before = shown;
+      assert.equal(commands.get(id)!.checkCallback!(true), false, id);
+      assert.equal(shown, before, id);
+    }
+    plugin.settings.knowledgeEnabled = true;
+    let exited = false;
+    Object.assign(plugin, { noteImmersion: { close() { exited = true; } } });
+    commands.get('toggle-note-immersion')!.checkCallback!(false);
+    assert.ok(exited);
+    commands.get('open-companion')!.callback!();
+    assert.equal(opened, ribbons + 1);
+    const actions = new Map<string, () => void>();
+    const menu = { addItem(build: (item: unknown) => void) {
+      let title = '';
+      const item = { setTitle(value: string) { title = value; return item; }, setIcon() { return item; },
+        onClick(callback: () => void) { actions.set(title, callback); } };
+      build(item);
+    } };
+    const file = app.vault.seedFile('Note.md', 'selection');
+    app.workspace.trigger('editor-menu', menu, { getSelection: () => 'selection', getCursor: () => ({ line: 0 }) }, { file });
+    assert.deepEqual([...actions.keys()].sort(), ['Tangrow: add selection as task', 'Tangrow: capture selection', 'Tangrow: extract selection to card']);
+    for (const run of actions.values()) { const before = shown; run(); assert.equal(shown, before + 1); }
+    delete (app as unknown as { setting?: unknown }).setting;
+    commands.get('quick-add')!.callback!();
+    assert.equal(harness.notices.at(-1), 'Open Settings → Tangrow → Activation and updates.');
+  });
+});
+
+test('a locked view switches language, starts trial only on click, and rescues IME and in-flight work at expiry', async () => {
+  await withClock(async advance => withWindow(async timers => {
+    const { app, plugin } = createPlugin();
+    await plugin.onload();
+    const root = new GateElement();
+    const capture = new harness.CapturePanel(plugin, 'window');
+    capture.mount(root);
+    assert.equal(plugin.access.snapshot().state, 'not_started');
+    await root.clickButton('English');
+    assert.equal(plugin.settings.language, 'en');
+    assert.equal(plugin.access.snapshot().state, 'not_started');
+    await root.clickButton('Start 24-hour trial');
+    assert.ok(plugin.access.canUse());
+    const sidebar = new GateElement();
+    const studio = await mountedStudio(plugin, sidebar);
+    const writing = studio.scratchEditor as unknown as StudioElement;
+    const input = capture.editor;
+    plugin.saveComposer({ capture: 'Earlier capture in flight' });
+    await plugin.startFocus(10);
+    const entered = deferred(), release = deferred();
+    const create = app.vault.create.bind(app.vault);
+    app.vault.create = async (path, data) => { entered.resolve(); await release.promise; return create(path, data); };
+    const inFlight = plugin.submitCaptureDraft();
+    await entered.promise;
+    input.dispatchEvent(new Event('compositionstart'));
+    input.value = 'Unpublished capture';
+    writing.dispatchEvent(new Event('compositionstart'));
+    writing.value = 'Unpublished writing';
+    advance(24 * 60);
+    timers.flush();
+    assert.equal(plugin.access.snapshot().state, 'expired');
+    assert.equal(capture.editor, input);
+    assert.equal(studio.scratchEditor, writing);
+    assert.equal(input.readOnly, true);
+    assert.equal(writing.readOnly, true);
+    assert.equal(plugin.loadComposer().capture, input.value);
+    assert.equal(plugin.loadWritingDraft().text, writing.value);
+    const finishing = Promise.all([plugin.finishFocus(), plugin.finishFocus()]);
+    release.resolve();
+    await Promise.all([inFlight, finishing]);
+    assert.equal(focusFiles(app).length, 1);
+    assert.equal(plugin.loadComposer().capture, 'Unpublished capture');
+    await plugin.writes;
+    await studio.onClose();
+    capture.destroy();
+    plugin.onunload();
+    await plugin.writes;
+    const restarted = new harness.TangrowPlugin(app);
+    restarted.savedData = structuredClone(plugin.savedData);
+    await restarted.onload();
+    const after = new GateElement();
+    const reopened = new harness.CapturePanel(restarted, 'immersive');
+    reopened.mount(after);
+    assert.equal(restarted.access.snapshot().state, 'expired');
+    const drafts = after.all().filter(el => el.tag === 'textarea' && el.attributes.has('readonly')).map(el => el.value);
+    assert.deepEqual(drafts, ['Unpublished capture', 'Unpublished writing']);
+    const readOnly = after.all().find(el => el.tag === 'textarea' && el.attributes.has('readonly'))!;
+    let copied = '';
+    Object.assign(readOnly.ownerDocument, { defaultView: { navigator: { clipboard: { writeText: async (value: string) => { copied = value; } } } } });
+    await after.clickButton('Copy to clipboard');
+    assert.equal(copied, drafts[0]);
+    await after.clickButton('Save to Inbox');
+    await after.clickButton('Save to Inbox');
+    const files = app.vault.getMarkdownFiles().filter(file => ['capture', 'draft'].includes(String(app.metadataCache.getFileCache(file).frontmatter?.tangrow_kind)));
+    assert.equal(files.length, 3);
+    for (const body of [...drafts, 'Earlier capture in flight']) assert.equal(files.filter(file => file.content.includes(body)).length, 1);
+    reopened.destroy();
+  }));
+});
+
+for (const st of ['released', 'revoked'] as const) {
+  test(`${st} flushes the composing capture before removing the lease`, async () => {
+    await withWindow(async () => {
+      const { plugin } = createPlugin();
+      plugin.settings.language = 'en';
+      const { exp: _exp, ...base } = vector.payload;
+      const terminal = signLease({ ...base, st } as Lease, Buffer.from(vector.seedHex, 'hex'));
+      let lease = vector.lease;
+      const access = plugin.access = new Access({
+        storage: () => window.localStorage, now: () => base.iat * 1000, bytes: () => Buffer.from(vector.deviceId, 'hex'),
+        coordination: { async initializeDevice(initialize) { initialize(); }, tryActivate: activate => activate() },
+        jitter: () => 0, keys: { 'test-1': vector.publicKey }, platform: 'iOS', version: '1',
+        request: async () => ({ status: 200, text: JSON.stringify({ lease, devices: [], deviceLimit: 3 }) }),
+        later: window.setTimeout, cancel: window.clearTimeout, warn() {}
+      });
+      access.start();
+      if (st === 'released') assert.ok(access.startTrial().ok);
+      assert.ok((await access.activate(vector.code)).ok);
+      const capture = new harness.CapturePanel(plugin, 'immersive');
+      capture.mount(new GateElement());
+      const quick = openQuickAdd(plugin, 'note', 'Waiting for input');
+      quick.editor.value = 'Quick Add before lease removal';
+      capture.editor.dispatchEvent(new Event('compositionstart'));
+      capture.editor.value = 'IME before removal';
+      let beforeRemoval: string[] = [];
+      access.subscribe(event => {
+        if (event === st) beforeRemoval = [access.snapshot().state, plugin.loadComposer().capture, ...plugin.loadRecoveryDrafts().map(draft => draft.text)];
+      });
+      lease = terminal;
+      assert.ok((await (st === 'released' ? access.release() : access.renew())).ok);
+      assert.deepEqual(beforeRemoval, ['active', 'IME before removal', 'Quick Add before lease removal']);
+      assert.equal(capture.editor.readOnly, st === 'revoked');
+      assert.equal(quick.editor.readOnly, st === 'revoked');
+      assert.equal(access.snapshot().state, st === 'released' ? 'trial' : 'not_started');
+      quick.modal.onClose();
+      if (st === 'revoked') assert.ok(access.startTrial().ok);
+      const activeRoot = new GateElement();
+      const active = new harness.CapturePanel(plugin, 'window');
+      active.mount(activeRoot);
+      await recoverySection(activeRoot, 'Quick Add before lease removal').clickButton('Save to Inbox');
+      assert.deepEqual(plugin.loadRecoveryDrafts(), []);
+      active.destroy();
+      capture.destroy();
+      access.dispose();
+    });
+  });
+}
+
+test('every Quick Add mode preserves its live textarea alongside the shared draft across a locked restart', async () => {
+  await withClock(async advance => withWindow(async timers => {
+    const { plugin, app } = createPlugin();
+    plugin.savedData = { settings: { language: 'en' } };
+    await plugin.onload();
+    assert.ok(plugin.access.startTrial().ok);
+    const shared = 'Existing shared capture';
+    plugin.saveComposer({ capture: shared });
+    const modes: QuickKind[] = ['capture', 'note', 'task', 'project', 'card'];
+    const dialogs = modes.map(kind => {
+      const quick = openQuickAdd(plugin, kind, 'Last committed input');
+      const text = `  ${kind}\n\n\u4e2d\u6587 \n  `;
+      quick.editor.dispatchEvent(new Event('compositionstart'));
+      quick.editor.value = text;
+      return { ...quick, text };
+    });
+    advance(24 * 60);
+    // The first close may happen after waking up, before the deadline callback runs.
+    dialogs[0]!.modal.onClose();
+    timers.flush();
+    const expected = dialogs.map(dialog => dialog.text);
+    assert.deepEqual(plugin.loadRecoveryDrafts().map(draft => draft.text), expected);
+    for (const dialog of dialogs.slice(1)) {
+      assert.equal(dialog.editor, dialog.root.querySelector('textarea'));
+      assert.equal(dialog.editor.readOnly, true);
+      dialog.modal.setKind('capture');
+      await dialog.modal.save();
+      assert.equal(dialog.editor, dialog.root.querySelector('textarea'));
+      recoverySection(dialog.root, dialog.text);
+      dialog.modal.onClose();
+    }
+    assert.equal(plugin.loadComposer().capture, shared);
+    assert.deepEqual(captureFiles(app), []);
+    plugin.onunload();
+    await plugin.writes;
+    const restarted = new harness.TangrowPlugin(app);
+    restarted.savedData = structuredClone(plugin.savedData);
+    await restarted.onload();
+    const root = new GateElement();
+    const view = new harness.CapturePanel(restarted, 'immersive');
+    view.mount(root);
+    for (const text of expected) {
+      const section = recoverySection(root, text);
+      let copied: string | undefined;
+      Object.assign(section.querySelector('textarea')!.ownerDocument, { defaultView: { navigator: { clipboard: { writeText: async (value: string) => { copied = value; } } } } });
+      await section.clickButton('Copy to clipboard');
+      assert.equal(copied, text);
+      await section.clickButton('Save to Inbox');
+      assert.equal(captureFiles(app).filter(file => file.content.endsWith(text + '\n')).length, 1);
+    }
+    assert.equal(captureFiles(app).length, modes.length);
+    assert.deepEqual(restarted.loadRecoveryDrafts(), []);
+    recoverySection(root, shared);
+    view.destroy();
+  }));
+});
+
+for (const dispatchedInput of [false, true]) test(`two simultaneous capture preedits keep their controls, exports and restart receipts (input dispatched: ${dispatchedInput})`, async () => {
+  await withClock(async advance => withWindow(async timers => {
+    const { plugin, app } = createPlugin();
+    plugin.savedData = { settings: { language: 'en' } };
+    await plugin.onload();
+    assert.ok(plugin.access.startTrial().ok);
+    const roots = [new GateElement(), new GateElement()];
+    const views = [new harness.CapturePanel(plugin, 'window'), new harness.CapturePanel(plugin, 'immersive')];
+    const values = ['  First preedit\n', '\nSecond preedit  '];
+    views.forEach((view, index) => {
+      view.mount(roots[index]!);
+      view.editor.dispatchEvent(new Event('compositionstart'));
+      view.editor.value = values[index]!;
+      if (dispatchedInput) view.editor.dispatchEvent(new Event('input'));
+    });
+    assert.equal(plugin.loadComposer().capture, '');
+    advance(24 * 60);
+    timers.flush();
+    for (const [index, view] of views.entries()) {
+      assert.equal(view.editor.readOnly, true);
+      assert.equal(view.editor.value, values[index]);
+      for (const text of values) recoverySection(roots[index]!, text);
+      view.destroy();
+    }
+    plugin.onunload();
+    await plugin.writes;
+    const next = new harness.TangrowPlugin(app);
+    next.savedData = structuredClone(plugin.savedData);
+    await next.onload();
+    const root = new GateElement();
+    const reopened = new harness.CapturePanel(next, 'window');
+    reopened.mount(root);
+    const recovered = next.loadRecoveryDrafts();
+    assert.equal(recovered.length, 1);
+    const secondary = recovered[0]!;
+    assert.deepEqual(new Set([next.loadComposer().capture, secondary.text]), new Set(values));
+    for (const text of values) recoverySection(root, text);
+    const save = next.saveData.bind(next);
+    next.saveData = async data => {
+      if (captureFiles(app).length) throw new Error('Interrupted recovery cleanup');
+      await save(data);
+    };
+    await Promise.all([next.submitRecoveryDraft(secondary.id), next.submitRecoveryDraft(secondary.id)]);
+    assert.equal(captureFiles(app).length, 1);
+    reopened.destroy();
+    const restarted = new harness.TangrowPlugin(app);
+    restarted.savedData = structuredClone(next.savedData);
+    await restarted.onload();
+    assert.deepEqual(restarted.loadRecoveryDrafts(), []);
+    // The gate exports the protected shared capture as a rescue, which keeps it exactly as typed.
+    await restarted.submitCaptureDraft(true);
+    assert.equal(captureFiles(app).length, 2);
+    for (const text of values) assert.equal(captureFiles(app).filter(file => file.content.endsWith(text + '\n')).length, 1);
+  }));
+});
+
+for (const closed of ['window', 'sidebar'] as const) test(`closing a ${closed} capture after the deadline but before its timer still rescues every preedit`, async () => {
+  await withClock(async advance => withWindow(async timers => {
+    const { plugin, app } = createPlugin();
+    plugin.savedData = { settings: { language: 'en' } };
+    await plugin.onload();
+    assert.ok(plugin.access.startTrial().ok);
+    const roots = [new GateElement(), new GateElement()];
+    const views = [new harness.CapturePanel(plugin, closed), new harness.CapturePanel(plugin, 'immersive')];
+    const values = ['Closed window preedit', 'Open window preedit'];
+    views.forEach((view, index) => {
+      view.mount(roots[index]!);
+      view.editor.dispatchEvent(new Event('compositionstart'));
+      view.editor.value = values[index]!;
+    });
+    const closingEditor = views[0]!.editor;
+    closingEditor.dispatchEvent(Object.assign(new Event('keyup'), { key: 't', isComposing: true }));
+    advance(24 * 60);
+    // Obsidian can end composition before it reports that the popout has closed.
+    if (closed === 'window') closingEditor.dispatchEvent(new Event('compositionend'));
+    views[0]!.destroy();
+    timers.flush();
+    assert.equal(views[1]!.editor.readOnly, true);
+    for (const text of values) recoverySection(roots[1]!, text);
+    views[1]!.destroy();
+    plugin.onunload();
+    await plugin.writes;
+    const next = new harness.TangrowPlugin(app);
+    next.savedData = structuredClone(plugin.savedData);
+    await next.onload();
+    assert.deepEqual(new Set([next.loadComposer().capture, ...next.loadRecoveryDrafts().map(draft => draft.text)]), new Set(values));
+  }));
+});
+
+test('closing the sidebar after the deadline but before its timer keeps the writing preedit', async () => {
+  await withClock(async advance => withWindow(async timers => {
+    const { plugin } = createPlugin();
+    plugin.savedData = { settings: { language: 'en' } };
+    await plugin.onload();
+    assert.ok(plugin.access.startTrial().ok);
+    const studio = await mountedStudio(plugin, new GateElement());
+    const writing = studio.scratchEditor as unknown as StudioElement;
+    writing.dispatchEvent(new Event('compositionstart'));
+    writing.value = 'Writing preedit';
+    writing.dispatchEvent(Object.assign(new Event('keyup'), { key: 't', isComposing: true }));
+    advance(24 * 60);
+    writing.dispatchEvent(new Event('compositionend'));
+    await studio.onClose();
+    timers.flush();
+    assert.equal(plugin.loadWritingDraft().text, 'Writing preedit');
+  }));
+});
+
+test('a Quick Add task save that crosses expiry exposes only the unfinished lines after failure', async () => {
+  await withClock(async advance => withWindow(async timers => {
+    const { plugin, app } = createPlugin();
+    plugin.savedData = { settings: { language: 'en' } };
+    await plugin.onload();
+    assert.ok(plugin.access.startTrial().ok);
+    const ready = deferred(), completeFirst = deferred();
+    const committed: string[] = [];
+    Object.assign(plugin, { addTask: async (line: string) => {
+      if (committed.length) throw new Error('Task write failed');
+      ready.resolve();
+      await completeFirst.promise;
+      committed.push(line);
+    } });
+    const unfinished = '  Finish later  ';
+    const text = `Already saving\n${unfinished}`;
+    const quick = openQuickAdd(plugin, 'task', text);
+    const saving = quick.modal.save();
+    await ready.promise;
+    advance(24 * 60);
+    timers.flush();
+    const draft = plugin.loadRecoveryDrafts()[0]!;
+    assert.equal(draft.saving, true);
+    assert.equal(draft.text, text);
+    await plugin.submitRecoveryDraft(draft.id);
+    assert.deepEqual(captureFiles(app), []);
+    completeFirst.resolve();
+    await saving;
+    assert.deepEqual(committed, ['Already saving']);
+    assert.equal(quick.root.querySelector('textarea'), quick.editor);
+    const remaining = plugin.loadRecoveryDrafts()[0]!;
+    assert.equal(remaining.saving, false);
+    assert.equal(remaining.text, unfinished);
+    assert.deepEqual((plugin.savedData as { recoveryDrafts: RecoveryDraft[] }).recoveryDrafts.map(draft => draft.text), [unfinished]);
+    await recoverySection(quick.root, unfinished).clickButton('Save to Inbox');
+    assert.equal(captureFiles(app).length, 1);
+    assert.ok(captureFiles(app)[0]!.content.endsWith(unfinished + '\n'));
+    quick.modal.onClose();
+  }));
+});
+
+test('a rescued Quick Add draft can be discarded after confirmation without creating a note', async () => {
+  await withClock(async advance => withWindow(async timers => {
+    const { plugin, app } = createPlugin();
+    plugin.savedData = { settings: { language: 'en' } };
+    await plugin.onload();
+    assert.ok(plugin.access.startTrial().ok);
+    const quick = openQuickAdd(plugin, 'capture', 'Not worth keeping');
+    advance(24 * 60);
+    timers.flush();
+    assert.deepEqual(plugin.loadRecoveryDrafts().map(draft => draft.text), ['Not worth keeping']);
+    quick.modal.onClose();
+    const root = new GateElement();
+    const panel = new harness.CapturePanel(plugin, 'immersive');
+    panel.mount(root);
+    const section = recoverySection(root, 'Not worth keeping');
+    await section.clickButton('Discard');
+    // The first click only asks for confirmation.
+    assert.equal(plugin.loadRecoveryDrafts().length, 1);
+    await section.clickButton('Confirm discard');
+    assert.deepEqual(plugin.loadRecoveryDrafts(), []);
+    timers.flush();
+    await plugin.writes;
+    assert.deepEqual((plugin.savedData as { recoveryDrafts: RecoveryDraft[] }).recoveryDrafts, []);
+    assert.deepEqual(captureFiles(app), []);
+    panel.destroy();
+  }));
+});
+
+test('a late Quick Add suggestion cannot replace a protected IME buffer', async () => {
+  await withClock(async advance => withWindow(async timers => {
+    const { plugin } = createPlugin();
+    plugin.savedData = { settings: { language: 'en' } };
+    await plugin.onload();
+    assert.ok(plugin.access.startTrial().ok);
+    const finish = deferred();
+    let signal: AbortSignal | undefined;
+    Object.assign(plugin, { suggestCapture: async (_text: string, pending: AbortSignal) => {
+      signal = pending;
+      await finish.promise;
+      return { kind: 'note', title: 'Late suggestion' };
+    } });
+    const quick = openQuickAdd(plugin, 'capture', 'Before suggestion');
+    const suggesting = quick.modal.suggest();
+    quick.editor.value = 'Still composing';
+    advance(24 * 60);
+    timers.flush();
+    assert.ok(signal?.aborted);
+    finish.resolve();
+    await suggesting;
+    assert.equal(quick.root.querySelector('textarea'), quick.editor);
+    assert.equal(quick.editor.readOnly, true);
+    recoverySection(quick.root, 'Still composing');
+    quick.modal.onClose();
+  }));
+});
+
+for (const timerFired of [false, true]) test(`a normal Quick Add save at expiry does not leave an already saved recovery draft (timer fired: ${timerFired})`, async () => {
+  await withClock(async advance => withWindow(async timers => {
+    const { app, plugin } = createPlugin();
+    plugin.savedData = { settings: { language: 'en' } };
+    await plugin.onload();
+    assert.ok(plugin.access.startTrial().ok);
+    const ready = deferred(), finish = deferred();
+    const create = app.vault.create.bind(app.vault);
+    app.vault.create = async (path, content) => {
+      ready.resolve();
+      await finish.promise;
+      return create(path, content);
+    };
+    const quick = openQuickAdd(plugin, 'capture', 'Saved while waiting for the deadline timer');
+    const saving = quick.modal.save();
+    await ready.promise;
+    advance(24 * 60);
+    if (timerFired) {
+      timers.flush();
+      await plugin.writes;
+      assert.equal(plugin.loadRecoveryDrafts().length, 1);
+    }
+    finish.resolve();
+    await saving;
+    assert.equal(captureFiles(app).length, 1);
+    assert.equal(quick.editor.readOnly, true);
+    assert.deepEqual(plugin.loadRecoveryDrafts(), []);
+    assert.deepEqual((plugin.savedData as { recoveryDrafts: RecoveryDraft[] }).recoveryDrafts, []);
+    quick.modal.onClose();
+  }));
 });

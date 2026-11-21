@@ -1,3 +1,4 @@
+import { AccessGate } from './access-gate';
 import { ItemView, Notice, setIcon, setTooltip, type WorkspaceLeaf } from 'obsidian';
 import { baseDefinitions } from './bases';
 import { renderActivityHeatmaps, type ActivityViewState } from './activity-view';
@@ -95,14 +96,22 @@ export class TangrowReport extends ItemView {
   getDisplayText(): string { return this.t('Vault overview'); }
   getIcon(): string { return 'chart-no-axes-combined'; }
 
+  private gate?: AccessGate;
+
   async onOpen(): Promise<void> {
     this.mounted = true;
     this.contentEl.addClass('tangrow-report');
-    this.unsubscribe = this.host.subscribe(() => this.scheduleRefresh());
+    this.gate = new AccessGate(this.host, this.contentEl, locked => { if (locked) this.epoch++; }, () => {
+      this.composing = this.knowledge.composing = false;
+      void this.refresh();
+    });
+    this.gate.mount();
+    this.unsubscribe = this.host.subscribe(() => { if (!this.gate?.locked) this.scheduleRefresh(); });
     await this.refresh();
   }
 
   async onClose(): Promise<void> {
+    this.gate?.dispose();
     this.mounted = false;
     this.composing = false;
     this.knowledge.composing = false;
@@ -113,7 +122,7 @@ export class TangrowReport extends ItemView {
     this.contentEl.empty();
   }
 
-  refreshLanguage(): void { this.render(); }
+  refreshLanguage(): void { if (this.gate?.locked) this.gate.refresh(); else this.render(); }
   navigate(destination: ReportDestination): void {
     if (destination.page === 'cards' && this.host.settings.knowledgeEnabled) {
       this.knowledge.selectCards(destination.filter, destination.dates);
@@ -132,6 +141,7 @@ export class TangrowReport extends ItemView {
   }
 
   private async refresh(): Promise<void> {
+    if (this.gate?.locked) return;
     const revision = ++this.epoch;
     this.loading = true;
     const range = this.range;
@@ -229,7 +239,7 @@ export class TangrowReport extends ItemView {
   }
 
   private render(): void {
-    if (!this.mounted || !this.snapshot || this.composing || this.knowledge.composing) return;
+    if (this.gate?.locked || !this.mounted || !this.snapshot || this.composing || this.knowledge.composing) return;
     if (this.page === 'notes' && this.noteTab === 'cards' && !this.host.settings.knowledgeEnabled) {
       this.page = 'overview';
       this.noteTab = 'all';

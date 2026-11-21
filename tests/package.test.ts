@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -17,14 +17,22 @@ async function fixture(context: TestContext) {
   await mkdir(path.join(root, 'scripts'));
   const script = path.join(root, 'scripts', 'package.mjs');
   await copyFile(packager, script);
+  await copyFile(path.join(path.dirname(packager), 'plugin-build.mjs'), path.join(root, 'scripts/plugin-build.mjs'));
+  await copyFile(new URL('../esbuild.config.mjs', import.meta.url), path.join(root, 'esbuild.config.mjs'));
+  await symlink(fileURLToPath(new URL('../node_modules', import.meta.url)), path.join(root, 'node_modules'), 'dir');
+  await mkdir(path.join(root, 'src/license'), { recursive: true });
+  const config = path.join(root, 'src/license/client.json');
+  const publicClient = { endpoint: 'https://licensing.tangrow.org', keys: { release: Buffer.alloc(32, 5).toString('base64url') } };
+  await writeFile(config, JSON.stringify(publicClient));
+  await writeFile(path.join(root, 'src/main.ts'), "import client from './license/client.json'; export default client;");
   await writeFile(path.join(root, 'package.json'), JSON.stringify({ version: '0.4.0', license: 'GPL-3.0-or-later' }));
   for (const name of files) {
     const content = name === 'manifest.json' ? JSON.stringify({ id: 'tangrow', version: '0.4.0' })
-      : name === 'main.js' ? '/* Tangrow 0.4.0 | GPL-3.0-or-later | See LICENSE and NOTICE */\n'
-        : `Original ${name}\n`;
+      : `Original ${name}\n`;
     await writeFile(path.join(root, name), content);
   }
-  return { root, script, archive: path.join(root, 'dist', 'tangrow-0.4.0.zip') };
+  await execute(process.execPath, [path.join(root, 'esbuild.config.mjs')]);
+  return { root, script, config, publicClient, archive: path.join(root, 'dist', 'tangrow-0.4.0.zip') };
 }
 
 test('the release archive includes GPL, additional permissions, legacy MIT and third-party notices unchanged', async context => {
@@ -65,5 +73,25 @@ test('version and license metadata must agree before packaging', async context =
     await writeFile(path.join(target.root, 'package.json'), JSON.stringify(metadata));
     await assert.rejects(execute(process.execPath, [target.script]), /metadata does not match/);
   }
+  await assert.rejects(readFile(target.archive), { code: 'ENOENT' });
+});
+
+test('release packaging rejects development configuration and stale configured bundles', async context => {
+  const target = await fixture(context);
+  const { keys, endpoint } = target.publicClient;
+  const devKey = 'toLDfPrO8fWXuTTZlHlMvkN7bmE8ISLj0dwgpPq0FX4';
+  for (const client of [
+    { keys, endpoint: 'https://license.tangrow.invalid' },
+    { keys, endpoint: 'http://licensing.tangrow.org' },
+    { endpoint, keys: { 'dev-1': keys.release } },
+    { endpoint, keys: { release: devKey } },
+    { endpoint, keys: {} },
+    { endpoint, keys: { release: 'malformed' } },
+  ]) {
+    await writeFile(target.config, JSON.stringify(client));
+    await assert.rejects(execute(process.execPath, [target.script]), /before packaging/);
+  }
+  await writeFile(target.config, JSON.stringify({ keys, endpoint: 'https://another.tangrow.org' }));
+  await assert.rejects(execute(process.execPath, [target.script]), /differs from the configured release source/);
   await assert.rejects(readFile(target.archive), { code: 'ENOENT' });
 });

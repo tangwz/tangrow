@@ -1,3 +1,4 @@
+import { AccessGate } from './access-gate';
 import { ItemView, Notice, Platform, Scope, TFile, setTooltip } from 'obsidian';
 import { describeError } from './i18n';
 import type { WorkspaceLeaf } from 'obsidian';
@@ -5,6 +6,7 @@ import type { QuickKind } from './ai';
 import { quickKinds } from './quick-add';
 import type { ActionId, BaseId, Locale, NoteSummary, SidebarHost, Snapshot } from './types';
 import { CapturePanel } from './capture-panel';
+import { DraftComposition, tracksComposition } from './draft-composition';
 import { AiPanel } from './ai-panel';
 import { writingStage } from './card-report-data';
 import { readKnowledgeRecord } from './knowledge-index';
@@ -57,6 +59,9 @@ export class TangrowSidebar extends ItemView {
   private readonly host: SidebarHost;
   private readonly ui: SidebarUI;
   private readonly viewId = `tangrow-${crypto.randomUUID()}`;
+  private gate?: AccessGate;
+  private trialDeadline?: HTMLElement;
+  private unsubscribeAccess?: () => void;
   private isMounted = false;
   private section: WorkbenchTab = 'today';
   private composeTab: ComposeTab = 'captures';
@@ -85,7 +90,7 @@ export class TangrowSidebar extends ItemView {
   private scratchRevision = 0;
   private scratchSaving = false;
   private scratchEditor?: HTMLTextAreaElement;
-  private scratchComposingControl?: HTMLInputElement | HTMLTextAreaElement;
+  private scratchComposition?: DraftComposition;
   private scratchTitleInput?: HTMLInputElement;
   private studioHeading?: HTMLElement;
   private studioCaption?: HTMLElement;
@@ -118,6 +123,7 @@ export class TangrowSidebar extends ItemView {
 
   /** Opens a workspace from a command or menu item. */
   showSection(entry: WorkbenchEntry): void {
+    if (this.gate?.locked) return;
     const destination = workbenchDestination(entry);
     if (destination.tab === 'compose' && destination.page) this.showCompose(destination.page);
     else if (destination.tab === 'more' && destination.page) this.showMore(destination.page);
@@ -154,15 +160,24 @@ export class TangrowSidebar extends ItemView {
 
   async onOpen(): Promise<void> {
     this.isMounted = true;
+    this.gate = new AccessGate(this.host, this.contentEl, locked => this.protectDrafts(locked), () => {
+      this.capturePanel?.destroy();
+      this.clearStudioControls();
+      this.syncStudio();
+      this.renderShell();
+    });
+    this.gate.mount();
+    this.unsubscribeAccess = this.host.access.subscribe(event => { if (event === 'change') this.refreshTrialDeadline(); });
     this.syncStudio();
-    this.renderShell();
-    this.unsubscribe = this.host.subscribe(() => this.refresh());
+    if (!this.gate.locked) this.renderShell();
+    this.unsubscribe = this.host.subscribe(() => { if (!this.gate?.locked) this.refresh(); });
     this.unsubscribeComposer = this.host.subscribeComposer(() => this.syncStudio());
-    this.registerInterval(window.setInterval(() => this.updateClock(), 1000));
+    this.registerInterval(window.setInterval(() => { if (!this.gate?.locked) this.updateClock(); }, 1000));
   }
 
   refreshLanguage(): void {
     if (!this.isMounted) return;
+    if (this.gate?.locked) { this.gate.refresh(); return; }
     this.dismissCreateMenu?.(true);
     const active = this.contentEl.ownerDocument.activeElement;
     const inputs = [this.scratchEditor, this.scratchTitleInput, this.habitInput];
@@ -172,7 +187,7 @@ export class TangrowSidebar extends ItemView {
       end: inputs[focusedInput]?.selectionEnd ?? 0
     };
     const focusedTab = Array.from(this.navButtons).find(([, control]) => control === active)?.[0];
-    const composing = this.scratchComposingControl?.isConnected ?? false;
+    const composing = this.scratchComposition?.control.isConnected ?? false;
     const scrollTop = this.contentEl.scrollTop;
     this.preserveFocus(() => {
       this.refreshShellLabels();
@@ -216,6 +231,15 @@ export class TangrowSidebar extends ItemView {
       }
     }
     this.setupBanner.empty();
+    this.refreshTrialDeadline();
+  }
+
+  private refreshTrialDeadline(): void {
+    if (!this.trialDeadline) return;
+    const { state, expiresAt } = this.host.access.snapshot();
+    this.trialDeadline.hidden = state !== 'trial';
+    this.trialDeadline.textContent = state === 'trial' && expiresAt !== null
+      ? this.ui.t('Trial ends {date}', { date: new Date(expiresAt).toLocaleString(this.host.settings.language) }) : '';
   }
 
   private renderShell(): void {
@@ -249,6 +273,8 @@ export class TangrowSidebar extends ItemView {
       this.openCreateMenu(add, event.key === 'ArrowUp');
     });
     this.shellLabels.push({ element: add, source: 'New', tooltip: true }, { element: addLabel, source: 'New' });
+    this.trialDeadline = this.contentEl.createEl('p', { cls: 'tangrow-muted' });
+    this.refreshTrialDeadline();
     this.noteLabel = this.contentEl.createDiv({ cls: 'tangrow-context', attr: { 'aria-live': 'polite', hidden: '' } });
     const nav = this.contentEl.createDiv({ cls: 'tangrow-nav', attr: { role: 'tablist', 'aria-label': this.ui.t('Companion workspaces') } });
     for (const item of SECTIONS) {
@@ -295,7 +321,7 @@ export class TangrowSidebar extends ItemView {
     const controls: HTMLButtonElement[] = [];
     const choose = (kind: QuickKind) => {
       this.dismissCreateMenu?.(true);
-      this.host.openQuickAdd(kind);
+      if (this.host.requireAccess()) this.host.openQuickAdd(kind);
     };
     for (const [index, kind] of quickKinds(this.host.settings.knowledgeEnabled).entries()) {
       const shortcut = `${Platform.isMacOS ? '⌘' : 'Ctrl+'}${index + 1}`;
@@ -362,6 +388,11 @@ export class TangrowSidebar extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    // The deadline can pass before its timer fires. Lock first so the gate rescues unsaved text, including a writing
+    // preedit that closing would otherwise discard, before the controls are torn down.
+    if (this.gate && !this.gate.locked && !this.host.access.canUse()) this.host.access.refresh();
+    this.unsubscribeAccess?.();
+    this.gate?.dispose();
     this.isMounted = false;
     this.workbenchCards.pause();
     this.dismissCreateMenu?.();
@@ -819,12 +850,6 @@ export class TangrowSidebar extends ItemView {
     });
     title.value = this.scratchTitle;
     this.scratchTitleInput = title;
-    // Unconfirmed IME text must not enter the shared, automatically saved draft.
-    title.addEventListener('input', () => {
-      if (!this.isMounted || this.scratchTitleInput !== title || !title.isConnected) return;
-      if (this.scratchComposingControl === title) return;
-      if (!this.host.updateWritingDraft({ title: title.value }, this.scratchRevision, this.viewId)) this.syncStudio();
-    });
     const text = composer.createEl('textarea', {
       cls: 'tangrow-textarea tangrow-writing-area', attr: { placeholder: this.ui.t('Start with a sentence...'), 'aria-label': this.ui.t('Writing scratchpad'), rows: '12' }
     });
@@ -843,23 +868,54 @@ export class TangrowSidebar extends ItemView {
         this.updateStudioControls();
       }
     }, { icon: 'file-plus-2', cls: 'mod-cta' });
-    text.addEventListener('input', () => {
-      if (!this.isMounted || this.scratchEditor !== text || !text.isConnected) return;
-      if (this.scratchComposingControl === text) return;
-      if (!this.host.updateWritingDraft({ text: text.value }, this.scratchRevision, this.viewId)) this.syncStudio();
-    });
-    for (const control of [title, text]) {
-      control.addEventListener('compositionstart', () => {
+    for (const [field, control] of [['title', title], ['text', text]] as const) {
+      const compositionForControl = () => {
+        const composition = this.scratchComposition;
+        return composition?.control === control ? composition : undefined;
+      };
+      control.addEventListener('input', event => {
         if (!this.isStudioControl(control)) return;
-        if (this.host.beginWritingDraftComposition(this.viewId, this.scratchRevision)) this.scratchComposingControl = control;
+        if (compositionForControl()) return;
+        if ((event as InputEvent).isComposing && tracksComposition()) return;
+        if (!this.host.updateWritingDraft({ [field]: control.value }, this.scratchRevision, this.viewId)) this.syncStudio();
+      });
+      control.addEventListener('compositionstart', () => {
+        if (!this.isStudioControl(control) || !tracksComposition()) return;
+        if (this.host.beginWritingDraftComposition(this.viewId, this.scratchRevision)) {
+          this.scratchComposition?.dispose();
+          this.scratchComposition = new DraftComposition(control);
+        }
         this.syncStudio();
       });
+      control.addEventListener('keydown', event => {
+        if (this.isStudioControl(control)) compositionForControl()?.keyDown(event as KeyboardEvent);
+      });
       control.addEventListener('compositionend', () => {
-        if (!this.isStudioControl(control) || this.scratchComposingControl !== control) return;
-        this.host.updateWritingDraft(control === title ? { title: title.value } : { text: text.value }, this.scratchRevision, this.viewId);
-        this.scratchComposingControl = undefined;
-        this.host.endWritingDraftComposition(this.viewId);
-        this.syncStudio();
+        const composition = compositionForControl();
+        if (!composition) return;
+        if (!this.isStudioControl(control)) {
+          // The control stopped being editable mid-composition. Drop the tracking and lease so neither lingers.
+          composition.dispose();
+          this.scratchComposition = undefined;
+          this.host.endWritingDraftComposition(this.viewId);
+          return;
+        }
+        if (!this.host.access.canUse()) {
+          this.host.access.refresh();
+          return;
+        }
+        composition.settle(confirmed => {
+          // Closing, a lock or a new composition took over in the meantime and already released the lease.
+          if (this.scratchComposition !== composition) return;
+          composition.dispose();
+          this.scratchComposition = undefined;
+          if (this.isStudioControl(control)) {
+            if (confirmed) this.host.updateWritingDraft({ [field]: control.value }, this.scratchRevision, this.viewId);
+            else composition.restore();
+          }
+          this.host.endWritingDraftComposition(this.viewId);
+          this.syncStudio();
+        });
       });
     }
     this.syncStudio();
@@ -873,20 +929,39 @@ export class TangrowSidebar extends ItemView {
 
   private clearStudioControls(): void {
     if (this.host.loadWritingDraft().editingView === this.viewId) {
-      if (this.scratchComposingControl === this.scratchEditor && this.scratchEditor) {
+      const control = this.scratchComposition?.control;
+      if (control && control === this.scratchEditor) {
         this.host.updateWritingDraft({ title: this.scratchTitleInput?.value ?? this.scratchTitle }, this.scratchRevision, this.viewId);
-      } else if (this.scratchComposingControl === this.scratchTitleInput && this.scratchTitleInput) {
+      } else if (control && control === this.scratchTitleInput) {
         this.host.updateWritingDraft({ text: this.scratchEditor?.value ?? this.scratch }, this.scratchRevision, this.viewId);
       }
       this.host.endWritingDraftComposition(this.viewId);
     }
     this.scratchEditor = undefined;
-    this.scratchComposingControl = undefined;
+    this.scratchComposition?.dispose();
+    this.scratchComposition = undefined;
     this.scratchTitleInput = undefined;
     this.scratchSaveButton = undefined;
     this.scratchCount = undefined;
     this.studioHeading = undefined;
     this.studioCaption = undefined;
+  }
+
+  private protectDrafts(locked: boolean): void {
+    this.dismissCreateMenu?.();
+    if (locked) this.workbenchCards.pause();
+    this.capturePanel?.protectDraft(locked);
+    const editor = this.scratchEditor;
+    const title = this.scratchTitleInput;
+    if (!editor || !title) return;
+    if (!editor.readOnly || this.host.loadWritingDraft().editingView === this.viewId) {
+      this.scratchComposition?.restoreIfEscaped();
+      this.host.updateWritingDraft({ text: editor.value, title: title.value }, this.scratchRevision, this.viewId);
+      this.scratchComposition?.dispose();
+      this.scratchComposition = undefined;
+      this.host.endWritingDraftComposition(this.viewId);
+    }
+    if (locked) editor.readOnly = title.readOnly = true;
   }
 
   flushWritingDraft(): void { this.clearStudioControls(); }
@@ -912,7 +987,8 @@ export class TangrowSidebar extends ItemView {
   }
 
   private isStudioControl(control: HTMLInputElement | HTMLTextAreaElement): boolean {
-    return this.isMounted && control.isConnected && (control === this.scratchEditor || control === this.scratchTitleInput);
+    return !this.gate?.locked && this.isMounted && control.isConnected && !control.readOnly &&
+      (control === this.scratchEditor || control === this.scratchTitleInput);
   }
 
   private syncStudio(): void {
@@ -920,7 +996,7 @@ export class TangrowSidebar extends ItemView {
     this.scratch = draft.text;
     this.scratchTitle = draft.title;
     this.scratchRevision = draft.revision;
-    const readOnly = draft.editingView !== undefined && draft.editingView !== this.viewId;
+    const readOnly = !!this.gate?.locked || draft.editingView !== undefined && draft.editingView !== this.viewId;
     for (const [control, value] of [[this.scratchEditor, draft.text], [this.scratchTitleInput, draft.title]] as const) {
       if (!control?.isConnected) continue;
       control.readOnly = readOnly;

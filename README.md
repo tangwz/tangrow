@@ -164,7 +164,7 @@ npm run package
 
 `npm run package` 生成 `dist/tangrow-0.4.0.zip`，包含运行文件、GPL 全文、项目附加声明、旧 MIT 全文和第三方声明。发布时还须提供与运行文件实际对应的完整源码；获取方式见 [LICENSING.md](docs/LICENSING.md)。`main.js`、依赖与发布包不提交到源码仓库。
 
-打包前会核对包版本、GPL 元数据、七文件清单和构建首部；旧版本、旧 MIT 或旧专有许可首部的运行文件会被拒绝，应先重新构建。
+正式打包前，在 [客户端授权配置](src/license/client.json) 填入生产 HTTPS 源站和按 `kid` 索引的 Ed25519 公钥（32 字节，无填充 base64url），再执行 `npm run build` 和 `npm run package`。打包会检查开发占位值、包版本、GPL 元数据、七文件清单，并重新编译比对待分发的 `main.js`。日常开发和临时库验收可直接使用 `npm run build`。
 
 安装后的人工验收：
 

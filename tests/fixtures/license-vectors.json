@@ -1,0 +1,20 @@
+{
+  "code": " tgrw-oiL3-4567-89ab-cdef ",
+  "normalized": "0113456789ABCDEF",
+  "codeDigest": "e9f4072e4a675a3dbbcb717f7a00c682d5478f05d9c8628ef3bed39ba50d5eb5",
+  "deviceId": "00112233445566778899aabbccddeeff",
+  "deviceDigest": "0a8bb68774f4242e4abc5c8cfc149cb86daf546d23c8197d96b9fd31d713e319",
+  "seedHex": "0000000000000000000000000000000000000000000000000000000000000001",
+  "publicKey": "TLWr9q15-_WrvMr8wmnYXNJlHtS4hbWGnyQa7fCluik",
+  "payload": {
+    "kid": "test-1",
+    "lic": "0123456789abcdef0123456789abcdef",
+    "dev": "0a8bb68774f4242e4abc5c8cfc149cb86daf546d23c8197d96b9fd31d713e319",
+    "prd": "tangrow-local-lifetime",
+    "st": "active",
+    "iat": 1700000000,
+    "rnb": 1700604800,
+    "exp": 1702592000
+  },
+  "lease": "v1.eyJraWQiOiJ0ZXN0LTEiLCJsaWMiOiIwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZiIsImRldiI6IjBhOGJiNjg3NzRmNDI0MmU0YWJjNWM4Y2ZjMTQ5Y2I4NmRhZjU0NmQyM2M4MTk3ZDk2YjlmZDMxZDcxM2UzMTkiLCJwcmQiOiJ0YW5ncm93LWxvY2FsLWxpZmV0aW1lIiwic3QiOiJhY3RpdmUiLCJpYXQiOjE3MDAwMDAwMDAsInJuYiI6MTcwMDYwNDgwMCwiZXhwIjoxNzAyNTkyMDAwfQ.wXuNBVCwaZyEdRlnMx7JALStI-GIlwli2VKPH-vlziWBvAzFbietcjSWR-yCXDoyDQxCvZBFl5zOVUNiYuwpAQ"
+}
