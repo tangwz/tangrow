@@ -29,6 +29,7 @@ class Element extends EventTarget {
   onclick?: () => void | Promise<void>;
   oninput?: () => void | Promise<void>;
   onchange?: () => void | Promise<void>;
+  onblur?: () => void | Promise<void>;
 
   constructor(readonly tagName = 'DIV') { super(); }
 
@@ -258,6 +259,22 @@ test('a valid integer that was typed but not committed is saved when settings mo
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(plugin.settings.focusMinutes, 50);
   assert.equal(plugin.saveCalls, 2);
+});
+
+test('change, blur and leaving the section save one edit once', async () => {
+  const { plugin, row, navigate, byText, dispose } = fixture();
+  navigate('Sidebar components');
+  const duration = row('focusMinutes').querySelector('input')!;
+  duration.value = '90';
+  await duration.oninput?.();
+  // Blur follows change before the first save has finished.
+  await Promise.all([duration.onchange?.(), duration.onblur?.()]);
+  assert.equal(plugin.settings.focusMinutes, 90);
+  assert.equal(plugin.saveCalls, 1);
+  byText('Back to settings').click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(plugin.saveCalls, 1);
+  dispose();
 });
 
 test('valid integers save when committed, out of range values show a hint, and access changes lock editing', async () => {

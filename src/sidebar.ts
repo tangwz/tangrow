@@ -904,10 +904,18 @@ export class TangrowSidebar extends ItemView {
           this.host.access.refresh();
           return;
         }
-        if (composition.finish()) this.host.updateWritingDraft({ [field]: control.value }, this.scratchRevision, this.viewId);
-        this.scratchComposition = undefined;
-        this.host.endWritingDraftComposition(this.viewId);
-        this.syncStudio();
+        composition.settle(confirmed => {
+          // Closing, a lock or a new composition took over in the meantime and already released the lease.
+          if (this.scratchComposition !== composition) return;
+          composition.dispose();
+          this.scratchComposition = undefined;
+          if (this.isStudioControl(control)) {
+            if (confirmed) this.host.updateWritingDraft({ [field]: control.value }, this.scratchRevision, this.viewId);
+            else composition.restore();
+          }
+          this.host.endWritingDraftComposition(this.viewId);
+          this.syncStudio();
+        });
       });
     }
     this.syncStudio();
@@ -947,7 +955,7 @@ export class TangrowSidebar extends ItemView {
     const title = this.scratchTitleInput;
     if (!editor || !title) return;
     if (!editor.readOnly || this.host.loadWritingDraft().editingView === this.viewId) {
-      this.scratchComposition?.restoreIfInterrupted();
+      this.scratchComposition?.restoreIfEscaped();
       this.host.updateWritingDraft({ text: editor.value, title: title.value }, this.scratchRevision, this.viewId);
       this.scratchComposition?.dispose();
       this.scratchComposition = undefined;

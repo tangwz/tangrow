@@ -133,15 +133,20 @@ export function renderSection(container: HTMLElement, id: Exclude<SectionId, 'ac
       control.setAttribute('aria-invalid', String(value === null));
       return value;
     };
+    // change, blur and leaving the section can all fire for one edit; only one save per value may be in flight.
+    let saving: number | null = null;
     // Validate while typing, but save only the committed value: typing 300 must not store 3 and 30 on the way.
     const commit = async () => {
-      const inputRevision = ++revision;
       const value = check();
-      if (value === null || value === get() || !canEdit()) return;
+      if (value === null || value === get() || value === saving || !canEdit()) return;
+      const inputRevision = ++revision;
+      saving = value;
       try { await save(value); }
       catch (failure) {
         if (inputRevision === revision) control.value = String(get());
         presentError(failure);
+      } finally {
+        if (saving === value) saving = null;
       }
     };
     control.oninput = () => { check(); };

@@ -109,14 +109,22 @@ export class CapturePanel {
       const composition = this.composition;
       if (!canEdit()) return;
       if (this.rescueIfAccessEnded()) return;
-      if (composition?.control === editor) {
-        this.composition = undefined;
-        if (composition.finish()) this.host.saveComposer({ capture: editor.value });
-      } else {
-        // An untracked composition (mobile, or one that began while the control was read-only) ends as ordinary input.
+      if (composition?.control !== editor) {
+        // An untracked composition (Android, or one that began while the control was read-only) is ordinary input.
         this.host.saveComposer({ capture: editor.value });
+        this.syncComposer();
+        return;
       }
-      this.syncComposer();
+      composition.settle(confirmed => {
+        // A new composition, a lock or closing the view took over in the meantime.
+        if (this.composition !== composition) return;
+        this.composition = undefined;
+        composition.dispose();
+        if (!canEdit()) return;
+        if (confirmed) this.host.saveComposer({ capture: editor.value });
+        else composition.restore();
+        this.syncComposer();
+      });
     });
     editor.addEventListener('input', event => {
       if (!canEdit() || this.composition) return;
@@ -308,7 +316,7 @@ export class CapturePanel {
     // Snapshot every window before changing readOnly or notifying a shared composer listener.
     const buffers = new Map<string, CapturePanel>();
     for (const { panel, editor } of editors) {
-      panel.composition?.restoreIfInterrupted();
+      panel.composition?.restoreIfEscaped();
       if (editor.value && !buffers.has(editor.value)) buffers.set(editor.value, panel);
     }
     const shared = this.host.loadComposer().capture;

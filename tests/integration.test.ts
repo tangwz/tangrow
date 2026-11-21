@@ -80,7 +80,8 @@ interface Harness {
   FileView: typeof MockFileView;
   ItemView: typeof MockItemView;
   notices: string[];
-  Platform: { isDesktopApp: boolean; isMacOS: boolean; isMobile?: boolean };
+  Platform: { isDesktopApp: boolean; isMacOS: boolean; isMobile?: boolean; isAndroidApp?: boolean; isIosApp?: boolean };
+  compositionTiming: { later(callback: () => void): void };
   openCaptureWindow(app: unknown, host: unknown): Promise<void>;
 }
 
@@ -120,7 +121,7 @@ const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 const bundled = await build({
   absWorkingDir: repository,
   stdin: {
-    contents: "export { default as TangrowPlugin } from './src/main'; export { TangrowSidebar } from './src/sidebar'; export { CapturePanel } from './src/capture-panel'; export { QuickAddModal } from './src/quick-add'; export { openCaptureWindow } from './src/capture-window'; export * from './tests/obsidian-mock';",
+    contents: "export { default as TangrowPlugin } from './src/main'; export { TangrowSidebar } from './src/sidebar'; export { CapturePanel } from './src/capture-panel'; export { QuickAddModal } from './src/quick-add'; export { openCaptureWindow } from './src/capture-window'; export { compositionTiming } from './src/draft-composition'; export * from './tests/obsidian-mock';",
     resolveDir: repository,
     sourcefile: 'integration-entry.ts',
     loader: 'ts'
@@ -137,6 +138,8 @@ const bundled = await build({
 const moduleObject: { exports: unknown } = { exports: {} };
 new Function('module', 'exports', 'require', bundled.outputFiles[0]!.text)(moduleObject, moduleObject.exports, createRequire(import.meta.url));
 const harness = moduleObject.exports as Harness;
+// Settle each composition at once; tests that check the deferred verdict install their own queue.
+harness.compositionTiming.later = callback => callback();
 
 function createPlugin(): { plugin: TestPlugin; app: MockApp } {
   const app = harness.createMockApp();
@@ -2012,8 +2015,8 @@ test('capture preedit stays in its window until commit, and closing discards an 
     await plugin.writes;
     assert.equal((plugin.savedData as { composer: ComposerState }).composer.capture, committed);
 
-    // Pressing the close button elsewhere ends composition before the view closes.
-    editor.ownerDocument.dispatchEvent(new Event('pointerdown'));
+    // Pressing the close button moves focus away from the composing control.
+    editor.dispatchEvent(new Event('blur'));
     editor.dispatchEvent(Object.assign(new Event('compositionend'), { data: 'preedit' }));
     assert.equal(editor.value, committed);
     popout.destroy();
@@ -2047,7 +2050,7 @@ test('capture preedit stays in its window until commit, and closing discards an 
   });
 });
 
-test('capture keeps a commit that leaves the text unchanged and ends only interrupted compositions', async () => {
+test('capture keeps commits, including IME toggles and mouse picks, and drops compositions that lost focus', async () => {
   await withWindow(async () => {
     const { plugin } = createPlugin();
     const panel = new harness.CapturePanel(plugin, 'window');
@@ -2060,8 +2063,9 @@ test('capture keeps a commit that leaves the text unchanged and ends only interr
       editor.dispatchEvent(Object.assign(new Event('keyup'), { key: 'Process', isComposing: true }));
     };
     const keydown = (fields: Record<string, unknown>) => editor.dispatchEvent(Object.assign(new Event('keydown'), { isComposing: true, ...fields }));
-    // Windows IMEs report commit keys as Process, and Shift commits Latin text exactly as composed.
-    for (const [text, key] of [['nihao', { key: 'Process' }], ['nihao shift', { key: 'Shift', shiftKey: true }]] as const) {
+    // Windows IMEs report commit keys as Process; Shift and Ctrl+Space commit Latin text exactly as composed.
+    const commits = [['nihao', { key: 'Process' }], ['nihao shift', { key: 'Shift', shiftKey: true }], ['nihao toggle', { key: ' ', ctrlKey: true }]] as const;
+    for (const [text, key] of commits) {
       compose(text);
       keydown(key);
       editor.dispatchEvent(new Event('compositionend'));
@@ -2069,28 +2073,70 @@ test('capture keeps a commit that leaves the text unchanged and ends only interr
       assert.equal(editor.value, text);
     }
     // A Japanese IME reverts only the conversion on Escape; typing on and confirming keeps the result.
-    compose('nihao shift きょう');
+    compose('nihao toggle きょう');
     keydown({ key: 'Escape', code: 'Escape' });
     keydown({ key: 'Process' });
-    editor.value = 'nihao shift 京';
+    editor.value = 'nihao toggle 京';
     editor.dispatchEvent(new Event('input'));
     keydown({ key: 'Enter' });
     editor.dispatchEvent(new Event('compositionend'));
-    assert.equal(plugin.loadComposer().capture, 'nihao shift 京');
-    // A shortcut such as closing the view interrupts the composition, so its preedit is dropped.
-    compose('nihao shift 京 unfinished');
-    keydown({ key: 'w', metaKey: true });
+    assert.equal(plugin.loadComposer().capture, 'nihao toggle 京');
+    // A press elsewhere that keeps focus does not end the composition; a candidate picked with the mouse is kept.
+    compose('nihao toggle 京 ni');
+    editor.ownerDocument.dispatchEvent(new Event('pointerdown'));
+    editor.value = 'nihao toggle 京 你';
+    editor.dispatchEvent(new Event('input'));
     editor.dispatchEvent(new Event('compositionend'));
-    assert.equal(plugin.loadComposer().capture, 'nihao shift 京');
-    assert.equal(editor.value, 'nihao shift 京');
+    assert.equal(plugin.loadComposer().capture, 'nihao toggle 京 你');
+    // Switching to another window or app blurs the control, so its unconfirmed preedit is dropped.
+    compose('nihao toggle 京 你 unfinished');
+    editor.dispatchEvent(new Event('blur'));
+    editor.dispatchEvent(new Event('compositionend'));
+    assert.equal(plugin.loadComposer().capture, 'nihao toggle 京 你');
+    assert.equal(editor.value, 'nihao toggle 京 你');
     panel.destroy();
   });
 });
 
-test('on mobile, the word a keyboard is still composing is saved and can be submitted', async () => {
+test('a composition ended by a window switch is judged after the blur that Chromium dispatches next', async () => {
   await withWindow(async () => {
-    const previous = harness.Platform.isMobile;
-    harness.Platform.isMobile = true;
+    const queue: (() => void)[] = [];
+    const previous = harness.compositionTiming.later;
+    harness.compositionTiming.later = callback => { queue.push(callback); };
+    try {
+      const { plugin } = createPlugin();
+      plugin.saveComposer({ capture: 'Kept' });
+      const panel = new harness.CapturePanel(plugin, 'window');
+      panel.mount(new GateElement());
+      const editor = panel.editor;
+      editor.dispatchEvent(new Event('compositionstart'));
+      editor.value = 'Kept nihao';
+      editor.dispatchEvent(new Event('input'));
+      // Chromium finishes the composition first, then blurs the control as the window deactivates.
+      editor.dispatchEvent(new Event('compositionend'));
+      editor.dispatchEvent(new Event('blur'));
+      assert.equal(plugin.loadComposer().capture, 'Kept');
+      for (const settle of queue.splice(0)) settle();
+      assert.equal(plugin.loadComposer().capture, 'Kept');
+      assert.equal(editor.value, 'Kept');
+      // A confirmed composition with focus still in place is saved once it settles.
+      editor.dispatchEvent(new Event('focus'));
+      editor.dispatchEvent(new Event('compositionstart'));
+      editor.value = 'Kept 你好';
+      editor.dispatchEvent(new Event('input'));
+      editor.dispatchEvent(new Event('compositionend'));
+      for (const settle of queue.splice(0)) settle();
+      assert.equal(plugin.loadComposer().capture, 'Kept 你好');
+      panel.destroy();
+    } finally { harness.compositionTiming.later = previous; }
+  });
+});
+
+for (const platform of ['android', 'ios'] as const) test(`on ${platform}, capture ${platform === 'android' ? 'saves the word a keyboard is still composing' : 'keeps unconfirmed pinyin out of the draft'}`, async () => {
+  await withWindow(async () => {
+    const keys = ['isMobile', 'isAndroidApp', 'isIosApp'] as const;
+    const previous = keys.map(key => [key, Object.getOwnPropertyDescriptor(harness.Platform, key)] as const);
+    Object.assign(harness.Platform, { isMobile: true, isAndroidApp: platform === 'android', isIosApp: platform === 'ios' });
     try {
       const { plugin } = createPlugin();
       plugin.settings.language = 'en';
@@ -2098,21 +2144,33 @@ test('on mobile, the word a keyboard is still composing is saved and can be subm
       const root = new GateElement();
       panel.mount(root);
       const editor = panel.editor;
+      const text = platform === 'android' ? 'buy milk' : 'ni hao';
       editor.dispatchEvent(new Event('compositionstart'));
-      editor.value = 'buy milk';
+      editor.value = text;
       editor.dispatchEvent(Object.assign(new Event('input'), { isComposing: true }));
-      editor.dispatchEvent(Object.assign(new Event('keyup'), { key: 'Unidentified', isComposing: true }));
-      assert.equal(plugin.loadComposer().capture, 'buy milk');
       const save = root.all().find(el => el.getAttribute('aria-label') === 'Save capture');
-      assert.equal(save?.disabled, false);
-      // Tapping elsewhere ends the composition without discarding the word.
-      editor.ownerDocument.dispatchEvent(new Event('pointerdown'));
-      editor.dispatchEvent(new Event('compositionend'));
-      assert.equal(editor.value, 'buy milk');
-      assert.equal(plugin.loadComposer().capture, 'buy milk');
+      // Tapping elsewhere ends the composition.
+      editor.dispatchEvent(new Event('blur'));
+      if (platform === 'android') {
+        assert.equal(plugin.loadComposer().capture, text);
+        assert.equal(save?.disabled, false);
+        editor.dispatchEvent(new Event('compositionend'));
+        assert.equal(editor.value, text);
+        assert.equal(plugin.loadComposer().capture, text);
+      } else {
+        assert.equal(plugin.loadComposer().capture, '');
+        assert.equal(save?.disabled, true);
+        editor.dispatchEvent(new Event('compositionend'));
+        assert.equal(editor.value, '');
+        assert.equal(plugin.loadComposer().capture, '');
+      }
       panel.destroy();
-      assert.equal(plugin.loadComposer().capture, 'buy milk');
-    } finally { harness.Platform.isMobile = previous; }
+    } finally {
+      for (const [key, descriptor] of previous) {
+        if (descriptor) Object.defineProperty(harness.Platform, key, descriptor);
+        else delete harness.Platform[key];
+      }
+    }
   });
 });
 
