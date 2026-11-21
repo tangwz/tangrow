@@ -6,7 +6,7 @@ import type { QuickKind } from './ai';
 import { quickKinds } from './quick-add';
 import type { ActionId, BaseId, Locale, NoteSummary, SidebarHost, Snapshot } from './types';
 import { CapturePanel } from './capture-panel';
-import { DraftComposition } from './draft-composition';
+import { DraftComposition, tracksComposition } from './draft-composition';
 import { AiPanel } from './ai-panel';
 import { writingStage } from './card-report-data';
 import { readKnowledgeRecord } from './knowledge-index';
@@ -875,21 +875,31 @@ export class TangrowSidebar extends ItemView {
       };
       control.addEventListener('input', event => {
         if (!this.isStudioControl(control)) return;
-        const composition = compositionForControl();
-        if (composition) { composition.input(); return; }
-        if ((event as InputEvent).isComposing) return;
+        if (compositionForControl()) return;
+        if ((event as InputEvent).isComposing && tracksComposition()) return;
         if (!this.host.updateWritingDraft({ [field]: control.value }, this.scratchRevision, this.viewId)) this.syncStudio();
       });
       control.addEventListener('compositionstart', () => {
-        if (!this.isStudioControl(control)) return;
-        if (this.host.beginWritingDraftComposition(this.viewId, this.scratchRevision)) this.scratchComposition = new DraftComposition(control);
+        if (!this.isStudioControl(control) || !tracksComposition()) return;
+        if (this.host.beginWritingDraftComposition(this.viewId, this.scratchRevision)) {
+          this.scratchComposition?.dispose();
+          this.scratchComposition = new DraftComposition(control);
+        }
         this.syncStudio();
       });
-      control.addEventListener('keydown', event => compositionForControl()?.keyDown(event as KeyboardEvent));
-      control.addEventListener('keyup', event => compositionForControl()?.keyUp(event as KeyboardEvent));
+      control.addEventListener('keydown', event => {
+        if (this.isStudioControl(control)) compositionForControl()?.keyDown(event as KeyboardEvent);
+      });
       control.addEventListener('compositionend', () => {
         const composition = compositionForControl();
-        if (!this.isStudioControl(control) || !composition) return;
+        if (!composition) return;
+        if (!this.isStudioControl(control)) {
+          // The control stopped being editable mid-composition. Drop the tracking and lease so neither lingers.
+          composition.dispose();
+          this.scratchComposition = undefined;
+          this.host.endWritingDraftComposition(this.viewId);
+          return;
+        }
         if (!this.host.access.canUse()) {
           this.host.access.refresh();
           return;
@@ -920,6 +930,7 @@ export class TangrowSidebar extends ItemView {
       this.host.endWritingDraftComposition(this.viewId);
     }
     this.scratchEditor = undefined;
+    this.scratchComposition?.dispose();
     this.scratchComposition = undefined;
     this.scratchTitleInput = undefined;
     this.scratchSaveButton = undefined;
@@ -936,8 +947,9 @@ export class TangrowSidebar extends ItemView {
     const title = this.scratchTitleInput;
     if (!editor || !title) return;
     if (!editor.readOnly || this.host.loadWritingDraft().editingView === this.viewId) {
-      this.scratchComposition?.restoreIfCancelled();
+      this.scratchComposition?.restoreIfInterrupted();
       this.host.updateWritingDraft({ text: editor.value, title: title.value }, this.scratchRevision, this.viewId);
+      this.scratchComposition?.dispose();
       this.scratchComposition = undefined;
       this.host.endWritingDraftComposition(this.viewId);
     }

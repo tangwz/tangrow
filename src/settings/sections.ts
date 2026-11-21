@@ -38,9 +38,17 @@ export function settingRows(plugin: TangrowPlugin, section: SectionId): SettingR
   };
 }
 
-export function renderSection(container: HTMLElement, id: Exclude<SectionId, 'activation'>, plugin: TangrowPlugin, refresh: () => void): () => void {
+export interface RenderedSection {
+  /** Re-reads access and updates the read-only preview. */
+  refresh(): void;
+  /** Commits valid edits that were not saved yet, before the section is hidden or replaced. */
+  dispose(): void;
+}
+
+export function renderSection(container: HTMLElement, id: Exclude<SectionId, 'activation'>, plugin: TangrowPlugin, refresh: () => void): RenderedSection {
   const t = plugin.t.bind(plugin);
   const rows = settingRows(plugin, id);
+  const pending: (() => void)[] = [];
   if (id === 'guide') {
     const row = rows.row(container, 'tutorial');
     row.controlEl.createEl('a', {
@@ -48,11 +56,11 @@ export function renderSection(container: HTMLElement, id: Exclude<SectionId, 'ac
       href: 'https://github.com/tangwz/tangrow#%E4%BD%BF%E7%94%A8%E6%96%B9%E5%BC%8F',
       attr: { target: '_blank', rel: 'noopener noreferrer' }
     });
-    return () => {};
+    return { refresh: () => {}, dispose: () => {} };
   }
   if (id === 'purchase') {
     for (const item of ITEMS.filter((item) => item.section === id)) rows.row(container, item.id);
-    return () => {};
+    return { refresh: () => {}, dispose: () => {} };
   }
 
   const hint = container.createEl('p', { cls: 'tangrow-settings-gate', attr: { role: 'status' } });
@@ -126,17 +134,21 @@ export function renderSection(container: HTMLElement, id: Exclude<SectionId, 'ac
       return value;
     };
     // Validate while typing, but save only the committed value: typing 300 must not store 3 and 30 on the way.
-    control.oninput = () => { check(); };
-    control.onchange = async () => {
+    const commit = async () => {
       const inputRevision = ++revision;
       const value = check();
-      if (value === null || !canEdit()) return;
+      if (value === null || value === get() || !canEdit()) return;
       try { await save(value); }
       catch (failure) {
         if (inputRevision === revision) control.value = String(get());
         presentError(failure);
       }
     };
+    control.oninput = () => { check(); };
+    control.onchange = commit;
+    // Closing settings can remove a focused field without a change event, so leaving the section commits too.
+    control.onblur = commit;
+    pending.push(() => { void commit(); });
   }
 
   function folder(key: FolderSettingKey, parent?: HTMLElement): void {
@@ -243,7 +255,7 @@ export function renderSection(container: HTMLElement, id: Exclude<SectionId, 'ac
       break;
   }
   updateGate();
-  return updateGate;
+  return { refresh: updateGate, dispose: () => { for (const commit of pending) commit(); } };
 }
 
 export function wholeMinutes(value: string, max: number): number | null {

@@ -80,7 +80,7 @@ interface Harness {
   FileView: typeof MockFileView;
   ItemView: typeof MockItemView;
   notices: string[];
-  Platform: { isDesktopApp: boolean; isMacOS: boolean };
+  Platform: { isDesktopApp: boolean; isMacOS: boolean; isMobile?: boolean };
   openCaptureWindow(app: unknown, host: unknown): Promise<void>;
 }
 
@@ -103,7 +103,7 @@ interface TestSidebar {
   scratchRevision: number;
   scratchEditor?: DraftControl;
   scratchTitleInput?: DraftControl;
-  scratchComposition?: { control: DraftControl };
+  scratchComposition?: { control: DraftControl; dispose(): void };
   contentEl: { empty(): void };
   onOpen(): Promise<void>;
   onClose(): Promise<void>;
@@ -935,7 +935,7 @@ test('IME composition protects pending input from remote updates and cleanup rel
       first.scratchEditor = firstControl;
       second.scratchEditor = secondControl;
       assert.equal(plugin.beginWritingDraftComposition(first.viewId, first.scratchRevision), true);
-      first.scratchComposition = { control: firstControl };
+      first.scratchComposition = { control: firstControl, dispose() {} };
       assert.equal(firstControl.readOnly, false);
       assert.equal(secondControl.readOnly, true);
       firstControl.value = 'The uncommitted composition text.';
@@ -990,7 +990,8 @@ class StudioElement extends EventTarget {
   selectionEnd = 0;
   selectionDirection = 'none' as const;
   scrollTop = 0;
-  ownerDocument = { activeElement: null };
+  // A document that dispatches events, so a press outside a composing control can be simulated.
+  ownerDocument = Object.assign(new EventTarget(), { activeElement: null });
   createDiv(): StudioElement { return new StudioElement(); }
   createEl(): StudioElement { return new StudioElement(); }
   createSpan(): StudioElement { return new StudioElement(); }
@@ -1774,7 +1775,7 @@ test('Scratchpad language refresh keeps the composing inputs and editing lease w
       querySelector: (): null => null
     };
     Object.assign(view, {
-      section: 'compose', composeTab: 'scratchpad', scratchComposition: { control: text }, contentEl: content,
+      section: 'compose', composeTab: 'scratchpad', scratchComposition: { control: text, dispose() {} }, contentEl: content,
       workspacePane: { querySelectorAll: () => [] },
       pane: { contains: (control: unknown) => control === text || control === title, querySelectorAll: () => [] },
       setupBanner: { empty: () => undefined }, studioHeading: heading, studioCaption: caption,
@@ -1826,7 +1827,7 @@ test('plugin unload discards pending IME text while preserving the other field',
     view.scratchEditor = text;
     view.scratchTitleInput = title;
     assert.equal(plugin.beginWritingDraftComposition(view.viewId, view.scratchRevision), true);
-    view.scratchComposition = { control: text };
+    view.scratchComposition = { control: text, dispose() {} };
     text.value = 'The latest IME body not yet published by an input event.';
     title.value = 'The latest unpublished title';
     const previousLeaves = app.workspace.getLeavesOfType;
@@ -2011,7 +2012,8 @@ test('capture preedit stays in its window until commit, and closing discards an 
     await plugin.writes;
     assert.equal((plugin.savedData as { composer: ComposerState }).composer.capture, committed);
 
-    editor.dispatchEvent(Object.assign(new Event('keyup'), { key: 't', isComposing: true }));
+    // Pressing the close button elsewhere ends composition before the view closes.
+    editor.ownerDocument.dispatchEvent(new Event('pointerdown'));
     editor.dispatchEvent(Object.assign(new Event('compositionend'), { data: 'preedit' }));
     assert.equal(editor.value, committed);
     popout.destroy();
@@ -2042,6 +2044,75 @@ test('capture preedit stays in its window until commit, and closing discards an 
     assert.equal(captureFiles(app)[0]?.content.endsWith(committed + ' selected candidate\n'), true);
     popout.destroy();
     sidebar.destroy();
+  });
+});
+
+test('capture keeps a commit that leaves the text unchanged and ends only interrupted compositions', async () => {
+  await withWindow(async () => {
+    const { plugin } = createPlugin();
+    const panel = new harness.CapturePanel(plugin, 'window');
+    panel.mount(new GateElement());
+    const editor = panel.editor;
+    const compose = (text: string) => {
+      editor.dispatchEvent(new Event('compositionstart'));
+      editor.value = text;
+      editor.dispatchEvent(new Event('input'));
+      editor.dispatchEvent(Object.assign(new Event('keyup'), { key: 'Process', isComposing: true }));
+    };
+    const keydown = (fields: Record<string, unknown>) => editor.dispatchEvent(Object.assign(new Event('keydown'), { isComposing: true, ...fields }));
+    // Windows IMEs report commit keys as Process, and Shift commits Latin text exactly as composed.
+    for (const [text, key] of [['nihao', { key: 'Process' }], ['nihao shift', { key: 'Shift', shiftKey: true }]] as const) {
+      compose(text);
+      keydown(key);
+      editor.dispatchEvent(new Event('compositionend'));
+      assert.equal(plugin.loadComposer().capture, text);
+      assert.equal(editor.value, text);
+    }
+    // A Japanese IME reverts only the conversion on Escape; typing on and confirming keeps the result.
+    compose('nihao shift きょう');
+    keydown({ key: 'Escape', code: 'Escape' });
+    keydown({ key: 'Process' });
+    editor.value = 'nihao shift 京';
+    editor.dispatchEvent(new Event('input'));
+    keydown({ key: 'Enter' });
+    editor.dispatchEvent(new Event('compositionend'));
+    assert.equal(plugin.loadComposer().capture, 'nihao shift 京');
+    // A shortcut such as closing the view interrupts the composition, so its preedit is dropped.
+    compose('nihao shift 京 unfinished');
+    keydown({ key: 'w', metaKey: true });
+    editor.dispatchEvent(new Event('compositionend'));
+    assert.equal(plugin.loadComposer().capture, 'nihao shift 京');
+    assert.equal(editor.value, 'nihao shift 京');
+    panel.destroy();
+  });
+});
+
+test('on mobile, the word a keyboard is still composing is saved and can be submitted', async () => {
+  await withWindow(async () => {
+    const previous = harness.Platform.isMobile;
+    harness.Platform.isMobile = true;
+    try {
+      const { plugin } = createPlugin();
+      plugin.settings.language = 'en';
+      const panel = new harness.CapturePanel(plugin, 'window');
+      const root = new GateElement();
+      panel.mount(root);
+      const editor = panel.editor;
+      editor.dispatchEvent(new Event('compositionstart'));
+      editor.value = 'buy milk';
+      editor.dispatchEvent(Object.assign(new Event('input'), { isComposing: true }));
+      editor.dispatchEvent(Object.assign(new Event('keyup'), { key: 'Unidentified', isComposing: true }));
+      assert.equal(plugin.loadComposer().capture, 'buy milk');
+      const save = root.all().find(el => el.getAttribute('aria-label') === 'Save capture');
+      assert.equal(save?.disabled, false);
+      // Tapping elsewhere ends the composition without discarding the word.
+      editor.ownerDocument.dispatchEvent(new Event('pointerdown'));
+      editor.dispatchEvent(new Event('compositionend'));
+      assert.equal(editor.value, 'buy milk');
+      assert.equal(plugin.loadComposer().capture, 'buy milk');
+      panel.destroy();
+      assert.equal(plugin.loadComposer().capture, 'buy milk');
+    } finally { harness.Platform.isMobile = previous; }
   });
 });
 

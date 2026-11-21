@@ -3,7 +3,7 @@ import { Notice, setIcon, setTooltip } from 'obsidian';
 import { captureCalendar, captureDay, groupCapturesByDay, shiftCaptureMonth } from './capture-data';
 import { capturePreview } from './capture-preview';
 import { CaptureProcessingModal } from './capture-processing-modal';
-import { DraftComposition } from './draft-composition';
+import { DraftComposition, tracksComposition } from './draft-composition';
 import { describeError, translate } from './i18n';
 import type { TranslationValues } from './i18n';
 import type { CaptureSummary, SidebarHost } from './types';
@@ -100,22 +100,27 @@ export class CapturePanel {
     editor.value = this.syncedCapture = this.host.loadComposer().capture;
     const canEdit = () => this.mounted && this.editor === editor && editor.isConnected && !editor.readOnly && !this.protecting;
     editor.addEventListener('compositionstart', () => {
-      if (!canEdit()) return;
+      if (!canEdit() || !tracksComposition()) return;
+      this.composition?.dispose();
       this.composition = new DraftComposition(editor);
       this.updateComposerControls();
     });
     editor.addEventListener('compositionend', () => {
       const composition = this.composition;
-      if (!canEdit() || composition?.control !== editor) return;
+      if (!canEdit()) return;
       if (this.rescueIfAccessEnded()) return;
-      this.composition = undefined;
-      if (composition.finish()) this.host.saveComposer({ capture: editor.value });
+      if (composition?.control === editor) {
+        this.composition = undefined;
+        if (composition.finish()) this.host.saveComposer({ capture: editor.value });
+      } else {
+        // An untracked composition (mobile, or one that began while the control was read-only) ends as ordinary input.
+        this.host.saveComposer({ capture: editor.value });
+      }
       this.syncComposer();
     });
     editor.addEventListener('input', event => {
-      if (!canEdit()) return;
-      if (this.composition) { this.composition.input(); return; }
-      if ((event as InputEvent).isComposing) return;
+      if (!canEdit() || this.composition) return;
+      if ((event as InputEvent).isComposing && tracksComposition()) return;
       this.host.saveComposer({ capture: editor.value });
       this.updateComposerControls();
     });
@@ -126,9 +131,6 @@ export class CapturePanel {
         event.preventDefault();
         this.saveButton?.click();
       }
-    });
-    editor.addEventListener('keyup', event => {
-      if (canEdit()) this.composition?.keyUp(event);
     });
     if (this.surface === 'sidebar') {
       composer.addClass('tangrow-composer-with-popout');
@@ -242,6 +244,7 @@ export class CapturePanel {
     this.gate?.dispose();
     this.gate = undefined;
     this.mounted = false;
+    this.composition?.dispose();
     this.composition = undefined;
     this.unsubscribe?.();
     this.unsubscribeComposer?.();
@@ -305,7 +308,7 @@ export class CapturePanel {
     // Snapshot every window before changing readOnly or notifying a shared composer listener.
     const buffers = new Map<string, CapturePanel>();
     for (const { panel, editor } of editors) {
-      panel.composition?.restoreIfCancelled();
+      panel.composition?.restoreIfInterrupted();
       if (editor.value && !buffers.has(editor.value)) buffers.set(editor.value, panel);
     }
     const shared = this.host.loadComposer().capture;
@@ -315,6 +318,7 @@ export class CapturePanel {
       if (locked) {
         for (const { panel, editor } of editors) {
           editor.readOnly = true;
+          panel.composition?.dispose();
           panel.composition = undefined;
         }
       }

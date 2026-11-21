@@ -237,6 +237,29 @@ test('selecting a weekly template result opens Defaults, expands the group, and 
   dispose();
 });
 
+test('a valid integer that was typed but not committed is saved when settings move on or close', async () => {
+  const { plugin, row, navigate, byText, dispose } = fixture();
+  navigate('Sidebar components');
+  let duration = row('focusMinutes').querySelector('input')!;
+  duration.value = '45';
+  await duration.oninput?.();
+  assert.equal(plugin.saveCalls, 0);
+  // Leaving the section replaces the field without a change event.
+  byText('Back to settings').click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(plugin.settings.focusMinutes, 45);
+  assert.equal(plugin.saveCalls, 1);
+  navigate('Sidebar components');
+  duration = row('focusMinutes').querySelector('input')!;
+  duration.value = '50';
+  await duration.oninput?.();
+  // Closing the settings window hides the tab.
+  dispose();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(plugin.settings.focusMinutes, 50);
+  assert.equal(plugin.saveCalls, 2);
+});
+
 test('valid integers save when committed, out of range values show a hint, and access changes lock editing', async () => {
   const { plugin, root, row, access, navigate, byText, dispose } = fixture();
   navigate('Sidebar components');

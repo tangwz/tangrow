@@ -123,9 +123,11 @@ export class TangrowSettings extends PluginSettingTab {
         };
       } else {
         const section = this.section;
-        this.refreshAccess = renderSection(page, section, this.host, () => {
+        const rendered = renderSection(page, section, this.host, () => {
           if (this.visible && this.section === section) this.render();
         });
+        this.refreshAccess = rendered.refresh;
+        this.disposeSection = rendered.dispose;
       }
     } else {
       page.createEl('h2', { text: 'Tangrow', attr: { tabindex: '-1' } });
