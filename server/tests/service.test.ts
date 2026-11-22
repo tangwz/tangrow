@@ -229,17 +229,26 @@ test('activation counters are independent and normalized aliases share the daily
   token(await activate(device(1)));
 });
 
-test('renewal is limited per lease without blocking release', async () => {
-  const { activate, advance, call } = setup();
-  const lease = token(await activate(device(1)));
-  for (let count = 0; count < 5; count += 1) token(await call('renew', { lease }));
+test('renewals share a binding budget across signatures without blocking other devices or release', async () => {
+  const { activate, advance, call, store } = setup();
+  let lease = token(await activate(device(1)));
+  const other = token(await activate(device(2)));
+  for (let count = 0; count < 5; count += 1) {
+    advance(1000);
+    const next = token(await call('renew', { lease }));
+    assert.notEqual(next, lease);
+    lease = next;
+  }
+  store.unavailable = true;
   assert.deepEqual(await call('renew', { lease }), { status: 429, body: { error: 'rate_limited' } });
+  store.unavailable = false;
+  token(await call('renew', { lease: other }));
+  token(await call('release', { lease }));
   advance(3600 * 1000);
   token(await call('renew', { lease }));
-  token(await call('release', { lease }));
 });
 
-test('release is limited per lease so a copied lease cannot drain the Feishu quota', async () => {
+test('release has a separate budget per binding', async () => {
   const { activate, advance, call } = setup();
   const lease = token(await activate(device(1)));
   for (let count = 0; count < 5; count += 1) token(await call('release', { lease }));

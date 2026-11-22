@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { codeDigest, DAY_SECONDS, PRODUCT, signLease, verifyLease } from '../src/license/format.js';
 import type { Lease, PublicKeys } from '../src/license/format.js';
 import { digestPattern, isObject, isPlatform } from './store.js';
@@ -127,9 +126,7 @@ export class LicenseService {
 
     const renewalPlatform = action === 'renew' ? input.platform : undefined;
     if (renewalPlatform !== undefined && !isPlatform(renewalPlatform)) return failure('bad_request');
-    // Each lease gets its own budget per action, so retried renewals never block a release.
-    const leaseDigest = createHash('sha256').update(input.lease).digest('hex');
-    if (!this.limits.allow(action + ':' + leaseDigest, 5, hourMs, this.now())) return failure('rate_limited');
+    if (!this.limits.allow(`${action}:${lease.lic}:${lease.dev}`, 5, hourMs, this.now())) return failure('rate_limited');
 
     return this.withLicense(lease.lic, signal, async () => {
       const license = await this.store.findLicenseById(lease.lic, signal);
