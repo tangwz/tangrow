@@ -31,20 +31,30 @@ export class DraftComposition {
   private readonly direction: DraftControl['selectionDirection'];
   private readonly scrollTop: number;
   private escaped = false;
-  private blurred = false;
+  private focusState: 'uninterrupted' | 'blurred' | 'refocused' = 'uninterrupted';
   private confirmationKey?: string;
-  private committedInput = false;
+  private explicitCommit = false;
   private onSettled?: (confirmed: boolean) => void;
-  private readonly onBlur = () => { this.blurred = true; };
+  private readonly onBlur = () => {
+    this.focusState = 'blurred';
+    this.confirmationKey = undefined;
+    this.explicitCommit = false;
+  };
+  private readonly onFocus = () => {
+    // Returning after compositionend cannot revive a candidate dismissed by focus loss.
+    if (this.focusState === 'blurred' && !this.onSettled) this.focusState = 'refocused';
+  };
   private readonly onKeyUp = (event: Event) => {
     const key = event as KeyboardEvent;
     if (!this.confirmationKey || (key.code || key.key) !== this.confirmationKey) return;
     this.confirmationKey = undefined;
-    if (!key.isComposing) this.flush();
+    if (key.isComposing) return;
+    if (this.focusState === 'refocused') this.explicitCommit = true;
+    this.flush();
   };
   private readonly onInput = (event: Event) => {
-    if ((event as InputEvent).inputType !== 'insertFromComposition') return;
-    this.committedInput = true;
+    if ((event as InputEvent).inputType !== 'insertFromComposition' || this.focusState === 'blurred') return;
+    this.explicitCommit = true;
     this.flush();
   };
   private readonly onBeforeInput = (event: Event) => {
@@ -59,6 +69,7 @@ export class DraftComposition {
     this.direction = control.selectionDirection;
     this.scrollTop = control.scrollTop;
     control.addEventListener('blur', this.onBlur);
+    control.addEventListener('focus', this.onFocus);
     control.addEventListener('beforeinput', this.onBeforeInput);
     control.addEventListener('keyup', this.onKeyUp);
     control.addEventListener('input', this.onInput);
@@ -70,7 +81,7 @@ export class DraftComposition {
       return;
     }
     const key = event.code || event.key;
-    this.confirmationKey = event.isComposing && !event.metaKey && !event.altKey &&
+    this.confirmationKey = this.focusState !== 'blurred' && event.isComposing && !event.metaKey && !event.altKey &&
       (!event.ctrlKey || key === 'Space' || key === ' ') &&
       /^(Enter|NumpadEnter|Space| |Shift(Left|Right)?|Digit[0-9]|[0-9])$/.test(key) ? key : undefined;
     if (event.key === 'Escape' || event.code === 'Escape') {
@@ -86,7 +97,7 @@ export class DraftComposition {
   /** Calls `done` once focus changes from the same action have been dispatched. */
   settle(done: (confirmed: boolean) => void): void {
     this.onSettled = done;
-    if (this.committedInput) this.flush();
+    if (this.explicitCommit) this.flush();
     else compositionTiming.later(() => this.flush(), this.control.ownerDocument.defaultView ?? window);
   }
 
@@ -95,7 +106,7 @@ export class DraftComposition {
     const done = this.onSettled;
     if (!done) return undefined;
     this.onSettled = undefined;
-    const confirmed = !this.escaped && !this.blurred && this.control.isConnected;
+    const confirmed = !this.escaped && this.control.isConnected && (this.focusState === 'uninterrupted' || this.explicitCommit);
     done(confirmed);
     return confirmed;
   }
@@ -116,6 +127,7 @@ export class DraftComposition {
   dispose(): void {
     this.onSettled = undefined;
     this.control.removeEventListener('blur', this.onBlur);
+    this.control.removeEventListener('focus', this.onFocus);
     this.control.removeEventListener('beforeinput', this.onBeforeInput);
     this.control.removeEventListener('keyup', this.onKeyUp);
     this.control.removeEventListener('input', this.onInput);

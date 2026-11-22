@@ -2254,6 +2254,68 @@ test('a popout closed immediately after an explicit native commit keeps the sele
   });
 });
 
+function refocusScenarios() {
+  const dispatch = (type: string, fields = {}) => (control: StudioElement) => {
+    control.dispatchEvent(Object.assign(new Event(type), fields));
+  };
+  const blur = dispatch('blur');
+  const focus = dispatch('focus');
+  const end = dispatch('compositionend');
+  const finalInput = dispatch('input', { inputType: 'insertFromComposition' });
+  const pressSpace = dispatch('keydown', { key: 'Process', code: 'Space', isComposing: true });
+  const releaseSpace = dispatch('keyup', { key: ' ', code: 'Space', isComposing: false });
+  const releaseEnter = dispatch('keyup', { key: 'Enter', code: 'Enter', isComposing: false });
+  const pressArrow = dispatch('keydown', { key: 'ArrowDown', isComposing: true });
+  const select = (control: StudioElement) => { control.value = 'Original selected'; };
+  return [
+    { name: 'matching confirmation key', keep: true, steps: [blur, focus, pressSpace, select, end, releaseSpace] },
+    { name: 'matching key release before end', keep: true, steps: [blur, focus, pressSpace, select, releaseSpace, end] },
+    { name: 'final input before end', keep: true, steps: [blur, focus, select, finalInput, end] },
+    { name: 'final input after end', keep: true, steps: [blur, focus, end, select, finalInput] },
+    { name: 'late end alone', keep: false, steps: [blur, focus, end] },
+    { name: 'focus loss during settlement', keep: false, steps: [end, blur, focus] },
+    { name: 'late final input after focus loss during settlement', keep: false, steps: [end, blur, focus, finalInput] },
+    { name: 'release from before focus loss', keep: false, steps: [pressSpace, blur, focus, end, releaseSpace] },
+    { name: 'unmatched confirmation key', keep: false, steps: [blur, focus, pressSpace, end, releaseEnter] },
+    { name: 'candidate navigation without confirmation', keep: false, steps: [blur, focus, pressArrow, end] },
+    { name: 'second focus loss before confirmation', keep: false, steps: [blur, focus, pressSpace, blur, focus, end, releaseSpace] },
+    { name: 'final input from before a second focus loss', keep: false, steps: [blur, focus, finalInput, blur, focus, end] }
+  ];
+}
+
+for (const { name, keep, steps } of refocusScenarios()) test(`IME refocus: ${name}`, async t => {
+  await withWindow(async timers => {
+    const previous = harness.compositionTiming.later;
+    harness.compositionTiming.later = nativeCompositionTiming;
+    try {
+      const { plugin } = createPlugin();
+      plugin.saveComposer({ capture: 'Original' });
+      plugin.updateWritingDraft({ text: 'Original', title: 'Original' }, 0);
+      const panel = new harness.CapturePanel(plugin, 'window');
+      panel.mount(new GateElement());
+      const studio = await mountedStudio(plugin);
+      for (const [field, control, shared] of [
+        ['capture', panel.editor, () => plugin.loadComposer().capture],
+        ['title', studio.scratchTitleInput as unknown as StudioElement, () => plugin.loadWritingDraft().title],
+        ['body', studio.scratchEditor as unknown as StudioElement, () => plugin.loadWritingDraft().text]
+      ] as const) {
+        await t.test(field, () => {
+          control.dispatchEvent(new Event('compositionstart'));
+          control.value = 'Original preedit';
+          control.dispatchEvent(Object.assign(new Event('input'), { inputType: 'insertCompositionText', isComposing: true }));
+          assert.equal(shared(), 'Original');
+          for (const step of steps) step(control);
+          timers.flush();
+          const expected = keep ? 'Original selected' : 'Original';
+          assert.deepEqual([control.value, shared()], [expected, expected]);
+        });
+      }
+      panel.destroy();
+      await studio.onClose();
+    } finally { harness.compositionTiming.later = previous; }
+  });
+});
+
 test('a popout keeps composition pending across an intervening timer before the window blurs', async () => {
   await withWindow(async () => {
     const previous = harness.compositionTiming.later;
