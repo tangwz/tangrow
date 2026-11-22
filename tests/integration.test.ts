@@ -995,7 +995,7 @@ class StudioElement extends EventTarget {
   selectionDirection = 'none' as const;
   scrollTop = 0;
   // A document that dispatches events, so a press outside a composing control can be simulated.
-  ownerDocument = Object.assign(new EventTarget(), { activeElement: null });
+  ownerDocument = Object.assign(new EventTarget(), { activeElement: null, hasFocus: () => true });
   createDiv(): StudioElement { return new StudioElement(); }
   createEl(): StudioElement { return new StudioElement(); }
   createSpan(): StudioElement { return new StudioElement(); }
@@ -2313,6 +2313,80 @@ for (const { name, keep, steps } of refocusScenarios()) test(`IME refocus: ${nam
       panel.destroy();
       await studio.onClose();
     } finally { harness.compositionTiming.later = previous; }
+  });
+});
+
+test('returning to a Mac draft with a cancelled preedit offers one hint and preserves ordinary input', async t => {
+  t.mock.method(harness.compositionTiming, 'later', nativeCompositionTiming);
+  const previous = harness.Platform.isMacOS;
+  harness.Platform.isMacOS = true;
+  t.after(() => { harness.Platform.isMacOS = previous; });
+  await withWindow(async timers => {
+    const { plugin } = createPlugin();
+    plugin.settings.language = 'en';
+    const panel = new harness.CapturePanel(plugin, 'window');
+    panel.mount(new GateElement());
+    const studio = await mountedStudio(plugin);
+    for (const [control, shared] of [
+      [panel.editor, () => plugin.loadComposer().capture],
+      [studio.scratchTitleInput as unknown as StudioElement, () => plugin.loadWritingDraft().title],
+      [studio.scratchEditor as unknown as StudioElement, () => plugin.loadWritingDraft().text]
+    ] as const) {
+      for (const text of [' ', '1', '\u4f60']) {
+        const baseline = 'Original';
+        control.value = baseline;
+        control.dispatchEvent(new Event('input'));
+        control.dispatchEvent(new Event('compositionstart'));
+        control.value += 'ni';
+        control.dispatchEvent(Object.assign(new Event('compositionend'), { data: 'ni' }));
+        control.dispatchEvent(new Event('blur'));
+        Object.assign(control.ownerDocument, { activeElement: null });
+        const firstNotice = harness.notices.length;
+        if (text === '1') timers.flush();
+        assert.equal(harness.notices.length, firstNotice);
+        Object.assign(control.ownerDocument, { activeElement: control });
+        control.dispatchEvent(new Event('focus'));
+        const before = Object.assign(new Event('beforeinput', { cancelable: true }), { inputType: 'insertText', data: text, isComposing: false });
+        assert.ok(control.dispatchEvent(before));
+        control.value += text;
+        control.dispatchEvent(Object.assign(new Event('input'), { inputType: 'insertText', data: text }));
+        timers.flush();
+        assert.deepEqual([control.value, shared()], [baseline + text, baseline + text]);
+        control.dispatchEvent(new Event('blur'));
+        control.dispatchEvent(new Event('focus'));
+        assert.deepEqual(harness.notices.slice(firstNotice), ['Composition ended when focus moved. Start composing again to choose a candidate with the keyboard.']);
+      }
+    }
+    panel.destroy();
+    await studio.onClose();
+  });
+});
+
+test('the recomposition hint is limited to discarded Mac preedit on an editable field', async t => {
+  t.mock.method(harness.compositionTiming, 'later', nativeCompositionTiming);
+  const previous = harness.Platform.isMacOS;
+  t.after(() => { harness.Platform.isMacOS = previous; });
+  await withWindow(async timers => {
+    for (const scenario of ['escape', 'confirmed', 'empty', 'closed', 'read-only', 'other platform']) {
+      harness.Platform.isMacOS = scenario !== 'other platform';
+      const { plugin } = createPlugin();
+      const panel = new harness.CapturePanel(plugin, 'window');
+      panel.mount(new GateElement());
+      const editor = panel.editor;
+      const initial = harness.notices.length;
+      editor.dispatchEvent(new Event('compositionstart'));
+      if (scenario !== 'empty') editor.value = 'ni';
+      if (scenario === 'escape') editor.dispatchEvent(Object.assign(new Event('keydown'), { key: 'Escape', isComposing: true }));
+      if (scenario === 'confirmed') editor.dispatchEvent(Object.assign(new Event('input'), { inputType: 'insertFromComposition' }));
+      editor.dispatchEvent(new Event('compositionend'));
+      editor.dispatchEvent(new Event('blur'));
+      timers.flush();
+      if (scenario === 'closed') panel.destroy();
+      if (scenario === 'read-only') editor.readOnly = true;
+      editor.dispatchEvent(new Event('focus'));
+      assert.equal(harness.notices.length, initial, scenario);
+      if (scenario !== 'closed') panel.destroy();
+    }
   });
 });
 

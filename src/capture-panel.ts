@@ -3,7 +3,7 @@ import { Notice, setIcon, setTooltip } from 'obsidian';
 import { captureCalendar, captureDay, groupCapturesByDay, shiftCaptureMonth } from './capture-data';
 import { capturePreview } from './capture-preview';
 import { CaptureProcessingModal } from './capture-processing-modal';
-import { DraftComposition, tracksComposition } from './draft-composition';
+import { DraftComposition, recomposeHint, tracksComposition } from './draft-composition';
 import { describeError, translate } from './i18n';
 import type { TranslationValues } from './i18n';
 import type { CaptureSummary, SidebarHost } from './types';
@@ -100,6 +100,9 @@ export class CapturePanel {
     const editor = this.editor = composer.createEl('textarea', { cls: 'tangrow-textarea', attr: { rows: '6' } });
     editor.value = this.syncedCapture = this.host.loadComposer().capture;
     const canEdit = () => this.mounted && this.editor === editor && editor.isConnected && !editor.readOnly && !this.protecting;
+    const suggestRecomposition = () => {
+      if (canEdit() && this.host.access.canUse()) new Notice(this.t(recomposeHint));
+    };
     editor.addEventListener('compositionstart', () => {
       if (!canEdit() || !tracksComposition()) return;
       this.composition?.flush();
@@ -128,7 +131,7 @@ export class CapturePanel {
           return;
         }
         if (confirmed) this.host.saveComposer({ capture: editor.value });
-        else composition.restore();
+        else composition.restore(suggestRecomposition);
         this.syncComposer();
       };
       if (!canEdit()) finish(false);

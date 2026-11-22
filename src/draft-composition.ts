@@ -2,6 +2,7 @@ import { Platform } from 'obsidian';
 
 type DraftControl = HTMLInputElement | HTMLTextAreaElement;
 const focusChangeGraceMs = 50;
+export const recomposeHint = 'Composition ended when focus moved. Start composing again to choose a candidate with the keyboard.';
 
 /**
  * Android keyboards such as Gboard keep the word being typed as composition text, so on Android that text is the
@@ -112,10 +113,17 @@ export class DraftComposition {
   }
 
   /** Puts back the text and selection from before the composition. */
-  restore(): void {
-    if (this.control.value !== this.value) this.control.value = this.value;
+  restore(onRefocus?: () => void): void {
+    const discardedText = this.control.value !== this.value;
+    if (discardedText) this.control.value = this.value;
     this.control.setSelectionRange(this.start, this.end, this.direction ?? undefined);
     this.control.scrollTop = this.scrollTop;
+    if (!onRefocus || !Platform.isMacOS || !discardedText || this.escaped || this.focusState === 'uninterrupted' ||
+        !this.control.isConnected || this.control.readOnly) return;
+    // Apple Pinyin can leave its candidate window visible after the field has reverted to ordinary typing.
+    const doc = this.control.ownerDocument;
+    if (doc.activeElement === this.control && doc.hasFocus()) onRefocus();
+    else this.control.addEventListener('focus', onRefocus, { once: true });
   }
 
   restoreIfEscaped(): boolean {

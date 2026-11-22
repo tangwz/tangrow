@@ -6,7 +6,7 @@ import type { QuickKind } from './ai';
 import { quickKinds } from './quick-add';
 import type { ActionId, BaseId, Locale, NoteSummary, SidebarHost, Snapshot } from './types';
 import { CapturePanel } from './capture-panel';
-import { DraftComposition, tracksComposition } from './draft-composition';
+import { DraftComposition, recomposeHint, tracksComposition } from './draft-composition';
 import { AiPanel } from './ai-panel';
 import { writingStage } from './card-report-data';
 import { readKnowledgeRecord } from './knowledge-index';
@@ -876,6 +876,9 @@ export class TangrowSidebar extends ItemView {
       const updateField = () => {
         if (!this.host.updateWritingDraft({ [field]: control.value }, this.scratchRevision, this.viewId)) this.syncStudio();
       };
+      const suggestRecomposition = () => {
+        if (this.isStudioControl(control) && this.host.access.canUse()) new Notice(this.ui.t(recomposeHint));
+      };
       control.addEventListener('input', event => {
         if (!this.isStudioControl(control)) return;
         if (compositionForControl()) return;
@@ -926,7 +929,7 @@ export class TangrowSidebar extends ItemView {
           this.scratchComposition = undefined;
           if (this.isStudioControl(control)) {
             if (confirmed) this.host.updateWritingDraft({ [field]: control.value }, this.scratchRevision, this.viewId);
-            else composition.restore();
+            else composition.restore(suggestRecomposition);
           }
           this.host.endWritingDraftComposition(this.viewId);
           this.syncStudio();
