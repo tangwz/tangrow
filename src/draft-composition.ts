@@ -118,8 +118,8 @@ export class DraftComposition {
     if (discardedText) this.control.value = this.value;
     this.control.setSelectionRange(this.start, this.end, this.direction ?? undefined);
     this.control.scrollTop = this.scrollTop;
-    if (!onRefocus || !Platform.isMacOS || !discardedText || this.escaped || this.focusState === 'uninterrupted' ||
-        !this.control.isConnected || this.control.readOnly) return;
+    if (!onRefocus || !Platform.isDesktopApp || !Platform.isMacOS || !discardedText || this.escaped ||
+        this.focusState === 'uninterrupted' || !this.control.isConnected || this.control.readOnly) return;
     // Apple Pinyin can leave its candidate window visible after the field has reverted to ordinary typing.
     const doc = this.control.ownerDocument;
     if (doc.activeElement === this.control && doc.hasFocus()) onRefocus();

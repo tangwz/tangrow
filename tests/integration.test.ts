@@ -2451,9 +2451,12 @@ test('a popout keeps composition pending across an intervening timer before the 
 
 for (const platform of ['android', 'ios'] as const) test(`on ${platform}, capture ${platform === 'android' ? 'saves the word a keyboard is still composing' : 'keeps unconfirmed pinyin out of the draft'}`, async () => {
   await withWindow(async () => {
-    const keys = ['isMobile', 'isAndroidApp', 'isIosApp'] as const;
+    const keys = ['isMobile', 'isDesktopApp', 'isMacOS', 'isAndroidApp', 'isIosApp'] as const;
     const previous = keys.map(key => [key, Object.getOwnPropertyDescriptor(harness.Platform, key)] as const);
-    Object.assign(harness.Platform, { isMobile: true, isAndroidApp: platform === 'android', isIosApp: platform === 'ios' });
+    Object.assign(harness.Platform, {
+      isMobile: true, isDesktopApp: false, isMacOS: platform === 'ios',
+      isAndroidApp: platform === 'android', isIosApp: platform === 'ios'
+    });
     try {
       const { plugin } = createPlugin();
       plugin.settings.language = 'en';
@@ -2467,6 +2470,7 @@ for (const platform of ['android', 'ios'] as const) test(`on ${platform}, captur
       editor.dispatchEvent(Object.assign(new Event('input'), { isComposing: true }));
       const save = root.all().find(el => el.getAttribute('aria-label') === 'Save capture');
       // Tapping elsewhere ends the composition.
+      const noticesBeforeBlur = harness.notices.length;
       editor.dispatchEvent(new Event('blur'));
       if (platform === 'android') {
         assert.equal(plugin.loadComposer().capture, text);
@@ -2481,11 +2485,13 @@ for (const platform of ['android', 'ios'] as const) test(`on ${platform}, captur
         assert.equal(editor.value, '');
         assert.equal(plugin.loadComposer().capture, '');
       }
+      editor.dispatchEvent(new Event('focus'));
+      assert.equal(harness.notices.length, noticesBeforeBlur);
       panel.destroy();
     } finally {
       for (const [key, descriptor] of previous) {
         if (descriptor) Object.defineProperty(harness.Platform, key, descriptor);
-        else delete harness.Platform[key];
+        else Reflect.deleteProperty(harness.Platform, key);
       }
     }
   });
