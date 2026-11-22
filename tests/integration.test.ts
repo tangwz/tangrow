@@ -1081,6 +1081,46 @@ test('IME completion publishes the selected title or body and ordinary input sti
   });
 });
 
+test('Android scratchpad saves the final replacement and ignores a duplicate input', async () => {
+  await withWindow(async timers => {
+    const previous = harness.Platform.isAndroidApp;
+    harness.Platform.isAndroidApp = true;
+    try {
+      const { plugin } = createPlugin();
+      const view = await mountedStudio(plugin);
+      for (const field of ['title', 'text'] as const) {
+        const control = (field === 'title' ? view.scratchTitleInput : view.scratchEditor) as unknown as StudioElement;
+        control.dispatchEvent(new Event('compositionstart'));
+        control.value = 'teh';
+        control.dispatchEvent(Object.assign(new Event('input'), { isComposing: true }));
+        const composing = plugin.loadWritingDraft();
+        assert.equal(composing[field], 'teh');
+
+        control.value = 'the';
+        control.dispatchEvent(new Event('compositionend'));
+        const committed = plugin.loadWritingDraft();
+        assert.equal(committed[field], 'the');
+        assert.equal(committed.revision, composing.revision + 1);
+        timers.flush();
+        await plugin.writes;
+        const saved = plugin.savedData as { scratch: string; composer: ComposerState };
+        assert.equal(field === 'title' ? saved.composer.scratchTitle : saved.scratch, 'the');
+        const writes = plugin.saveCalls;
+
+        control.dispatchEvent(new Event('input'));
+        timers.flush();
+        await plugin.writes;
+        assert.deepEqual(plugin.loadWritingDraft(), committed);
+        assert.equal(plugin.saveCalls, writes);
+      }
+      await view.onClose();
+    } finally {
+      if (previous === undefined) delete harness.Platform.isAndroidApp;
+      else harness.Platform.isAndroidApp = previous;
+    }
+  });
+});
+
 for (const field of ['text', 'title'] as const) test(`Escape discards an IME completion that still contains preedit in the writing ${field}`, async () => {
   await withWindow(async timers => {
     const { plugin } = createPlugin();

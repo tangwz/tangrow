@@ -873,11 +873,14 @@ export class TangrowSidebar extends ItemView {
         const composition = this.scratchComposition;
         return composition?.control === control ? composition : undefined;
       };
+      const updateField = () => {
+        if (!this.host.updateWritingDraft({ [field]: control.value }, this.scratchRevision, this.viewId)) this.syncStudio();
+      };
       control.addEventListener('input', event => {
         if (!this.isStudioControl(control)) return;
         if (compositionForControl()) return;
         if ((event as InputEvent).isComposing && tracksComposition()) return;
-        if (!this.host.updateWritingDraft({ [field]: control.value }, this.scratchRevision, this.viewId)) this.syncStudio();
+        updateField();
       });
       control.addEventListener('compositionstart', () => {
         if (!this.isStudioControl(control) || !tracksComposition()) return;
@@ -894,16 +897,22 @@ export class TangrowSidebar extends ItemView {
       });
       control.addEventListener('compositionend', () => {
         const composition = compositionForControl();
-        if (!composition) return;
         if (!this.isStudioControl(control)) {
+          if (!composition) return;
           // The control stopped being editable mid-composition. Drop the tracking and lease so neither lingers.
           composition.dispose();
           this.scratchComposition = undefined;
           this.host.endWritingDraftComposition(this.viewId);
           return;
         }
+        if (!composition && tracksComposition()) return;
         if (!this.host.access.canUse()) {
           this.host.access.refresh();
+          return;
+        }
+        if (!composition) {
+          // Android keyboards can deliver the final replacement without another input event.
+          updateField();
           return;
         }
         composition.settle(confirmed => {
