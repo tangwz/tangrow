@@ -110,24 +110,29 @@ export class CapturePanel {
     });
     editor.addEventListener('compositionend', () => {
       const composition = this.composition;
-      if (!canEdit()) return;
-      if (this.rescueIfAccessEnded()) return;
       if (composition?.control !== editor) {
+        if (!canEdit() || this.rescueIfAccessEnded()) return;
         // An untracked composition (Android, or one that began while the control was read-only) is ordinary input.
         this.host.saveComposer({ capture: editor.value });
         this.syncComposer();
         return;
       }
-      composition.settle(confirmed => {
-        // A new composition, a lock or closing the view took over in the meantime.
-        if (this.composition !== composition || this.rescueIfAccessEnded()) return;
+      const finish = (confirmed: boolean) => {
+        if (this.composition !== composition) return;
+        if (!this.protecting && !editor.readOnly && this.rescueIfAccessEnded()) return;
         this.composition = undefined;
         composition.dispose();
-        if (!canEdit()) return;
+        if (this.protecting || editor.readOnly) {
+          // Draft protection owns the buffer until its snapshot is complete.
+          this.updateComposerControls();
+          return;
+        }
         if (confirmed) this.host.saveComposer({ capture: editor.value });
         else composition.restore();
         this.syncComposer();
-      });
+      };
+      if (!canEdit()) finish(false);
+      else if (!this.rescueIfAccessEnded()) composition.settle(finish);
     });
     editor.addEventListener('input', event => {
       if (!canEdit() || this.composition) return;

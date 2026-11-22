@@ -2140,6 +2140,47 @@ test('capture keeps commits, including IME toggles and mouse picks, and drops co
   });
 });
 
+test('a reattached capture editor accepts input and saves after an interrupted composition', async () => {
+  await withWindow(async timers => {
+    const previous = harness.compositionTiming.later;
+    harness.compositionTiming.later = nativeCompositionTiming;
+    try {
+      for (const detachBeforeEnd of [true, false]) {
+        const { plugin, app } = createPlugin();
+        plugin.settings.language = 'en';
+        plugin.saveComposer({ capture: 'Original' });
+        const panel = new harness.CapturePanel(plugin, 'window');
+        const root = new GateElement();
+        panel.mount(root);
+        const editor = panel.editor;
+        const save = root.all().find(el => el.getAttribute('aria-label') === 'Save capture');
+        assert.ok(save);
+        editor.dispatchEvent(new Event('compositionstart'));
+        editor.value += ' preedit';
+        assert.equal(save.disabled, true);
+        if (detachBeforeEnd) editor.isConnected = false;
+        editor.dispatchEvent(new Event('compositionend'));
+        editor.isConnected = false;
+        timers.flush();
+        editor.isConnected = true;
+        assert.equal(save.disabled, false);
+        assert.equal(editor.value, 'Original');
+        assert.equal(plugin.loadComposer().capture, 'Original');
+
+        editor.value += ' continued';
+        editor.dispatchEvent(new Event('input'));
+        assert.equal(plugin.loadComposer().capture, 'Original continued');
+        await root.clickButton('Save capture');
+        const files = captureFiles(app);
+        assert.equal(files.length, 1);
+        assert.ok(files[0]!.content.endsWith('Original continued\n'));
+        assert.equal(plugin.loadComposer().capture, '');
+        panel.destroy();
+      }
+    } finally { harness.compositionTiming.later = previous; }
+  });
+});
+
 test('an immediate save after compositionend submits the current capture exactly once', async () => {
   await withWindow(async timers => {
     const previous = harness.compositionTiming.later;
