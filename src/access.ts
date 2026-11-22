@@ -289,7 +289,9 @@ export class Access {
       }
       const list = deviceList(parsed);
       if (!list || typeof parsed.lease !== 'string') return fail('invalid_response');
-      const payload = verifyLease(parsed.lease, this.deps.keys);
+      let payload: Lease;
+      try { payload = verifyLease(parsed.lease, this.deps.keys); }
+      catch { return fail('invalid_response'); }
       if (payload.dev !== dev || (current && (payload.lic !== current.payload.lic || payload.iat < current.payload.iat))) return fail('invalid_response');
       if (payload.st === 'active') {
         const clock = this.clock(this.deps.now());

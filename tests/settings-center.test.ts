@@ -261,6 +261,25 @@ test('a valid integer that was typed but not committed is saved when settings mo
   assert.equal(plugin.saveCalls, 2);
 });
 
+test('an earlier integer save failure does not replace an uncommitted edit', async () => {
+  const { plugin, row, navigate, dispose } = fixture();
+  navigate('Sidebar components');
+  const field = row('focusMinutes').querySelector('input')!;
+  const saveSettings = plugin.saveSettings;
+  let reject!: (reason: Error) => void;
+  plugin.saveSettings = () => new Promise<void>((_, fail) => { reject = fail; });
+  field.value = '90';
+  field.oninput?.();
+  const pending = field.onchange?.();
+  field.value = '120';
+  field.oninput?.();
+  reject(new Error('Save failed'));
+  await pending;
+  assert.equal(field.value, '120');
+  plugin.saveSettings = saveSettings;
+  dispose();
+});
+
 test('change, blur and leaving the section save one edit once', async () => {
   const { plugin, row, navigate, byText, dispose } = fixture();
   navigate('Sidebar components');

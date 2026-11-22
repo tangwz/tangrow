@@ -62,7 +62,7 @@ console.log(JSON.stringify({ [kid]: key }));
 JS
 ```
 
-把生产公钥与服务 HTTPS 地址配置进插件的 [access.ts](../src/access.ts)，发布前核对 `kid` 和实际签名密钥对应。常规轮换先发布同时内置新旧公钥的插件，待用户升级后再更换服务器的 `kid` 和 `seedHex`，在 `signing.previousPublicKeys` 保留旧 `kid` 到原始 32 字节 base64url 公钥的映射。旧签名仍用于验证续期和解绑，新返回的租约全部用新密钥签发。
+把生产公钥与服务 HTTPS 地址配置进插件的 [client.json](../src/license/client.json)，发布前核对 `kid` 和实际签名密钥对应。常规轮换先发布同时内置新旧公钥的插件，待用户升级后再更换服务器的 `kid` 和 `seedHex`，在 `signing.previousPublicKeys` 保留旧 `kid` 到原始 32 字节 base64url 公钥的映射。旧签名仍用于验证续期和解绑，新返回的租约全部用新密钥签发。
 
 轮换 30 天后，原有租约已超过最长离线有效期。继续保留旧验证公钥能让长期离线用户用过期租约续期。移除旧公钥后，这些用户需要再次输入兑换码。私钥泄露时立即替换签名配置并移除泄露密钥对应的验证公钥，同时发布移除该公钥的插件。
 

@@ -220,6 +220,23 @@ test('a full license stays full when another device row lacks only its first act
   });
 });
 
+test('a malformed license identifier or digest names only the affected row', async () => {
+  const config = loadConfig({ TANGROW_LICENSE_SETTINGS: JSON.stringify(settings) }).feishu;
+  const names = config.fields.license;
+  for (const field of [names.id, names.codeDigest]) {
+    const fetcher: typeof fetch = async input => new URL(String(input)).pathname.endsWith('/internal')
+      ? Response.json({ code: 0, tenant_access_token: 'test-token', expire: 7200 })
+      : Response.json({ code: 0, data: { has_more: false, items: [{ record_id: 'repair-row', fields: {
+        [names.id]: vector.payload.lic, [names.codeDigest]: vector.codeDigest, [names.deviceLimit]: 1,
+        [names.status]: defaults.status.active, [field]: { invalid: true },
+      } }] } });
+    const warnings: string[] = [];
+    const store = new FeishuStore(config, fetcher, Date.now, message => warnings.push(message));
+    await assert.rejects(store.findLicenseById(vector.payload.lic, new AbortController().signal));
+    assert.deepEqual(warnings, ['Invalid Feishu license row repair-row']);
+  }
+});
+
 test('duplicate license rows stay unavailable and name the rows to fix', async () => {
   const config = loadConfig({ TANGROW_LICENSE_SETTINGS: JSON.stringify(settings) }).feishu;
   const names = config.fields.license;

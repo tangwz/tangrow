@@ -149,7 +149,7 @@ export function renderSection(container: HTMLElement, id: Exclude<SectionId, 'ac
         if (saving === value) saving = null;
       }
     };
-    control.oninput = () => { check(); };
+    control.oninput = () => { revision++; check(); };
     control.onchange = commit;
     // Closing settings can remove a focused field without a change event, so leaving the section commits too.
     control.onblur = commit;

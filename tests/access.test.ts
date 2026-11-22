@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { IDBFactory } from 'fake-indexeddb';
+import nacl from 'tweetnacl';
 import { Access, type AccessDependencies } from '../src/access';
 import { accessCoordination, INTERACTIVE_TIMEOUT_MS, type AccessCoordination } from '../src/access-coordination';
 import { DAY_SECONDS, deviceDigest, signLease, type Lease } from '../src/license/format';
@@ -154,9 +155,14 @@ test('first activation verifies this device; expired signed leases renew with ro
   assert.equal((await access.activate(vector.code)).ok, false); assert.equal(records.has(leaseKey), false);
   state.request = async () => response(); await access.activate(vector.code);
   state.now = vector.payload.exp * 1000; assert.equal(access.snapshot().state, 'needs_network');
-  deps.keys = { ...deps.keys, 'test-2': vector.publicKey };
+  const rotatedSeed = new Uint8Array(32).fill(18);
+  deps.keys = { ...deps.keys, 'test-2': Buffer.from(nacl.sign.keyPair.fromSeed(rotatedSeed).publicKey).toString('base64url') };
   const iat = state.now / 1000;
-  const next = sign({ kid: 'test-2', iat, rnb: iat + 7 * DAY_SECONDS, exp: iat + 30 * DAY_SECONDS });
+  const rotated = { ...vector.payload, kid: 'test-2', iat, rnb: iat + 7 * DAY_SECONDS, exp: iat + 30 * DAY_SECONDS } as Lease;
+  state.request = async () => response(sign(rotated));
+  assert.deepEqual(await access.renew(), { ok: false, error: 'invalid_response' });
+  assert.equal(records.get(leaseKey), JSON.stringify(vector.lease));
+  const next = signLease(rotated, rotatedSeed);
   state.request = async (path, body) => { assert.equal(path, '/v1/renew'); assert.deepEqual(body, { lease: vector.lease, platform: 'iOS' }); return response(next); };
   assert.ok((await access.renew()).ok); assert.equal(access.snapshot().state, 'active');
 });
@@ -188,7 +194,11 @@ test('unsigned errors, malformed replies and nonmatching signed leases retain th
     { status: 503, text: '{"error":"upstream_unavailable"}' }, { status: 429, text: '{"error":"rate_limited"}' }, { status: 200, text: '<html>' }]) {
     state.request = async () => reply; assert.equal((await access.renew()).ok, false); assert.equal(records.get(leaseKey), JSON.stringify(vector.lease));
   }
-  state.request = async () => { throw new Error('offline'); }; assert.equal((await access.renew()).ok, false); assert.ok(access.canUse());
+  state.request = async () => response(vector.lease + 'x');
+  assert.deepEqual(await access.renew(), { ok: false, error: 'invalid_response' });
+  state.request = async () => { throw new Error('offline'); };
+  assert.deepEqual(await access.renew(), { ok: false, error: 'request_failed' });
+  assert.ok(access.canUse());
 });
 
 test('late responses cannot change access after a timeout or unload, and concurrent activations do not supersede the first', async () => {
@@ -337,6 +347,16 @@ for (const backend of ['Web Locks', 'IndexedDB'] as const) {
     right.access.dispose();
   });
 }
+
+test('IndexedDB can reserve and release activation without a finite performance time origin', async () => {
+  const newWindow = browserWindows('IndexedDB', { timeOrigin: NaN, now: () => 42 });
+  const result = await newWindow().tryActivate(async () => {
+    assert.equal(await newWindow().tryActivate(async () => 'overlap'), null);
+    return 'activated';
+  });
+  assert.equal(result, 'activated');
+  assert.equal(await newWindow().tryActivate(async () => 'released'), 'released');
+});
 
 test('an abandoned IndexedDB reservation expires and its old owner cannot clear a newer reservation', { timeout: 5000 }, async t => {
   let now = Date.now();

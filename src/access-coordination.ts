@@ -54,7 +54,10 @@ export function accessCoordination(win: Window): AccessCoordination {
       // A crashed WebView cannot clear its reservation. Allow another attempt after the request deadline.
       const lifetime = 2 * INTERACTIVE_TIMEOUT_MS;
       const owner = Array.from(win.crypto.getRandomValues(new Uint32Array(4))).join('-');
-      const clock = () => win.performance.timeOrigin + win.performance.now();
+      const clock = () => {
+        const stamp = win.performance && win.performance.timeOrigin + win.performance.now();
+        return Number.isFinite(stamp) ? stamp : Date.now();
+      };
       const deadline = await transaction(win.indexedDB, (current, store) => {
         const now = clock();
         // Allow timestamp rounding across windows while recovering future-dated claims from a prior browser run.

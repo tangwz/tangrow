@@ -158,11 +158,11 @@ export class FeishuStore implements LicenseStore {
       return invalidData();
     }
     const fields = rows[0]!.fields;
-    const id = textField(fields[names.id]);
-    const codeDigest = textField(fields[names.codeDigest]);
+    const id = readText(fields[names.id]);
+    const codeDigest = readText(fields[names.codeDigest]);
     const deviceLimit = fields[names.deviceLimit];
     const choice = fields[names.status];
-    if (!licenseIdPattern.test(id) || !digestPattern.test(codeDigest) || textField(fields[field]) !== value ||
+    if (!id || !licenseIdPattern.test(id) || !codeDigest || !digestPattern.test(codeDigest) || readText(fields[field]) !== value ||
         typeof deviceLimit !== 'number' || !Number.isSafeInteger(deviceLimit) || deviceLimit < 0 ||
         (choice !== status.active && choice !== status.revoked)) {
       this.warn('Invalid Feishu license row ' + rows[0]!.recordId);
