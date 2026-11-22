@@ -1979,6 +1979,7 @@ class GateElement extends StudioElement {
   removeAttribute(key: string): void { this.attributes.delete(key); }
   all(): GateElement[] { return [this, ...this.children.flatMap(child => child.all())]; }
   focus(): void {}
+  click(): void { if (!this.disabled) this.dispatchEvent(new Event('click')); }
   querySelectorAll(tags: string): GateElement[] { return this.all().filter(el => tags.split(',').some(tag => tag.trim() === el.tag)); }
   querySelector(tag: string): GateElement | undefined { return this.all().find(child => child.tag === tag); }
   async clickButton(label: string): Promise<void> {
@@ -2099,6 +2100,79 @@ test('capture keeps commits, including IME toggles and mouse picks, and drops co
   });
 });
 
+test('an immediate save after compositionend submits the current capture exactly once', async () => {
+  await withWindow(async timers => {
+    const previous = harness.compositionTiming.later;
+    harness.compositionTiming.later = nativeCompositionTiming;
+    try {
+      const { plugin, app } = createPlugin();
+      const panel = new harness.CapturePanel(plugin, 'window');
+      panel.mount(new GateElement());
+      const editor = panel.editor;
+      const save = () => {
+        const key = Object.assign(new Event('keydown', { cancelable: true }), { key: 'Enter', metaKey: true });
+        Object.defineProperty(key, 'target', { value: editor });
+        window.dispatchEvent(key);
+        return key.defaultPrevented;
+      };
+      editor.dispatchEvent(new Event('compositionstart'));
+      editor.value = 'Selected candidate';
+      assert.equal(save(), false);
+      editor.dispatchEvent(new Event('compositionend'));
+      assert.equal(save(), true);
+      await new Promise(resolve => setImmediate(resolve));
+      timers.flush();
+      assert.equal(captureFiles(app).length, 1);
+      assert.ok(captureFiles(app)[0]!.content.endsWith('Selected candidate\n'));
+      panel.destroy();
+      assert.equal(save(), false);
+    } finally { harness.compositionTiming.later = previous; }
+  });
+});
+
+test('confirmed studio text survives an immediate focus change or teardown before the grace timer', async () => {
+  await withWindow(async timers => {
+    const previous = harness.compositionTiming.later;
+    harness.compositionTiming.later = nativeCompositionTiming;
+    try {
+      for (const action of ['blur', 'close'] as const) {
+        const { plugin } = createPlugin();
+        const view = await mountedStudio(plugin);
+        const editor = view.scratchTitleInput as unknown as StudioElement;
+        editor.dispatchEvent(new Event('compositionstart'));
+        editor.dispatchEvent(Object.assign(new Event('keydown'), { key: 'Process', code: 'Space', isComposing: true }));
+        editor.value = 'Confirmed title';
+        editor.dispatchEvent(new Event('compositionend'));
+        editor.dispatchEvent(Object.assign(new Event('keyup'), { key: ' ', code: 'Space', isComposing: false }));
+        if (action === 'blur') editor.dispatchEvent(new Event('blur'));
+        else view.clearStudioControls();
+        timers.flush();
+        assert.equal(plugin.loadWritingDraft().title, 'Confirmed title', action);
+      }
+    } finally { harness.compositionTiming.later = previous; }
+  });
+});
+
+test('a popout closed immediately after an explicit native commit keeps the selected text', async () => {
+  await withWindow(async timers => {
+    const previous = harness.compositionTiming.later;
+    harness.compositionTiming.later = nativeCompositionTiming;
+    try {
+      const { plugin } = createPlugin();
+      const panel = new harness.CapturePanel(plugin, 'window');
+      panel.mount(new GateElement());
+      const editor = panel.editor;
+      editor.dispatchEvent(new Event('compositionstart'));
+      editor.value = 'Picked candidate';
+      editor.dispatchEvent(Object.assign(new Event('input'), { inputType: 'insertFromComposition' }));
+      editor.dispatchEvent(new Event('compositionend'));
+      panel.destroy();
+      timers.flush();
+      assert.equal(plugin.loadComposer().capture, 'Picked candidate');
+    } finally { harness.compositionTiming.later = previous; }
+  });
+});
+
 test('a popout keeps composition pending across an intervening timer before the window blurs', async () => {
   await withWindow(async () => {
     const previous = harness.compositionTiming.later;
@@ -2122,7 +2196,9 @@ test('a popout keeps composition pending across an intervening timer before the 
       };
       editor.dispatchEvent(new Event('compositionstart'));
       editor.value = 'Kept nihao';
-      editor.dispatchEvent(new Event('input'));
+      editor.dispatchEvent(Object.assign(new Event('keydown'), { key: ' ', code: 'Space', isComposing: true }));
+      editor.dispatchEvent(Object.assign(new Event('keyup'), { key: ' ', code: 'Space', isComposing: true }));
+      editor.dispatchEvent(Object.assign(new Event('input'), { inputType: 'insertCompositionText', isComposing: true }));
       // The popout ran a zero-delay task before dispatching the focus loss caused by its close button.
       editor.dispatchEvent(new Event('compositionend'));
       assert.equal(timers.size, 1);

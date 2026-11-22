@@ -46,6 +46,7 @@ export class CapturePanel {
   private unsubscribe?: () => void;
   private unsubscribeComposer?: () => void;
   private unsubscribeRecovery?: () => void;
+  private removeSaveShortcut?: () => void;
   private selectedDay: string | null = null;
   private focusedDay = captureDay(Date.now());
   private year = new Date().getFullYear();
@@ -137,11 +138,17 @@ export class CapturePanel {
     editor.addEventListener('keydown', event => {
       if (!canEdit()) return;
       this.composition?.keyDown(event);
-      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !this.composition && !event.isComposing) {
-        event.preventDefault();
-        this.saveButton?.click();
-      }
     });
+    const owner = editor.ownerDocument.defaultView ?? window;
+    const saveOnKeyDown = (event: KeyboardEvent) => {
+      if (event.target !== editor || !(event.metaKey || event.ctrlKey) || event.key !== 'Enter' || event.isComposing || !canEdit()) return;
+      if (this.composition?.flush() === false || this.composition || !canEdit() || this.rescueIfAccessEnded()) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.saveButton?.click();
+    };
+    owner.addEventListener('keydown', saveOnKeyDown, true);
+    this.removeSaveShortcut = () => owner.removeEventListener('keydown', saveOnKeyDown, true);
     if (this.surface === 'sidebar') {
       composer.addClass('tangrow-composer-with-popout');
       this.button(composer, 'Open capture window', () => this.host.openCaptureWindow(), 'external-link', 'tangrow-capture-icon-button tangrow-capture-popout');
@@ -259,6 +266,8 @@ export class CapturePanel {
     this.unsubscribe?.();
     this.unsubscribeComposer?.();
     this.unsubscribeRecovery?.();
+    this.removeSaveShortcut?.();
+    this.removeSaveShortcut = undefined;
     this.unsubscribe = undefined;
     this.unsubscribeComposer = undefined;
     this.unsubscribeRecovery = undefined;

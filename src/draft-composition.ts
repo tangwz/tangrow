@@ -32,8 +32,21 @@ export class DraftComposition {
   private readonly scrollTop: number;
   private escaped = false;
   private blurred = false;
+  private confirmationKey?: string;
+  private committedInput = false;
   private onSettled?: (confirmed: boolean) => void;
   private readonly onBlur = () => { this.blurred = true; };
+  private readonly onKeyUp = (event: Event) => {
+    const key = event as KeyboardEvent;
+    if (!this.confirmationKey || (key.code || key.key) !== this.confirmationKey) return;
+    this.confirmationKey = undefined;
+    if (!key.isComposing) this.flush();
+  };
+  private readonly onInput = (event: Event) => {
+    if ((event as InputEvent).inputType !== 'insertFromComposition') return;
+    this.committedInput = true;
+    this.flush();
+  };
   private readonly onBeforeInput = (event: Event) => {
     const input = event as InputEvent;
     if (!input.isComposing && !input.inputType?.includes('Composition')) this.flush();
@@ -47,10 +60,19 @@ export class DraftComposition {
     this.scrollTop = control.scrollTop;
     control.addEventListener('blur', this.onBlur);
     control.addEventListener('beforeinput', this.onBeforeInput);
+    control.addEventListener('keyup', this.onKeyUp);
+    control.addEventListener('input', this.onInput);
   }
 
   keyDown(event: KeyboardEvent): void {
-    if (this.onSettled) return;
+    if (this.onSettled) {
+      if (!event.isComposing && event.key === 'Tab') this.flush();
+      return;
+    }
+    const key = event.code || event.key;
+    this.confirmationKey = event.isComposing && !event.metaKey && !event.altKey &&
+      (!event.ctrlKey || key === 'Space' || key === ' ') &&
+      /^(Enter|NumpadEnter|Space| |Shift(Left|Right)?|Digit[0-9]|[0-9])$/.test(key) ? key : undefined;
     if (event.key === 'Escape' || event.code === 'Escape') {
       this.escaped = true;
       // Let the IME handle Escape without letting a workspace shortcut move focus.
@@ -64,14 +86,18 @@ export class DraftComposition {
   /** Calls `done` once focus changes from the same action have been dispatched. */
   settle(done: (confirmed: boolean) => void): void {
     this.onSettled = done;
-    compositionTiming.later(() => this.flush(), this.control.ownerDocument.defaultView ?? window);
+    if (this.committedInput) this.flush();
+    else compositionTiming.later(() => this.flush(), this.control.ownerDocument.defaultView ?? window);
   }
 
   /** Settles a finished composition before the control is changed by a new edit. */
-  flush(): void {
+  flush(): boolean | undefined {
     const done = this.onSettled;
+    if (!done) return undefined;
     this.onSettled = undefined;
-    done?.(!this.escaped && !this.blurred && this.control.isConnected);
+    const confirmed = !this.escaped && !this.blurred && this.control.isConnected;
+    done(confirmed);
+    return confirmed;
   }
 
   /** Puts back the text and selection from before the composition. */
@@ -91,5 +117,7 @@ export class DraftComposition {
     this.onSettled = undefined;
     this.control.removeEventListener('blur', this.onBlur);
     this.control.removeEventListener('beforeinput', this.onBeforeInput);
+    this.control.removeEventListener('keyup', this.onKeyUp);
+    this.control.removeEventListener('input', this.onInput);
   }
 }
