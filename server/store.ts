@@ -28,7 +28,7 @@ export interface DeviceFields {
   status: 'active' | 'released';
 }
 
-/** A stored row. `platform` is null when Feishu holds an unreadable value; the device's next renewal rewrites it. */
+/** A stored row. Renewals preserve an unreadable platform as null. */
 export interface DeviceRecord extends Omit<DeviceFields, 'platform'> {
   recordId: string;
   platform: Platform | null;

@@ -109,6 +109,9 @@ test('Bitable uses filtered pagination, coalesced token refresh, and millisecond
     [names.device.status]: defaults.status.released,
   });
   assert.equal(writes[1]!.fields[names.device.firstActivatedAt], nowSeconds * 1000);
+  await store.saveDevice({ ...device, platform: null }, device.recordId, signal);
+  assert.equal(writes[3]!.method, 'PUT');
+  assert.equal(Object.hasOwn(writes[3]!.fields, names.device.platform), false);
   // A fixed idempotency token could replay a deleted row instead of creating one.
   assert.ok(writes.every(write => !write.url.searchParams.has('client_token')));
 

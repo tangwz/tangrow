@@ -180,9 +180,9 @@ export class LicenseService {
       return { status: 409, body: { error: 'device_limit', ...list() } };
     }
 
-    const currentPlatform = action === 'renew' ? existing?.platform ?? platform : platform;
-    if (!currentPlatform) return { status: 400, body: { error: 'bad_request', action: 'reactivate' } };
-    const updated: DeviceFields = {
+    const currentPlatform = action === 'renew' && existing ? existing.platform : platform;
+    if (currentPlatform === undefined) return { status: 400, body: { error: 'bad_request', action: 'reactivate' } };
+    const updated: DeviceUpdate = {
       licenseId: license.id,
       digest: dev,
       platform: currentPlatform,

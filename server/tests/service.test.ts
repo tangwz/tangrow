@@ -328,6 +328,25 @@ test('renewal uses the supplied platform only when rebuilding a missing device r
   assert.equal(store.devices[0]!.platform, 'iOS');
 });
 
+test('renewing an existing seat keeps its unknown platform with or without a client platform', async () => {
+  const { activate, advance, call, store, now } = setup();
+  store.license.deviceLimit = 1;
+  let lease = token(await activate(device(1)));
+  const record = store.devices[0]!;
+  record.platform = null;
+  for (const extra of [{}, { platform: 'iOS' }]) {
+    advance(1000);
+    const result = await call('renew', { lease, ...extra });
+    lease = token(result);
+    assert.equal(verifyLease(lease, keys.publicKeys).st, 'active');
+    assert.deepEqual(result.body, { lease, deviceLimit: 1, devices: [{ platform: null, isCurrent: true, lastRenewedAt: now() }] });
+    assert.equal(store.devices.length, 1);
+    assert.equal(record.platform, null);
+    assert.equal(record.lastRenewedAt, now());
+  }
+  assert.equal((await activate(device(2))).status, 409);
+});
+
 test('a legacy client can restore a missing device with its original redemption code', async () => {
   const { activate, call, store } = setup();
   const digest = device(1);
