@@ -6,6 +6,8 @@ const HOUR = 3600000;
 const DAY = DAY_SECONDS * 1000;
 const FOREGROUND_COOLDOWN_MS = 60_000;
 const MARK_STEP_MS = 60_000;
+// Wait out the license service's own request deadline, so a renewal it completes is never thrown away here.
+const BACKGROUND_TIMEOUT_MS = 12_000;
 export const LICENSE_ENDPOINT = licenseClient.endpoint;
 export const LICENSE_KEYS: PublicKeys = Object.freeze(licenseClient.keys);
 const platforms = ['macOS', 'Windows', 'Linux', 'iOS', 'Android'] as const;
@@ -267,7 +269,7 @@ export class Access {
     try {
       const deadline = new Promise<never>((_, reject) => {
         this.stopRequest = () => reject(new Error('stale'));
-        timer = this.deps.later(() => reject(new Error('timeout')), background ? 5000 : INTERACTIVE_TIMEOUT_MS);
+        timer = this.deps.later(() => reject(new Error('timeout')), background ? BACKGROUND_TIMEOUT_MS : INTERACTIVE_TIMEOUT_MS);
       });
       const body: Record<string, string> = action === 'activate' ? { code, dev, platform: this.deps.platform, pluginVersion: this.deps.version } : { lease: current!.token };
       if (action === 'renew') body.platform = this.deps.platform;

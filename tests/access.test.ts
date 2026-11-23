@@ -277,12 +277,12 @@ test('corrupt storage warns but starts; unconfirmed writes do not start a trial'
   assert.deepEqual(access.startTrial(), { ok: false, error: 'storage' }); assert.equal(access.canUse(), false);
 });
 
-test('startup renews expired leases with 5s timeout and bounded retry delays', async () => {
+test('startup renews expired leases with a 12s timeout and bounded retry delays', async () => {
   const { access, state, deps, timers } = fixture(); await access.activate(vector.code); access.dispose();
   state.now += 31 * DAY_SECONDS * 1000; state.request = () => new Promise(() => {});
   const reopened = new Access(deps); reopened.start();
   for (const expected of [1, 6, 24, 24]) {
-    [...timers.values()].find(timer => timer.delay === 5000)!.callback(); await new Promise(resolve => setImmediate(resolve));
+    [...timers.values()].find(timer => timer.delay === 12_000)!.callback(); await new Promise(resolve => setImmediate(resolve));
     const [id, retry] = [...timers].find(([, timer]) => timer.delay === expected * hour)!;
     timers.delete(id); retry.callback();
   }
@@ -413,7 +413,7 @@ for (const reason of ['online', 'foreground'] as const) {
     access.onResume('foreground');
     access.onResume('online');
     assert.equal(calls, 1);
-    assert.ok([...timers.values()].some(timer => timer.delay === 5000));
+    assert.ok([...timers.values()].some(timer => timer.delay === 12_000));
     assert.equal([...timers.values()].some(timer => timer.delay === 24 * hour), false);
     finish.resolve();
     await nextTurn();

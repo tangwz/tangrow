@@ -3,6 +3,12 @@ import { Platform } from 'obsidian';
 type DraftControl = HTMLInputElement | HTMLTextAreaElement;
 const focusChangeGraceMs = 50;
 const finalScript = /^[\p{scx=Hangul}\p{scx=Hiragana}\p{scx=Katakana}]+$/u;
+// Keys that commit a candidate: commit keys, candidate numbers on either keyboard, and punctuation that commits the
+// candidate before inserting its mark. Each is matched by `code`, or by `key` when no code is reported.
+const confirmationKeys = new RegExp('^(Enter|NumpadEnter|Space| |Shift(Left|Right)?|Digit[0-9]|Numpad[0-9]|Comma|Period|' +
+  'Semicolon|Quote|Slash|Backslash|BracketLeft|BracketRight|Minus|Equal|Backquote|[0-9,.;\'/\\\\[\\]=`-])$');
+// Only a quick return can still see the candidate window left over from the cancelled composition.
+const recomposeHintWindowMs = 60_000;
 export const recomposeHint = 'Composition ended when focus moved. Start composing again to choose a candidate with the keyboard.';
 
 /**
@@ -64,7 +70,10 @@ export class DraftComposition {
   };
   private readonly onBeforeInput = (event: Event) => {
     const input = event as InputEvent;
-    if (!input.isComposing && !input.inputType?.includes('Composition')) this.flush();
+    if (input.isComposing || input.inputType?.includes('Composition')) return;
+    // A punctuation key that commits the candidate inserts its mark before the key is released.
+    if (this.confirmationKey && this.focusState === 'refocused') this.explicitCommit = true;
+    this.flush();
   };
 
   constructor(readonly control: DraftControl) {
@@ -88,7 +97,7 @@ export class DraftComposition {
     const key = event.code || event.key;
     this.confirmationKey = this.focusState !== 'blurred' && event.isComposing && !event.metaKey && !event.altKey &&
       (!event.ctrlKey || key === 'Space' || key === ' ') &&
-      /^(Enter|NumpadEnter|Space| |Shift(Left|Right)?|Digit[0-9]|[0-9])$/.test(key) ? key : undefined;
+      confirmationKeys.test(key) ? key : undefined;
     if (event.key === 'Escape' || event.code === 'Escape') {
       this.escaped = true;
       // Let the IME handle Escape without letting a workspace shortcut move focus.
@@ -140,7 +149,10 @@ export class DraftComposition {
     // Apple Pinyin can leave its candidate window visible after the field has reverted to ordinary typing.
     const doc = this.control.ownerDocument;
     if (doc.activeElement === this.control && doc.hasFocus()) onRefocus();
-    else this.control.addEventListener('focus', onRefocus, { once: true });
+    else {
+      const until = Date.now() + recomposeHintWindowMs;
+      this.control.addEventListener('focus', () => { if (Date.now() <= until) onRefocus(); }, { once: true });
+    }
   }
 
   restoreIfEscaped(): boolean {

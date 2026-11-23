@@ -2266,8 +2266,17 @@ function refocusScenarios() {
   const releaseSpace = dispatch('keyup', { key: ' ', code: 'Space', isComposing: false });
   const releaseEnter = dispatch('keyup', { key: 'Enter', code: 'Enter', isComposing: false });
   const pressArrow = dispatch('keydown', { key: 'ArrowDown', isComposing: true });
+  const pressNumpad = dispatch('keydown', { key: 'Process', code: 'Numpad2', isComposing: true });
+  const releaseNumpad = dispatch('keyup', { key: '2', code: 'Numpad2', isComposing: false });
+  const pressComma = dispatch('keydown', { key: 'Process', code: 'Comma', isComposing: true });
+  const commaMark = dispatch('beforeinput', { inputType: 'insertText', data: '，', isComposing: false });
+  const pressSeparator = dispatch('keydown', { key: 'Process', code: 'Quote', isComposing: true });
+  const releaseSeparator = dispatch('keyup', { key: '\'', code: 'Quote', isComposing: true });
   const select = (control: StudioElement) => { control.value = 'Original selected'; };
   return [
+    { name: 'numpad candidate number', keep: true, steps: [blur, focus, pressNumpad, select, end, releaseNumpad] },
+    { name: 'punctuation that commits the candidate', keep: true, steps: [blur, focus, pressComma, select, end, commaMark] },
+    { name: 'pinyin separator while still composing', keep: false, steps: [blur, focus, pressSeparator, releaseSeparator, end] },
     { name: 'matching confirmation key', keep: true, steps: [blur, focus, pressSpace, select, end, releaseSpace] },
     { name: 'matching key release before end', keep: true, steps: [blur, focus, pressSpace, select, releaseSpace, end] },
     { name: 'final input before end', keep: true, steps: [blur, focus, select, finalInput, end] },
@@ -2432,6 +2441,33 @@ test('returning to a Mac draft with a cancelled preedit offers one hint and pres
     panel.destroy();
     await studio.onClose();
   });
+});
+
+test('the recomposition hint is offered only on a prompt return', async t => {
+  t.mock.method(harness.compositionTiming, 'later', nativeCompositionTiming);
+  const previous = harness.Platform.isMacOS;
+  harness.Platform.isMacOS = true;
+  t.after(() => { harness.Platform.isMacOS = previous; });
+  await withClock(async advance => withWindow(async timers => {
+    for (const [minutes, hinted] of [[0.5, true], [2, false]] as const) {
+      const { plugin } = createPlugin();
+      plugin.settings.language = 'en';
+      const panel = new harness.CapturePanel(plugin, 'window');
+      panel.mount(new GateElement());
+      const editor = panel.editor;
+      const initial = harness.notices.length;
+      editor.dispatchEvent(new Event('compositionstart'));
+      editor.value = 'ni';
+      editor.dispatchEvent(new Event('compositionend'));
+      editor.dispatchEvent(new Event('blur'));
+      timers.flush();
+      assert.equal(editor.value, '');
+      advance(minutes);
+      editor.dispatchEvent(new Event('focus'));
+      assert.equal(harness.notices.length - initial, hinted ? 1 : 0, `${minutes} min`);
+      panel.destroy();
+    }
+  }));
 });
 
 test('the recomposition hint is limited to discarded Mac preedit on an editable field', async t => {
