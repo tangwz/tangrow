@@ -197,11 +197,13 @@ export class FeishuStore implements LicenseStore {
       const problems: string[] = [];
       const choice = fields[names.status];
       if (choice !== status.active && choice !== status.released) problems.push('status');
-      let lastRenewedAt = readSeconds(fields[names.lastRenewedAt]);
-      if (lastRenewedAt === undefined) { problems.push('last renewal'); lastRenewedAt = Math.floor(this.now() / 1000); }
+      const storedRenewal = readSeconds(fields[names.lastRenewedAt]);
+      if (storedRenewal === undefined) problems.push('last renewal');
       const seatKnown = !problems.length;
+      // Either unreadable seat field resets both: an old renewal date alone would free the seat after 45 days.
+      const lastRenewedAt = seatKnown && storedRenewal !== undefined ? storedRenewal : Math.floor(this.now() / 1000);
       let firstActivatedAt = readSeconds(fields[names.firstActivatedAt]);
-      if (firstActivatedAt === undefined) { problems.push('first activation'); firstActivatedAt = lastRenewedAt; }
+      if (firstActivatedAt === undefined) { problems.push('first activation'); firstActivatedAt = storedRenewal ?? lastRenewedAt; }
       const value = fields[names.platform];
       const platform = isPlatform(value) ? value : null;
       if (!platform) problems.push('platform');

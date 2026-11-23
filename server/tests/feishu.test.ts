@@ -220,6 +220,45 @@ test('a full license stays full when another device row lacks only its first act
   });
 });
 
+test('a full license stays full when another device row has an unreadable status and an old renewal', async () => {
+  const config = loadConfig({ TANGROW_LICENSE_SETTINGS: JSON.stringify(settings) });
+  const names = config.feishu.fields;
+  const lic = vector.payload.lic;
+  const nowMs = vector.payload.iat * 1000;
+  const fetcher: typeof fetch = async input => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith('/tenant_access_token/internal')) {
+      return Response.json({ code: 0, tenant_access_token: 'test-token', expire: 7200 });
+    }
+    if (url.pathname.includes('/test-license/')) {
+      return Response.json({ code: 0, data: { has_more: false, items: [{ record_id: 'license-row', fields: {
+        [names.license.id]: lic, [names.license.codeDigest]: vector.codeDigest,
+        [names.license.deviceLimit]: 1, [names.license.status]: defaults.status.active,
+      } }] } });
+    }
+    if (url.pathname.endsWith('/search')) {
+      // An operator cleared the status; the renewal date alone is older than the 45-day seat window.
+      return Response.json({ code: 0, data: { has_more: false, items: [{ record_id: 'other-device', fields: {
+        [names.device.licenseId]: lic, [names.device.digest]: 'e'.repeat(64), [names.device.platform]: 'Windows',
+        [names.device.firstActivatedAt]: nowMs - 60 * 86_400_000, [names.device.lastRenewedAt]: nowMs - 46 * 86_400_000,
+      } }] } });
+    }
+    throw new Error('A full license must not write a device row');
+  };
+  const warnings: string[] = [];
+  const store = new FeishuStore(config.feishu, fetcher, () => nowMs, message => warnings.push(message));
+  const service = new LicenseService(store, config.keys, () => nowMs);
+  const result = await service.handle('activate', {
+    code: vector.code, dev: vector.deviceDigest, platform: 'macOS', pluginVersion: '0.4.0',
+  }, new AbortController().signal, () => {});
+  assert.equal(result.status, 409);
+  assert.deepEqual(result.body, {
+    error: 'device_limit', deviceLimit: 1,
+    devices: [{ platform: 'Windows', lastRenewedAt: vector.payload.iat, isCurrent: false }],
+  });
+  assert.deepEqual(warnings, ['Feishu device row other-device has an invalid status']);
+});
+
 test('a malformed license identifier or digest names only the affected row', async () => {
   const config = loadConfig({ TANGROW_LICENSE_SETTINGS: JSON.stringify(settings) }).feishu;
   const names = config.fields.license;
