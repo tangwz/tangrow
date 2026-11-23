@@ -8,7 +8,7 @@ import vector from '../../tests/fixtures/license-vectors.json' with { type: 'jso
 import { codeDigest, DAY_SECONDS, deviceDigest, normalizeCode, signLease, verifyLease } from '../../src/license/format.js';
 import type { Lease } from '../../src/license/format.js';
 import { createLicenseServer } from '../http.js';
-import { LicenseService } from '../service.js';
+import { LicenseService, sourceKey } from '../service.js';
 import type { Action } from '../service.js';
 import type { DeviceFields, DeviceRecord, LicenseRecord, LicenseStore } from '../store.js';
 
@@ -16,14 +16,23 @@ const seed = Buffer.from(vector.seedHex, 'hex');
 const keys = { kid: vector.payload.kid, seed, publicKeys: { [vector.payload.kid]: vector.publicKey } };
 const licenseId = vector.payload.lic;
 const device = (number: number) => deviceDigest(number.toString(16).padStart(32, '0'));
+const hour = 3600 * 1000;
 const day = DAY_SECONDS * 1000;
+/** A well-formed code that no license holds; each index has its own digest. */
+const wrongCode = (index: number) => {
+  const code = index.toString().padStart(16, '0');
+  assert.notEqual(code, vector.normalized);
+  return code;
+};
 
 class MemoryStore implements LicenseStore {
   license: LicenseRecord = { id: licenseId, codeDigest: vector.codeDigest, status: 'active', deviceLimit: 3 };
   devices: DeviceRecord[] = [];
   unavailable = false;
+  codeLookups = 0;
 
   async findLicenseByCode(digest: string) {
+    this.codeLookups += 1;
     if (this.unavailable) throw new Error('Offline');
     if (this.license.codeDigest === digest) return { ...this.license };
   }
@@ -60,6 +69,11 @@ function setup() {
     call: (action: Action, body: unknown) => service.handle(action, body, new AbortController().signal, () => {}),
     activate: (dev: string, code = vector.normalized, platform = 'macOS') => service.handle(
       'activate', { code, dev, platform, pluginVersion: '0.4.0' }, new AbortController().signal, () => {},
+    ),
+    /** Activates from a client address, by default with a code that no license holds. */
+    guess: (index: number, source: string, code = wrongCode(index)) => service.handle(
+      'activate', { code, dev: device(1), platform: 'macOS', pluginVersion: '0.4.0' }, new AbortController().signal,
+      () => {}, source,
     ),
   };
 }
@@ -227,6 +241,95 @@ test('activation counters are independent and normalized aliases share the daily
   advance(day);
   assert.equal(service.allowActivationFrom('192.0.2.1'), true);
   token(await activate(device(1)));
+});
+
+test('rate limits count an IPv6 /64 as one client and IPv4-mapped addresses as IPv4', () => {
+  for (const address of ['2001:db8:1:2::1', '2001:DB8:1:2:ffff:ffff:ffff:ffff', '2001:db8:0001:0002:0:0:0:9%en0',
+    '2001:db8:1:2::192.0.2.1']) {
+    assert.equal(sourceKey(address), '2001:db8:1:2::/64');
+  }
+  assert.equal(sourceKey('2001:db8:1:3::1'), '2001:db8:1:3::/64');
+  assert.equal(sourceKey('::1'), '0:0:0:0::/64');
+  for (const address of ['192.0.2.7', '::ffff:192.0.2.7', '::FFFF:c000:207']) assert.equal(sourceKey(address), '192.0.2.7');
+
+  const { service } = setup();
+  for (let count = 0; count < 20; count += 1) {
+    assert.equal(service.allowActivationFrom('2001:db8:1:2::' + count.toString(16)), true);
+  }
+  assert.equal(service.allowActivationFrom('2001:db8:1:2:abcd::1'), false);
+  assert.equal(service.allowActivationFrom('2001:db8:1:3::1'), true);
+});
+
+test('unknown codes use a per-client miss budget that found codes give back', async () => {
+  const { advance, guess, store } = setup();
+  for (let index = 1; index <= 9; index += 1) assert.equal((await guess(index, '192.0.2.1')).status, 404);
+  token(await guess(0, '192.0.2.1', vector.normalized));
+  assert.equal((await guess(10, '192.0.2.1')).status, 404);
+  assert.equal(store.codeLookups, 11);
+
+  // Once the client has ten misses, its next activation is refused before the lookup, even with a valid code.
+  assert.deepEqual(await guess(11, '192.0.2.1'), { status: 429, body: { error: 'rate_limited' } });
+  assert.equal((await guess(0, '192.0.2.1', vector.normalized)).status, 429);
+  assert.equal(store.codeLookups, 11);
+  assert.equal((await guess(12, '192.0.2.2')).status, 404);
+  advance(hour);
+  assert.equal((await guess(13, '192.0.2.1')).status, 404);
+});
+
+test('concurrent guesses cannot overshoot a miss budget', async () => {
+  const { guess, store } = setup();
+  const results = await Promise.all(Array.from({ length: 15 }, (_, index) => guess(index + 1, '192.0.2.1')));
+  assert.equal(results.filter(result => result.status === 404).length, 10);
+  assert.equal(results.filter(result => result.status === 429).length, 5);
+  assert.equal(store.codeLookups, 10);
+});
+
+test('guesses spread across clients stop at shared hourly and daily budgets while renewal continues', async () => {
+  const { activate, advance, call, guess, store } = setup();
+  const lease = token(await activate(device(1)));
+  let index = 0;
+  const miss = async () => {
+    index += 1;
+    return (await guess(index, `2001:db8:${index.toString(16)}::1`)).status;
+  };
+
+  for (let count = 0; count < 30; count += 1) assert.equal(await miss(), 404);
+  assert.equal(await miss(), 429);
+  assert.equal(store.codeLookups, 31);
+  token(await call('renew', { lease }));
+
+  // Six more hours at the hourly budget reach the daily one.
+  let misses = 30;
+  while (misses < 200) {
+    advance(hour);
+    for (let count = 0; count < 30 && misses < 200; count += 1, misses += 1) assert.equal(await miss(), 404);
+  }
+  advance(hour);
+  assert.equal(await miss(), 429);
+  assert.equal(store.codeLookups, 201);
+  token(await call('renew', { lease }));
+  advance(day - 7 * hour);
+  assert.equal(await miss(), 404);
+});
+
+test('HTTP counts misses against the proxied client network', async t => {
+  const { service, store } = setup();
+  const server = createLicenseServer(service, { trustLoopbackProxy: true, log: () => {} });
+  server.listen(0, '127.0.0.1');
+  t.after(() => server.close());
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const post = (index: number, client: string) => fetch(`http://127.0.0.1:${address.port}/v1/activate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Real-IP': client },
+    body: JSON.stringify({ code: wrongCode(index), dev: device(1), platform: 'macOS', pluginVersion: '0.4.0' }),
+  }).then(response => response.status);
+
+  for (let index = 1; index <= 10; index += 1) assert.equal(await post(index, '2001:db8:0:1::' + index), 404);
+  assert.equal(await post(11, '2001:db8:0:1:ffff::1'), 429);
+  assert.equal(await post(12, '2001:db8:0:2::1'), 404);
+  assert.equal(store.codeLookups, 11);
 });
 
 test('renewals share a binding budget across signatures without blocking other devices or release', async () => {

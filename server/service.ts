@@ -1,3 +1,4 @@
+import { isIPv4, isIPv6 } from 'node:net';
 import { codeDigest, DAY_SECONDS, PRODUCT, signLease, verifyLease } from '../src/license/format.js';
 import type { Lease, PublicKeys } from '../src/license/format.js';
 import { digestPattern, isObject, isPlatform } from './store.js';
@@ -22,9 +23,48 @@ export interface SigningKeys {
 
 const seatWindow = 45 * DAY_SECONDS;
 const hourMs = 3600 * 1000;
+const dayMs = 24 * hourMs;
+
+/**
+ * Activations whose code is not found still cost a Feishu search. They draw on one budget per client address and
+ * two shared by every client, so guessing from many addresses cannot use up the Feishu quota that renewals rely on.
+ */
+const missBudgets = (source: string) => [
+  { key: 'miss-source:' + sourceKey(source), maximum: 10, window: hourMs },
+  { key: 'miss-all:hour', maximum: 30, window: hourMs },
+  { key: 'miss-all:day', maximum: 200, window: dayMs },
+] as const;
 
 function occupiesSeat(device: DeviceUpdate, now: number) {
   return device.status === 'active' && device.lastRenewedAt > now - seatWindow;
+}
+
+/** Expands a valid IPv6 address into its eight groups; a trailing dotted IPv4 part fills the last two. */
+function ipv6Groups(address: string): number[] {
+  const parse = (part: string) => part ? part.split(':').flatMap(group => {
+    if (!group.includes('.')) return [parseInt(group, 16)];
+    const [a, b, c, d] = group.split('.').map(Number) as [number, number, number, number];
+    return [a * 256 + b, c * 256 + d];
+  }) : [];
+  const [head = '', tail] = address.split('::');
+  const left = parse(head);
+  const right = tail === undefined ? [] : parse(tail);
+  return [...left, ...Array<number>(8 - left.length - right.length).fill(0), ...right];
+}
+
+/**
+ * The address a rate limit is counted against. An IPv6 subscriber normally holds a whole /64, so every address
+ * in it shares one budget; IPv4-mapped IPv6 counts as the IPv4 address.
+ */
+export function sourceKey(ip: string): string {
+  const address = ip.split('%')[0]!.toLowerCase();
+  if (!isIPv6(address)) return address;
+  const groups = ipv6Groups(address);
+  if (groups.slice(0, 6).join(',') === '0,0,0,0,0,65535') {
+    const mapped = [groups[6]! >> 8, groups[6]! & 255, groups[7]! >> 8, groups[7]! & 255].join('.');
+    if (isIPv4(mapped)) return mapped;
+  }
+  return groups.slice(0, 4).map(group => group.toString(16)).join(':') + '::/64';
 }
 
 class RateLimits {
@@ -47,6 +87,12 @@ class RateLimits {
     if (entry.count >= maximum) return false;
     entry.count += 1;
     return true;
+  }
+
+  /** Gives back a unit taken by `allow` for a request that turned out not to count. */
+  refund(key: string): void {
+    const entry = this.counters.get(key);
+    if (entry && entry.count > 0) entry.count -= 1;
   }
 }
 
@@ -77,7 +123,25 @@ export class LicenseService {
   }
 
   allowActivationFrom(ip: string): boolean {
-    return this.limits.allow('ip:' + ip, 20, hourMs, this.now());
+    return this.limits.allow('ip:' + sourceKey(ip), 20, hourMs, this.now());
+  }
+
+  /**
+   * Takes one unit from every miss budget before a code lookup, or none if any is spent. Taking them before the
+   * lookup keeps concurrent guesses from overshooting; the caller refunds them once the code is found.
+   */
+  private reserveMiss(source: string): (() => void) | undefined {
+    const now = this.now();
+    const taken: string[] = [];
+    const refund = () => { for (const key of taken) this.limits.refund(key); };
+    for (const { key, maximum, window } of missBudgets(source)) {
+      if (!this.limits.allow(key, maximum, window, now)) {
+        refund();
+        return undefined;
+      }
+      taken.push(key);
+    }
+    return refund;
   }
 
   async handle(
@@ -85,6 +149,7 @@ export class LicenseService {
     input: unknown,
     signal: AbortSignal,
     identify: (id: string) => void,
+    source = '',
   ) {
     signal.throwIfAborted();
     if (!isObject(input)) return failure('bad_request');
@@ -101,10 +166,14 @@ export class LicenseService {
       } catch {
         return failure('bad_request');
       }
-      if (!this.limits.allow('code:' + digest, 20, 24 * hourMs, this.now())) return failure('rate_limited');
+      if (!this.limits.allow('code:' + digest, 20, dayMs, this.now())) return failure('rate_limited');
 
+      // Only a code that is found gives its units back; a failed lookup still reached Feishu, so it keeps them.
+      const refundMiss = this.reserveMiss(source);
+      if (!refundMiss) return failure('rate_limited');
       const matched = await this.store.findLicenseByCode(digest, signal);
       if (!matched) return failure('invalid_code');
+      refundMiss();
       identify(matched.id);
       return this.withLicense(matched.id, signal, async () => {
         const license = await this.store.findLicenseById(matched.id, signal);

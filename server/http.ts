@@ -106,7 +106,8 @@ export function createLicenseServer(
         send(failure('bad_request'));
         return;
       }
-      if (action === 'activate' && !service.allowActivationFrom(clientIp(request, trustLoopbackProxy))) {
+      const source = clientIp(request, trustLoopbackProxy);
+      if (action === 'activate' && !service.allowActivationFrom(source)) {
         send(failure('rate_limited'));
         return;
       }
@@ -119,7 +120,7 @@ export function createLicenseServer(
         send(failure('bad_request'));
         return;
       }
-      send(await service.handle(action, input, controller.signal, id => { license = id.slice(0, 8); }));
+      send(await service.handle(action, input, controller.signal, id => { license = id.slice(0, 8); }, source));
     } catch {
       send(failure('upstream_unavailable'));
     }
