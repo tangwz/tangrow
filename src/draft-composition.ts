@@ -2,6 +2,7 @@ import { Platform } from 'obsidian';
 
 type DraftControl = HTMLInputElement | HTMLTextAreaElement;
 const focusChangeGraceMs = 50;
+const finalScript = /^[\p{scx=Hangul}\p{scx=Hiragana}\p{scx=Katakana}]+$/u;
 export const recomposeHint = 'Composition ended when focus moved. Start composing again to choose a candidate with the keyboard.';
 
 /**
@@ -22,8 +23,9 @@ export const compositionTiming = {
  * Tracks one IME composition so that text which was never confirmed stays out of the shared draft.
  *
  * Chromium can end composition and run a zero-delay timer before dispatching the pointer press or blur that caused
- * it. Keep the draft pending briefly so focus loss can cancel the preedit. Escape also cancels. Other endings are
- * kept, including commit keys that leave the text unchanged, such as Shift, Enter or an IME toggle like Ctrl+Space.
+ * it. Keep the draft pending briefly so focus loss can cancel the preedit, unless it is Hangul or kana. Escape also
+ * cancels. Other endings are kept, including commit keys that leave the text unchanged, such as Shift, Enter or an IME
+ * toggle like Ctrl+Space.
  */
 export class DraftComposition {
   private readonly value: string;
@@ -54,7 +56,9 @@ export class DraftComposition {
     this.flush();
   };
   private readonly onInput = (event: Event) => {
-    if ((event as InputEvent).inputType !== 'insertFromComposition' || this.focusState === 'blurred') return;
+    // WebKit also reports a commit forced by focus loss as insertFromComposition, before the blur arrives. Without an
+    // earlier focus loss the grace period decides, so only a candidate picked after returning counts as explicit.
+    if ((event as InputEvent).inputType !== 'insertFromComposition' || this.focusState !== 'refocused') return;
     this.explicitCommit = true;
     this.flush();
   };
@@ -107,9 +111,22 @@ export class DraftComposition {
     const done = this.onSettled;
     if (!done) return undefined;
     this.onSettled = undefined;
-    const confirmed = !this.escaped && this.control.isConnected && (this.focusState === 'uninterrupted' || this.explicitCommit);
+    const confirmed = !this.escaped && this.control.isConnected &&
+      (this.focusState === 'uninterrupted' || this.explicitCommit || this.composedInFinalScript());
     done(confirmed);
     return confirmed;
+  }
+
+  /**
+   * Hangul and kana compositions are already the words being typed, and native apps commit them when focus moves.
+   * Pinyin, romaji and shape codes stay in another script until a candidate is chosen, so focus loss still drops them.
+   */
+  private composedInFinalScript(): boolean {
+    const value = this.control.value;
+    const before = this.value.slice(0, this.start);
+    const after = this.value.slice(this.end);
+    if (value.length < before.length + after.length || !value.startsWith(before) || !value.endsWith(after)) return false;
+    return finalScript.test(value.slice(before.length, value.length - after.length));
   }
 
   /** Puts back the text and selection from before the composition. */

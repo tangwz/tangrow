@@ -265,6 +265,8 @@ export class CapturePanel {
 
   destroy(): void {
     if (this.mounted && this.editor && !this.editor.readOnly) this.rescueIfAccessEnded();
+    // A composition that just ended may still be waiting out the focus-change grace period. Settle it while mounted.
+    this.composition?.flush();
     openPanels.get(this.host)?.delete(this);
     this.gate?.dispose();
     this.gate = undefined;

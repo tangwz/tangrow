@@ -391,6 +391,8 @@ export class TangrowSidebar extends ItemView {
     // The deadline can pass before its timer fires. Lock first so the gate rescues unsaved text, including a writing
     // preedit that closing would otherwise discard, before the controls are torn down.
     if (this.gate && !this.gate.locked && !this.host.access.canUse()) this.host.access.refresh();
+    // Settle a composition still in its focus-change grace period while the controls can save it.
+    this.scratchComposition?.flush();
     this.unsubscribeAccess?.();
     this.gate?.dispose();
     this.isMounted = false;
@@ -946,6 +948,7 @@ export class TangrowSidebar extends ItemView {
   }
 
   private clearStudioControls(): void {
+    this.scratchComposition?.flush();
     if (this.host.loadWritingDraft().editingView === this.viewId) {
       const control = this.scratchComposition?.control;
       if (control && control === this.scratchEditor) {

@@ -104,7 +104,7 @@ interface TestSidebar {
   scratchRevision: number;
   scratchEditor?: DraftControl;
   scratchTitleInput?: DraftControl;
-  scratchComposition?: { control: DraftControl; dispose(): void };
+  scratchComposition?: { control: DraftControl; dispose(): void; flush(): boolean | undefined };
   contentEl: { empty(): void };
   onOpen(): Promise<void>;
   onClose(): Promise<void>;
@@ -939,7 +939,7 @@ test('IME composition protects pending input from remote updates and cleanup rel
       first.scratchEditor = firstControl;
       second.scratchEditor = secondControl;
       assert.equal(plugin.beginWritingDraftComposition(first.viewId, first.scratchRevision), true);
-      first.scratchComposition = { control: firstControl, dispose() {} };
+      first.scratchComposition = { control: firstControl, dispose() {}, flush() { return undefined; } };
       assert.equal(firstControl.readOnly, false);
       assert.equal(secondControl.readOnly, true);
       firstControl.value = 'The uncommitted composition text.';
@@ -1819,7 +1819,7 @@ test('Scratchpad language refresh keeps the composing inputs and editing lease w
       querySelector: (): null => null
     };
     Object.assign(view, {
-      section: 'compose', composeTab: 'scratchpad', scratchComposition: { control: text, dispose() {} }, contentEl: content,
+      section: 'compose', composeTab: 'scratchpad', scratchComposition: { control: text, dispose() {}, flush() { return undefined; } }, contentEl: content,
       workspacePane: { querySelectorAll: () => [] },
       pane: { contains: (control: unknown) => control === text || control === title, querySelectorAll: () => [] },
       setupBanner: { empty: () => undefined }, studioHeading: heading, studioCaption: caption,
@@ -1871,7 +1871,7 @@ test('plugin unload discards pending IME text while preserving the other field',
     view.scratchEditor = text;
     view.scratchTitleInput = title;
     assert.equal(plugin.beginWritingDraftComposition(view.viewId, view.scratchRevision), true);
-    view.scratchComposition = { control: text, dispose() {} };
+    view.scratchComposition = { control: text, dispose() {}, flush() { return undefined; } };
     text.value = 'The latest IME body not yet published by an input event.';
     title.value = 'The latest unpublished title';
     const previousLeaves = app.workspace.getLeavesOfType;
@@ -2316,6 +2316,78 @@ for (const { name, keep, steps } of refocusScenarios()) test(`IME refocus: ${nam
   });
 });
 
+function focusLossScenarios() {
+  const dispatch = (type: string, fields = {}) => (control: StudioElement) => {
+    control.dispatchEvent(Object.assign(new Event(type), fields));
+  };
+  const blur = dispatch('blur');
+  const focus = dispatch('focus');
+  const end = dispatch('compositionend');
+  const finalInput = dispatch('input', { inputType: 'insertFromComposition' });
+  return [
+    { name: 'WebKit final input after end, then focus loss', preedit: 'nihao', keep: false, steps: [end, finalInput, blur] },
+    { name: 'WebKit final input before end, then focus loss', preedit: 'nihao', keep: false, steps: [finalInput, end, blur] },
+    { name: 'WebKit final input without focus loss', preedit: 'nihao', keep: true, steps: [end, finalInput] },
+    { name: 'Hangul syllable', preedit: '녕', keep: true, steps: [end, blur] },
+    { name: 'Hangul after a late end on return', preedit: '녕', keep: true, steps: [blur, focus, end] },
+    { name: 'hiragana', preedit: 'こんにちは', keep: true, steps: [end, blur] },
+    { name: 'katakana with a long vowel', preedit: 'コーヒー', keep: true, steps: [end, blur] },
+    { name: 'romaji not yet converted', preedit: 'にほn', keep: false, steps: [end, blur] },
+    { name: 'Hanja or kanji conversion', preedit: '安寧', keep: false, steps: [end, blur] }
+  ];
+}
+
+for (const { name, preedit, keep, steps } of focusLossScenarios()) test(`IME focus loss: ${name}`, async t => {
+  await withWindow(async timers => {
+    const previous = harness.compositionTiming.later;
+    harness.compositionTiming.later = nativeCompositionTiming;
+    try {
+      const { plugin } = createPlugin();
+      plugin.saveComposer({ capture: 'Original' });
+      plugin.updateWritingDraft({ text: 'Original', title: 'Original' }, 0);
+      const panel = new harness.CapturePanel(plugin, 'window');
+      panel.mount(new GateElement());
+      const studio = await mountedStudio(plugin);
+      for (const [field, control, shared] of [
+        ['capture', panel.editor, () => plugin.loadComposer().capture],
+        ['title', studio.scratchTitleInput as unknown as StudioElement, () => plugin.loadWritingDraft().title],
+        ['body', studio.scratchEditor as unknown as StudioElement, () => plugin.loadWritingDraft().text]
+      ] as const) {
+        await t.test(field, () => {
+          control.setSelectionRange(control.value.length, control.value.length);
+          control.dispatchEvent(new Event('compositionstart'));
+          control.value = 'Original' + preedit;
+          control.dispatchEvent(Object.assign(new Event('input'), { inputType: 'insertCompositionText', isComposing: true }));
+          for (const step of steps) step(control);
+          timers.flush();
+          const expected = keep ? 'Original' + preedit : 'Original';
+          assert.deepEqual([control.value, shared()], [expected, expected]);
+        });
+      }
+      panel.destroy();
+      await studio.onClose();
+    } finally { harness.compositionTiming.later = previous; }
+  });
+});
+
+test('closing the writing view right after a confirmed candidate keeps it', async () => {
+  await withWindow(async () => {
+    const previous = harness.compositionTiming.later;
+    harness.compositionTiming.later = nativeCompositionTiming;
+    try {
+      const { plugin } = createPlugin();
+      const studio = await mountedStudio(plugin);
+      const body = studio.scratchEditor as unknown as StudioElement;
+      body.dispatchEvent(new Event('compositionstart'));
+      body.value = 'Picked candidate';
+      body.dispatchEvent(new Event('compositionend'));
+      await studio.onClose();
+      assert.equal(plugin.loadWritingDraft().text, 'Picked candidate');
+      assert.equal(plugin.loadWritingDraft().editingView, undefined);
+    } finally { harness.compositionTiming.later = previous; }
+  });
+});
+
 test('returning to a Mac draft with a cancelled preedit offers one hint and preserves ordinary input', async t => {
   t.mock.method(harness.compositionTiming, 'later', nativeCompositionTiming);
   const previous = harness.Platform.isMacOS;
@@ -2377,8 +2449,9 @@ test('the recomposition hint is limited to discarded Mac preedit on an editable 
       editor.dispatchEvent(new Event('compositionstart'));
       if (scenario !== 'empty') editor.value = 'ni';
       if (scenario === 'escape') editor.dispatchEvent(Object.assign(new Event('keydown'), { key: 'Escape', isComposing: true }));
-      if (scenario === 'confirmed') editor.dispatchEvent(Object.assign(new Event('input'), { inputType: 'insertFromComposition' }));
+      if (scenario === 'confirmed') editor.dispatchEvent(Object.assign(new Event('keydown'), { key: ' ', code: 'Space', isComposing: true }));
       editor.dispatchEvent(new Event('compositionend'));
+      if (scenario === 'confirmed') editor.dispatchEvent(Object.assign(new Event('keyup'), { key: ' ', code: 'Space', isComposing: false }));
       editor.dispatchEvent(new Event('blur'));
       timers.flush();
       if (scenario === 'closed') panel.destroy();
