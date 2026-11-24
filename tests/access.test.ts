@@ -199,6 +199,64 @@ test('a release in another instance invalidates an outstanding renewal', async (
   assert.deepEqual(await pending, { ok: false, error: 'stale' }); assert.equal(access.canUse(), false);
 });
 
+test('a renewal in another vault does not mask a release that the server completed after it', async () => {
+  const { access, state, deps, records } = fixture(); await access.activate(vector.code);
+  const sibling = new Access(deps); sibling.start();
+  let deliver!: (reply: ReturnType<typeof response>) => void;
+  state.request = () => new Promise(resolve => { deliver = resolve; });
+  const pending = access.release();
+  const renewed = active(vector.payload.iat + 60);
+  state.request = async () => response(renewed);
+  assert.ok((await sibling.renew()).ok); assert.equal(records.get(leaseKey), JSON.stringify(renewed));
+  const seen: string[] = [];
+  access.subscribe(event => seen.push(event));
+  deliver(response(terminal('released', { iat: vector.payload.iat + 120, rnb: vector.payload.rnb + 120 })));
+  assert.ok((await pending).ok); assert.deepEqual(seen, ['released', 'change']);
+  assert.equal(records.has(leaseKey), false); assert.equal(access.canUse(), false);
+  sibling.refresh(); assert.equal(sibling.canUse(), false);
+});
+
+test('a release still succeeds after another vault already cleared the binding', async () => {
+  const { access, state, deps, records } = fixture(); await access.activate(vector.code);
+  const sibling = new Access(deps); sibling.start();
+  let deliver!: (reply: ReturnType<typeof response>) => void;
+  state.request = () => new Promise(resolve => { deliver = resolve; });
+  const pending = access.release();
+  state.request = async () => response(terminal('released'));
+  assert.ok((await sibling.renew()).ok); assert.equal(records.has(leaseKey), false);
+  deliver(response(terminal('released', { iat: vector.payload.iat + 1, rnb: vector.payload.rnb + 1 })));
+  assert.ok((await pending).ok); assert.equal(records.has(leaseKey), false); assert.equal(access.canUse(), false);
+});
+
+test('a late release never clears a newer activation or another license stored by another vault', async () => {
+  const released = terminal('released', { iat: vector.payload.iat + 60, rnb: vector.payload.rnb + 60 });
+  for (const replacement of [active(vector.payload.iat + 61), active(vector.payload.iat + 30, { lic: 'b'.repeat(32) })]) {
+    const { access, state, records } = fixture(); await access.activate(vector.code);
+    let deliver!: (reply: ReturnType<typeof response>) => void;
+    state.request = () => new Promise(resolve => { deliver = resolve; });
+    const pending = access.release();
+    records.set(leaseKey, JSON.stringify(replacement));
+    const seen: string[] = [];
+    access.subscribe(event => seen.push(event));
+    deliver(response(released));
+    assert.deepEqual(await pending, { ok: false, error: 'stale' }); assert.deepEqual(seen, []);
+    assert.equal(records.get(leaseKey), JSON.stringify(replacement)); assert.ok(access.canUse());
+  }
+});
+
+test('a renewal from another vault still makes an outstanding renewal and its errors stale', async () => {
+  for (const reply of [response(active(vector.payload.iat + 120)), { status: 503, text: '{"error":"upstream_unavailable"}' }]) {
+    const { access, state, records } = fixture(); await access.activate(vector.code);
+    let deliver!: (reply: { status: number; text: string }) => void;
+    state.request = () => new Promise(resolve => { deliver = resolve; });
+    const pending = access.renew();
+    const renewed = active(vector.payload.iat + 60);
+    records.set(leaseKey, JSON.stringify(renewed));
+    deliver(reply);
+    assert.deepEqual(await pending, { ok: false, error: 'stale' }); assert.equal(records.get(leaseKey), JSON.stringify(renewed));
+  }
+});
+
 for (const status of ['released', 'revoked'] as const) test(`${status} notifies before deletion and preserves trial`, async () => {
   const { access, state, records } = fixture(); access.startTrial(); await access.activate(vector.code);
   const seen: string[] = [];

@@ -273,7 +273,9 @@ export class Access {
     if (this.checkTimer !== undefined) this.deps.cancel(this.checkTimer);
     let timer: number | undefined;
     let success = false;
-    const stale = () => !this.alive || generation !== this.generation || this.lease()?.token !== current?.token || this.device() !== dev;
+    const stale = () => !this.alive || generation !== this.generation || this.device() !== dev;
+    // Another vault on this device can renew, release or activate while this request is in flight.
+    const replaced = () => this.lease()?.token !== current?.token;
     try {
       const deadline = new Promise<never>((_, reject) => {
         this.stopRequest = () => reject(new Error('stale'));
@@ -282,7 +284,8 @@ export class Access {
       const body: Record<string, string> = action === 'activate' ? { code, dev, platform: this.deps.platform, pluginVersion: this.deps.version } : { lease: current!.token };
       if (action === 'renew') body.platform = this.deps.platform;
       const response = await Promise.race([this.deps.request(`/v1/${action}`, body), deadline]);
-      if (stale()) return fail('stale');
+      // Only a signed end of this binding can still apply once the stored lease has changed.
+      if (stale() || (replaced() && (response.status !== 200 || action === 'activate'))) return fail('stale');
       const parsed: unknown = JSON.parse(response.text);
       if (!object(parsed)) return fail('invalid_response');
       if (response.status !== 200) {
@@ -304,6 +307,7 @@ export class Access {
       catch { return fail('invalid_response'); }
       if (payload.dev !== dev || (current && (payload.lic !== current.payload.lic || payload.iat < current.payload.iat))) return fail('invalid_response');
       if (payload.st === 'active') {
+        if (replaced()) return fail('stale');
         const clock = this.clock(this.deps.now());
         // The signed issue time is real time. It also repairs a high-water mark left by a clock that once ran ahead,
         // and a rolled-back clock still cannot move the mark before it.
@@ -318,9 +322,14 @@ export class Access {
         if (!this.write('lease', parsed.lease)) return fail('storage');
       } else {
         if (!current || action === 'activate' || (action === 'release' && payload.st !== 'released')) return fail('invalid_response');
+        // A renewal from another vault does not undo this end: the server issued it no earlier than that lease. A lease
+        // for another license, or one issued later, must have come from a new activation, so it stays.
+        const stored = this.lease();
+        if (stored && stored.token !== current.token && (stored.payload.lic !== payload.lic || stored.payload.iat > payload.iat)) return fail('stale');
         this.emit(payload.st);
-        if (stale()) return fail('stale');
-        if (!this.write('lease', null)) return fail('storage');
+        if (stale() || this.lease()?.token !== stored?.token) return fail('stale');
+        // Another vault may already have cleared the binding; leave unreadable records from other versions alone.
+        if (stored && !this.write('lease', null)) return fail('storage');
       }
       this.deviceResponse = { list, limited: false, token: payload.st === 'active' ? parsed.lease : null };
       success = true; this.refresh(true); return ok;

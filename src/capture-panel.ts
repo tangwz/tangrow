@@ -57,6 +57,8 @@ export class CapturePanel {
   private language = '';
   private submitting = false;
   private composition?: DraftComposition;
+  /** The last composition that ended unconfirmed, until a new composition or ordinary input follows it. */
+  private cancelled?: DraftComposition;
   private protecting = false;
   private mounted = false;
   private dayButtons = new Map<string, HTMLButtonElement>();
@@ -104,6 +106,8 @@ export class CapturePanel {
       if (canEdit() && this.host.access.canUse()) new Notice(this.t(recomposeHint));
     };
     editor.addEventListener('compositionstart', () => {
+      // A new composition, even one that starts while the control is read-only, is not the cancelled one ending late.
+      this.cancelled = undefined;
       if (!canEdit() || !tracksComposition()) return;
       this.composition?.flush();
       if (!canEdit()) return;
@@ -114,6 +118,12 @@ export class CapturePanel {
     editor.addEventListener('compositionend', () => {
       const composition = this.composition;
       if (composition?.control !== editor) {
+        const cancelled = this.cancelled;
+        if (cancelled?.control === editor) {
+          // Drop the cancelled text before a rescue could snapshot it. Draft protection owns a read-only buffer.
+          if (canEdit()) { cancelled.revertLateEnd(this.host.loadComposer().capture); this.syncComposer(); }
+          return;
+        }
         if (!canEdit() || this.rescueIfAccessEnded()) return;
         // An untracked composition (Android, or one that began while the control was read-only) is ordinary input.
         this.host.saveComposer({ capture: editor.value });
@@ -131,7 +141,7 @@ export class CapturePanel {
           return;
         }
         if (confirmed) this.host.saveComposer({ capture: editor.value });
-        else composition.restore(suggestRecomposition);
+        else { composition.restore(suggestRecomposition); this.cancelled = composition; }
         this.syncComposer();
       };
       if (!canEdit()) finish(false);
@@ -140,6 +150,7 @@ export class CapturePanel {
     editor.addEventListener('input', event => {
       if (!canEdit() || this.composition) return;
       if ((event as InputEvent).isComposing && tracksComposition()) return;
+      this.cancelled = undefined;
       this.host.saveComposer({ capture: editor.value });
       this.updateComposerControls();
     });
@@ -273,6 +284,7 @@ export class CapturePanel {
     this.mounted = false;
     this.composition?.dispose();
     this.composition = undefined;
+    this.cancelled = undefined;
     this.unsubscribe?.();
     this.unsubscribeComposer?.();
     this.unsubscribeRecovery?.();

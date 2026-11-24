@@ -262,6 +262,44 @@ test('a valid integer that was typed but not committed is saved when settings mo
   assert.equal(plugin.saveCalls, 2);
 });
 
+test('an integer field nobody typed into never writes back a value another view changed', async () => {
+  const { plugin, row, navigate, byText, dispose } = fixture();
+  navigate('Report settings');
+  const goal = row('activityGoalMinutes').querySelector('input')!;
+  const rendered = Number(goal.value);
+  let saves = 0;
+  const updateReportSettings = plugin.updateReportSettings.bind(plugin);
+  plugin.updateReportSettings = async (patch) => { saves++; await updateReportSettings(patch); };
+  // The report view changes the goal while settings stay open.
+  await updateReportSettings({ activityGoalMinutes: rendered + 17 });
+  await goal.onblur?.();
+  await goal.onchange?.();
+  byText('Back to settings').click();
+  navigate('Report settings');
+  await updateReportSettings({ activityGoalMinutes: rendered + 18 });
+  dispose();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(plugin.settings.activityGoalMinutes, rendered + 18);
+  assert.equal(saves, 0);
+});
+
+test('an integer saved once is not written again over a later change from another view', async () => {
+  const { plugin, row, navigate, dispose } = fixture();
+  navigate('Sidebar components');
+  const duration = row('focusMinutes').querySelector('input')!;
+  duration.value = '45';
+  await duration.oninput?.();
+  await duration.onchange?.();
+  assert.equal(plugin.settings.focusMinutes, 45);
+  await plugin.saveSettings({ focusMinutes: 70 });
+  const saves = plugin.saveCalls;
+  await duration.onblur?.();
+  dispose();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(plugin.settings.focusMinutes, 70);
+  assert.equal(plugin.saveCalls, saves);
+});
+
 test('an earlier integer save failure does not replace an uncommitted edit', async () => {
   const { plugin, row, navigate, dispose } = fixture();
   navigate('Sidebar components');
@@ -328,6 +366,7 @@ test('valid integers save when committed, out of range values show a hint, and a
   assert.equal(root.querySelector('fieldset')?.disabled, true);
   assert.equal(byText('Connect to the internet to renew access and edit local settings.').hidden, false);
   duration.value = '180';
+  await duration.oninput?.();
   await duration.onchange?.();
   assert.equal(plugin.saveCalls, 1);
   byText('Back to settings').click();

@@ -2379,6 +2379,137 @@ for (const { name, preedit, keep, steps } of focusLossScenarios()) test(`IME foc
   });
 });
 
+async function compositionFields(plugin: TestPlugin) {
+  plugin.saveComposer({ capture: 'Original' });
+  plugin.updateWritingDraft({ text: 'Original', title: 'Original' }, 0);
+  const panel = new harness.CapturePanel(plugin, 'window');
+  panel.mount(new GateElement());
+  const studio = await mountedStudio(plugin);
+  const fields = [
+    ['capture', panel.editor, () => plugin.loadComposer().capture],
+    ['title', studio.scratchTitleInput as unknown as StudioElement, () => plugin.loadWritingDraft().title],
+    ['body', studio.scratchEditor as unknown as StudioElement, () => plugin.loadWritingDraft().text]
+  ] as const;
+  return { fields, close: async () => { panel.destroy(); await studio.onClose(); } };
+}
+
+function composeAndLoseFocus(control: StudioElement, timers: { flush(): void }) {
+  control.setSelectionRange(control.value.length, control.value.length);
+  control.dispatchEvent(new Event('compositionstart'));
+  control.value += ' ni';
+  control.dispatchEvent(Object.assign(new Event('input'), { inputType: 'insertCompositionText', isComposing: true }));
+  control.dispatchEvent(new Event('compositionend'));
+  control.dispatchEvent(new Event('blur'));
+  timers.flush();
+}
+
+test('a late compositionend cannot bring back pinyin that focus loss cancelled', async t => {
+  await withWindow(async timers => {
+    const previous = harness.compositionTiming.later;
+    harness.compositionTiming.later = nativeCompositionTiming;
+    try {
+      const { plugin } = createPlugin();
+      const { fields, close } = await compositionFields(plugin);
+      for (const [field, control, shared] of fields) {
+        await t.test(field, () => {
+          composeAndLoseFocus(control, timers);
+          assert.deepEqual([control.value, shared()], ['Original', 'Original']);
+          // The IME ends the cancelled composition again and puts its text back.
+          control.value = 'Original ni';
+          control.selectionStart = control.selectionEnd = control.value.length;
+          control.dispatchEvent(Object.assign(new Event('input'), { inputType: 'insertCompositionText', isComposing: true }));
+          control.dispatchEvent(new Event('compositionend'));
+          timers.flush();
+          assert.deepEqual([control.value, shared(), control.selectionStart], ['Original', 'Original', 'Original'.length]);
+          control.value = 'Original!';
+          control.dispatchEvent(new Event('input'));
+          assert.deepEqual([control.value, shared()], ['Original!', 'Original!']);
+        });
+      }
+      await close();
+    } finally { harness.compositionTiming.later = previous; }
+  });
+});
+
+test('a late compositionend keeps a newer draft from another window instead of the cancelled snapshot', async () => {
+  await withWindow(async timers => {
+    const previous = harness.compositionTiming.later;
+    harness.compositionTiming.later = nativeCompositionTiming;
+    try {
+      const { plugin } = createPlugin();
+      const { fields, close } = await compositionFields(plugin);
+      const [, editor] = fields[0];
+      composeAndLoseFocus(editor, timers);
+      plugin.saveComposer({ capture: 'Original, edited elsewhere' });
+      assert.equal(editor.value, 'Original, edited elsewhere');
+      editor.value += ' ni';
+      editor.dispatchEvent(new Event('compositionend'));
+      assert.deepEqual([editor.value, plugin.loadComposer().capture], ['Original, edited elsewhere', 'Original, edited elsewhere']);
+      await close();
+    } finally { harness.compositionTiming.later = previous; }
+  });
+});
+
+test('after a cancelled composition, a new one keeps its candidate, including one that began while read-only', async t => {
+  await withWindow(async timers => {
+    const previous = harness.compositionTiming.later;
+    harness.compositionTiming.later = nativeCompositionTiming;
+    try {
+      const { plugin } = createPlugin();
+      const { fields, close } = await compositionFields(plugin);
+      for (const [field, control, shared] of fields) {
+        await t.test(field, () => {
+          composeAndLoseFocus(control, timers);
+          // A tracked composition settles as usual.
+          control.dispatchEvent(new Event('compositionstart'));
+          control.value = 'Original 你';
+          control.dispatchEvent(new Event('compositionend'));
+          timers.flush();
+          assert.deepEqual([control.value, shared()], ['Original 你', 'Original 你']);
+          composeAndLoseFocus(control, timers);
+          assert.equal(shared(), 'Original 你');
+          // Access locks the field, composition starts, and the field unlocks before the candidate is picked.
+          control.readOnly = true;
+          control.dispatchEvent(new Event('compositionstart'));
+          control.readOnly = false;
+          control.value = 'Original 你好';
+          control.dispatchEvent(new Event('compositionend'));
+          timers.flush();
+          assert.equal(control.value, 'Original 你好');
+          // Capture saves an untracked ending as input; the writing view saves it with the next input.
+          if (field !== 'capture') control.dispatchEvent(new Event('input'));
+          assert.equal(shared(), 'Original 你好');
+        });
+      }
+      await close();
+    } finally { harness.compositionTiming.later = previous; }
+  });
+});
+
+test('on Android a late compositionend still saves the word being typed', async () => {
+  await withWindow(async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(harness.Platform, 'isAndroidApp');
+    harness.Platform.isAndroidApp = true;
+    try {
+      const { plugin } = createPlugin();
+      const { fields, close } = await compositionFields(plugin);
+      const [, editor] = fields[0];
+      editor.dispatchEvent(new Event('compositionstart'));
+      editor.value = 'Original buy';
+      editor.dispatchEvent(Object.assign(new Event('input'), { isComposing: true }));
+      editor.dispatchEvent(new Event('blur'));
+      editor.dispatchEvent(new Event('compositionend'));
+      editor.value = 'Original buy milk';
+      editor.dispatchEvent(new Event('compositionend'));
+      assert.deepEqual([editor.value, plugin.loadComposer().capture], ['Original buy milk', 'Original buy milk']);
+      await close();
+    } finally {
+      if (descriptor) Object.defineProperty(harness.Platform, 'isAndroidApp', descriptor);
+      else Reflect.deleteProperty(harness.Platform, 'isAndroidApp');
+    }
+  });
+});
+
 test('closing the writing view right after a confirmed candidate keeps it', async () => {
   await withWindow(async () => {
     const previous = harness.compositionTiming.later;

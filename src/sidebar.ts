@@ -91,6 +91,8 @@ export class TangrowSidebar extends ItemView {
   private scratchSaving = false;
   private scratchEditor?: HTMLTextAreaElement;
   private scratchComposition?: DraftComposition;
+  /** The last writing composition that ended unconfirmed, until a new composition or ordinary input follows it. */
+  private cancelledScratchComposition?: DraftComposition;
   private scratchTitleInput?: HTMLInputElement;
   private studioHeading?: HTMLElement;
   private studioCaption?: HTMLElement;
@@ -885,9 +887,12 @@ export class TangrowSidebar extends ItemView {
         if (!this.isStudioControl(control)) return;
         if (compositionForControl()) return;
         if ((event as InputEvent).isComposing && tracksComposition()) return;
+        this.cancelledScratchComposition = undefined;
         updateField();
       });
       control.addEventListener('compositionstart', () => {
+        // A new composition, even one that starts while the control is read-only, is not the cancelled one ending late.
+        this.cancelledScratchComposition = undefined;
         if (!this.isStudioControl(control) || !tracksComposition()) return;
         this.scratchComposition?.flush();
         if (!this.isStudioControl(control)) return;
@@ -910,7 +915,16 @@ export class TangrowSidebar extends ItemView {
           this.host.endWritingDraftComposition(this.viewId);
           return;
         }
-        if (!composition && tracksComposition()) return;
+        if (!composition && tracksComposition()) {
+          const cancelled = this.cancelledScratchComposition;
+          if (cancelled?.control === control) {
+            // Drop the cancelled text before an access check could lock the view and rescue it.
+            const draft = this.host.loadWritingDraft();
+            cancelled.revertLateEnd(field === 'text' ? draft.text : draft.title);
+            this.syncStudio();
+          }
+          return;
+        }
         if (!this.host.access.canUse()) {
           this.host.access.refresh();
           return;
@@ -931,7 +945,7 @@ export class TangrowSidebar extends ItemView {
           this.scratchComposition = undefined;
           if (this.isStudioControl(control)) {
             if (confirmed) this.host.updateWritingDraft({ [field]: control.value }, this.scratchRevision, this.viewId);
-            else composition.restore(suggestRecomposition);
+            else { composition.restore(suggestRecomposition); this.cancelledScratchComposition = composition; }
           }
           this.host.endWritingDraftComposition(this.viewId);
           this.syncStudio();
@@ -961,6 +975,7 @@ export class TangrowSidebar extends ItemView {
     this.scratchEditor = undefined;
     this.scratchComposition?.dispose();
     this.scratchComposition = undefined;
+    this.cancelledScratchComposition = undefined;
     this.scratchTitleInput = undefined;
     this.scratchSaveButton = undefined;
     this.scratchCount = undefined;

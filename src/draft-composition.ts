@@ -155,6 +155,22 @@ export class DraftComposition {
     }
   }
 
+  /**
+   * After this composition was cancelled, an IME can still end it and put its text back. That text was never
+   * confirmed, so the control returns to `saved`, the draft as it is now, with this composition's selection when nothing
+   * else has changed the draft since.
+   */
+  revertLateEnd(saved: string): void {
+    const control = this.control;
+    if (control.value === saved) return;
+    if (saved === this.value) { this.restore(); return; }
+    const focused = control.ownerDocument.activeElement === control;
+    const start = control.selectionStart ?? saved.length;
+    const end = control.selectionEnd ?? start;
+    control.value = saved;
+    if (focused) control.setSelectionRange(Math.min(start, saved.length), Math.min(end, saved.length));
+  }
+
   restoreIfEscaped(): boolean {
     if (!this.escaped) return false;
     this.restore();
