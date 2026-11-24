@@ -462,27 +462,39 @@ test('language switches retain scratch text and a paused focus session in memory
   });
 });
 
-interface TestTimers { flush(): void }
+interface TestTimers {
+  flush(): void;
+  /** Runs only the pending timers whose delay is at most `ms`. */
+  elapse(ms: number): void;
+}
 
 async function withWindow(run: (timers: TestTimers) => Promise<void>): Promise<void> {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'window');
   let nextId = 1;
   const timeouts = new Map<number, () => void>();
+  const delays = new Map<number, number>();
   const fakeWindow = Object.assign(new EventTarget(), {
     localStorage: memoryStorage(),
     navigator: { locks: testWebLocks() },
-    setTimeout(callback: () => void): number { const id = nextId++; timeouts.set(id, callback); return id; },
+    setTimeout(callback: () => void, delay = 0): number { const id = nextId++; timeouts.set(id, callback); delays.set(id, delay); return id; },
     clearTimeout(id: number | undefined): void { if (id !== undefined) timeouts.delete(id); },
     setInterval(): number { return nextId++; },
     clearInterval(): void {}
   });
   Object.defineProperty(globalThis, 'window', { value: fakeWindow, configurable: true });
   try {
-    await run({ flush: () => {
-      const callbacks = [...timeouts.values()];
-      timeouts.clear();
-      callbacks.forEach((callback) => callback());
-    } });
+    await run({
+      flush: () => {
+        const callbacks = [...timeouts.values()];
+        timeouts.clear();
+        callbacks.forEach((callback) => callback());
+      },
+      elapse: (ms) => {
+        const due = [...timeouts].filter(([id]) => (delays.get(id) ?? 0) <= ms);
+        for (const [id] of due) timeouts.delete(id);
+        due.forEach(([, callback]) => callback());
+      }
+    });
   } finally {
     if (descriptor) Object.defineProperty(globalThis, 'window', descriptor);
     else Reflect.deleteProperty(globalThis, 'window');
@@ -2321,6 +2333,45 @@ for (const { name, keep, steps } of refocusScenarios()) test(`IME refocus: ${nam
       }
       panel.destroy();
       await studio.onClose();
+    } finally { harness.compositionTiming.later = previous; }
+  });
+});
+
+for (const { name, keep, finish } of [
+  { name: 'is confirmed when the key is released after the focus-change grace period', keep: true,
+    finish: (control: StudioElement) => control.dispatchEvent(Object.assign(new Event('keyup'), { key: ' ', code: 'Space', isComposing: false })) },
+  { name: 'is dropped at once when focus moves before the key is released', keep: false,
+    finish: (control: StudioElement) => control.dispatchEvent(new Event('blur')) },
+  { name: 'is dropped when the key is never released', keep: false, finish: () => undefined }
+]) test(`IME refocus: a candidate picked with a held confirmation key ${name}`, async t => {
+  await withWindow(async timers => {
+    const previous = harness.compositionTiming.later;
+    harness.compositionTiming.later = nativeCompositionTiming;
+    try {
+      const { plugin } = createPlugin();
+      const { fields, close } = await compositionFields(plugin);
+      for (const [field, control, shared] of fields) {
+        await t.test(field, () => {
+          control.dispatchEvent(new Event('compositionstart'));
+          control.value = 'Original preedit';
+          control.dispatchEvent(Object.assign(new Event('input'), { inputType: 'insertCompositionText', isComposing: true }));
+          control.dispatchEvent(new Event('blur'));
+          control.dispatchEvent(new Event('focus'));
+          // Chromium ends the composition on keydown; a normal press is released 80-120 ms later.
+          control.dispatchEvent(Object.assign(new Event('keydown'), { key: 'Process', code: 'Space', isComposing: true }));
+          control.value = 'Original selected';
+          control.dispatchEvent(new Event('compositionend'));
+          timers.elapse(50);
+          assert.equal(shared(), 'Original');
+          finish(control);
+          if (!keep && name.includes('never')) timers.flush();
+          const expected = keep ? 'Original selected' : 'Original';
+          assert.deepEqual([control.value, shared()], [expected, expected]);
+          timers.flush();
+          assert.deepEqual([control.value, shared()], [expected, expected]);
+        });
+      }
+      await close();
     } finally { harness.compositionTiming.later = previous; }
   });
 });

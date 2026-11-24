@@ -2,6 +2,9 @@ import { Platform } from 'obsidian';
 
 type DraftControl = HTMLInputElement | HTMLTextAreaElement;
 const focusChangeGraceMs = 50;
+// Chromium ends composition on the confirmation keydown, and a normal press is released well after the focus-change
+// grace period. Wait this long at most for the release, unless focus moves first.
+const keyReleaseGraceMs = 1000;
 const finalScript = /^[\p{scx=Hangul}\p{scx=Hiragana}\p{scx=Katakana}]+$/u;
 // Keys that commit a candidate: commit keys, candidate numbers on either keyboard, and punctuation that commits the
 // candidate before inserting its mark. Each is matched by `code`, or by `key` when no code is reported.
@@ -22,7 +25,7 @@ export function tracksComposition(): boolean {
 
 /** Defers a composition's verdict. Tests can replace it to settle synchronously. */
 export const compositionTiming = {
-  later(callback: () => void, owner: Window): void { owner.setTimeout(callback, focusChangeGraceMs); }
+  later(callback: () => void, owner: Window, delay = focusChangeGraceMs): void { owner.setTimeout(callback, delay); }
 };
 
 /**
@@ -44,10 +47,13 @@ export class DraftComposition {
   private confirmationKey?: string;
   private explicitCommit = false;
   private onSettled?: (confirmed: boolean) => void;
+  private awaitingRelease = false;
   private readonly onBlur = () => {
     this.focusState = 'blurred';
     this.confirmationKey = undefined;
     this.explicitCommit = false;
+    // Nothing can confirm the composition after this, so do not hold the draft for the rest of the wait.
+    if (this.awaitingRelease) this.flush();
   };
   private readonly onFocus = () => {
     // Returning after compositionend cannot revive a candidate dismissed by focus loss.
@@ -111,8 +117,11 @@ export class DraftComposition {
   /** Calls `done` once focus changes from the same action have been dispatched. */
   settle(done: (confirmed: boolean) => void): void {
     this.onSettled = done;
-    if (this.explicitCommit) this.flush();
-    else compositionTiming.later(() => this.flush(), this.control.ownerDocument.defaultView ?? window);
+    if (this.explicitCommit) { this.flush(); return; }
+    // After a return, only the release of the confirmation key can confirm the candidate it picked.
+    this.awaitingRelease = this.focusState === 'refocused' && this.confirmationKey !== undefined;
+    compositionTiming.later(() => this.flush(), this.control.ownerDocument.defaultView ?? window,
+      this.awaitingRelease ? keyReleaseGraceMs : focusChangeGraceMs);
   }
 
   /** Settles a finished composition before the control is changed by a new edit. */
@@ -120,6 +129,7 @@ export class DraftComposition {
     const done = this.onSettled;
     if (!done) return undefined;
     this.onSettled = undefined;
+    this.awaitingRelease = false;
     const confirmed = !this.escaped && this.control.isConnected &&
       (this.focusState === 'uninterrupted' || this.explicitCommit || this.composedInFinalScript());
     done(confirmed);
@@ -179,6 +189,7 @@ export class DraftComposition {
 
   dispose(): void {
     this.onSettled = undefined;
+    this.awaitingRelease = false;
     this.control.removeEventListener('blur', this.onBlur);
     this.control.removeEventListener('focus', this.onFocus);
     this.control.removeEventListener('beforeinput', this.onBeforeInput);
