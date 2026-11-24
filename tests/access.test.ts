@@ -54,6 +54,27 @@ function active(iat: number, overrides: { lic?: string; dev?: string } = {}) {
     exp: iat + 30 * DAY_SECONDS } as Lease, Buffer.from(vector.seedHex, 'hex'));
 }
 
+test('an owner build is always available, leaves the trial unused and never contacts the license service', async () => {
+  const records = new Map([['tangrow:trial:v1', JSON.stringify({ startedAt: 0, maxSeenAt: 0 })]]);
+  const before = new Map(records);
+  let requests = 0;
+  const { access, state, timers } = fixture(records, { ownerBuild: true, request: async () => { requests++; return response(); } });
+  assert.deepEqual(access.snapshot(), { state: 'active', expiresAt: null, remainingMs: 0 });
+  assert.equal(access.hasLease(), false);
+  state.now += 400 * DAY_SECONDS * 1000;
+  access.onResume('online');
+  access.onResume('foreground');
+  access.refresh();
+  assert.equal(access.canUse(), true);
+  for (const result of [access.startTrial(), await access.activate(vector.code), await access.renew(), await access.release()]) {
+    assert.deepEqual(result, { ok: false, error: 'owner_build' });
+  }
+  access.dispose();
+  assert.equal(requests, 0);
+  assert.equal(timers.size, 0);
+  assert.deepEqual(records, before);
+});
+
 test('explicit trial spans midnight, survives restart and cannot regain time on rollback', () => {
   const { access, state, deps } = fixture();
   state.now = Date.UTC(2026, 10, 20, 23, 55);

@@ -16,7 +16,7 @@ export function renderAccessStatus(container: HTMLElement, plugin: TangrowPlugin
   const { state } = plugin.access.snapshot();
   container.empty();
   container.createSpan({ cls: `tangrow-settings-dot is-${state}`, attr: { 'aria-hidden': 'true' } });
-  container.createSpan({ text: plugin.t(stateLabels[state]) });
+  container.createSpan({ text: plugin.t(plugin.access.ownerBuild ? 'Owner build' : stateLabels[state]) });
 }
 
 class ReleaseConfirmation extends Modal {
@@ -40,6 +40,16 @@ export function renderActivation(container: HTMLElement, plugin: TangrowPlugin):
   const t = plugin.t.bind(plugin);
   const access = plugin.access;
   const rows = settingRows(plugin, 'activation');
+  const renderVersion = () => {
+    const version = rows.text(container, 'version');
+    version.textContent = t('Current version v{version}', { version: plugin.manifest.version }) + ' · ';
+    version.createEl('a', { text: t('Check for updates ↗'), href: 'https://github.com/tangwz/tangrow/releases', attr: { target: '_blank', rel: 'noopener noreferrer' } });
+  };
+  if (access.ownerBuild) {
+    container.createEl('p', { text: t('This owner build is for your own vaults. Access is never restricted, the trial stays unused, and nothing is sent to the activation service.') });
+    renderVersion();
+    return { refresh() {}, dispose() {} };
+  }
   const redemption = rows.row(container, 'redemption');
   const redemptionHelp = redemption.descEl.textContent;
   const code = redemption.controlEl.createEl('input', {
@@ -61,9 +71,7 @@ export function renderActivation(container: HTMLElement, plugin: TangrowPlugin):
 
   container.createEl('p', { text: t('One purchase includes free updates to local features. Anthropic API fees and Claudian are separate.') });
   container.createEl('p', { text: t('A code covers up to 3 devices. Go online to activate and at least once every 30 days to renew.') });
-  const version = rows.text(container, 'version');
-  version.textContent = t('Current version v{version}', { version: plugin.manifest.version }) + ' · ';
-  version.createEl('a', { text: t('Check for updates ↗'), href: 'https://github.com/tangwz/tangrow/releases', attr: { target: '_blank', rel: 'noopener noreferrer' } });
+  renderVersion();
 
   let busy = false;
   let disposed = false;

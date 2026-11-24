@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "node esbuild.config.mjs --watch",
     "build": "tsc --noEmit && node esbuild.config.mjs",
+    "build:owner": "tsc --noEmit && node esbuild.config.mjs --owner",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
     "install:vault": "node scripts/install.mjs",

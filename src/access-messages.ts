@@ -14,7 +14,8 @@ const errors: Record<string, string> = {
   request_failed: 'Could not reach the activation service. Check your connection and try again.',
   invalid_response: 'The activation service returned an unexpected response.',
   bad_request: 'The activation service rejected the request.',
-  stale: 'Access changed during the request. Try again.'
+  stale: 'Access changed during the request. Try again.',
+  owner_build: 'This owner build does not use activation.'
 };
 
 export function accessErrorMessage(error: string): string {

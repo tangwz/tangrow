@@ -52,6 +52,13 @@ async function seedExistingFiles(target: Fixture) {
   await writeFile(path.join(target.destination, 'data.json'), '{"scratch":"Keep this draft"}\n');
 }
 
+test('installation says whether the vault gets an owner build or a build that checks access', async context => {
+  const target = await fixture(context);
+  assert.match((await install(target)).stdout, /This build checks access: the vault needs a trial or an activation\./);
+  await writeFile(path.join(target.source, 'main.js'), '/* Tangrow 0.4.0 owner build, no access checks | GPL-3.0-or-later */\n');
+  assert.match((await install(target)).stdout, /This is an owner build: access is never restricted/);
+});
+
 test('installation deploys GPL, additional permissions, legacy MIT and third-party notices without changing plugin data', async context => {
   const target = await fixture(context);
   const data = '{"scratch":"Keep this draft"}\n';

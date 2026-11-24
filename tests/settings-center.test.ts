@@ -166,6 +166,7 @@ function fixture(language: 'en' | 'zh-CN' = 'en') {
     change(state: AccessState) { this.state = state; for (const listener of listeners) listener('change'); },
     deviceList: null as Access['deviceList'],
     deviceLimitReached: false,
+    ownerBuild: false,
     async activate(_code: string): Promise<AccessResult> { return { ok: true }; },
     async renew(): Promise<AccessResult> { return { ok: true }; },
     async release(): Promise<AccessResult> { return { ok: true }; }
@@ -478,6 +479,19 @@ test('a fourth device can open its rejected activation from the gate and review 
     devices.map(({ platform, lastRenewedAt }) => `${platform} · Last used ${dates.format(lastRenewedAt * 1000)}`));
   assert.equal(byText('Device limit reached. Release one of your old devices, wait until it has gone 45 days without renewal, or contact the seller.').hidden, false);
   assert.equal(byText('Release this device').hidden, true);
+});
+
+test('an owner build explains that access is never restricted instead of offering activation', () => {
+  const { access, root, row, tab, navigate, byText, dispose } = fixture();
+  access.ownerBuild = true;
+  tab.display();
+  byText('Owner build');
+  navigate('Activation and updates');
+  byText('This owner build is for your own vaults. Access is never restricted, the trial stays unused, and nothing is sent to the activation service.');
+  assert.ok(!row('redemption'));
+  assert.ok(!root.descendants().some(item => ['Start 24-hour trial', 'Activate this device', 'Release this device'].includes(item.textContent ?? '')));
+  byText('Owner build');
+  dispose();
 });
 
 test('activation shows the device limit response and releasing this device requires confirmation', async () => {

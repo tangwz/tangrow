@@ -5,7 +5,7 @@ import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { build } from 'esbuild';
-import { buildOptions, root } from './plugin-build.mjs';
+import { buildOptions, ownerBanner, root } from './plugin-build.mjs';
 
 const manifest = JSON.parse(await readFile(path.join(root, 'manifest.json'), 'utf8'));
 const metadata = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
@@ -22,6 +22,9 @@ for (const name of files) {
 }
 const banner = `/* Tangrow ${manifest.version} | GPL-3.0-or-later |`;
 const bundle = await readFile(path.join(root, 'main.js'));
+if (bundle.toString('utf8').startsWith(ownerBanner)) {
+  throw new Error('main.js is an owner build without access checks and must not be released. Run npm run build before packaging.');
+}
 if (!bundle.toString('utf8').startsWith(banner)) {
   throw new Error('The production bundle has a stale version or license banner. Run npm run build before packaging.');
 }

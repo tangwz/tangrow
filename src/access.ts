@@ -44,6 +44,8 @@ export interface AccessDependencies {
   later: (callback: () => void, delay: number) => number;
   cancel: (timer: number) => void;
   warn: (message: string) => void;
+  /** Owner builds never restrict access, never contact the license service and leave the trial unused. */
+  ownerBuild?: boolean;
 }
 
 export class Access {
@@ -67,6 +69,7 @@ export class Access {
 
   get deviceList(): DeviceList | null { return this.deviceResponse?.list ?? null; }
   get deviceLimitReached(): boolean { return this.deviceResponse?.limited ?? false; }
+  get ownerBuild(): boolean { return this.deps.ownerBuild === true; }
 
   constructor(private readonly deps: AccessDependencies) {}
 
@@ -144,7 +147,8 @@ export class Access {
     } catch { return this.invalid('lease'); }
   }
 
-  snapshot(now = this.deps.now(), persist = true) {
+  snapshot(now = this.deps.now(), persist = true): { state: AccessState; expiresAt: number | null; remainingMs: number } {
+    if (this.ownerBuild) return { state: 'active', expiresAt: null, remainingMs: 0 };
     const clock = this.clock(now, persist);
     const lease = this.lease()?.payload;
     const trialEnd = clock.startedAt === null ? null : clock.startedAt + DAY;
@@ -158,7 +162,7 @@ export class Access {
   }
 
   canUse(now = this.deps.now()) { return ['trial', 'active'].includes(this.snapshot(now).state); }
-  hasLease(): boolean { return this.lease() !== null; }
+  hasLease(): boolean { return !this.ownerBuild && this.lease() !== null; }
   subscribe(listener: (event: AccessEvent) => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   private emit(event: AccessEvent) {
     for (const listener of this.listeners) { try { listener(event); } catch { this.warn('listener failed'); } }
@@ -180,6 +184,7 @@ export class Access {
 
   startTrial(): AccessResult {
     if (!this.alive) return fail('stale');
+    if (this.ownerBuild) return fail('owner_build');
     const clock = this.clock(this.deps.now());
     if (clock.startedAt !== null || this.lease()) return fail('unavailable');
     if (!this.write('trial', { ...clock, startedAt: clock.maxSeenAt })) return fail('storage');
@@ -189,6 +194,7 @@ export class Access {
   start() {
     if (this.alive) return;
     this.alive = true;
+    if (this.ownerBuild) { this.refresh(); return; }
     if (!this.device()) void this.initializeDevice();
     this.refresh();
     void this.check();
@@ -196,7 +202,7 @@ export class Access {
 
   dispose() {
     // Store the exact mark that throttled writes may have held back.
-    if (this.alive) this.clock(this.deps.now(), true, true);
+    if (this.alive && !this.ownerBuild) this.clock(this.deps.now(), true, true);
     this.alive = false; this.generation++; this.stopRequest?.(); this.listeners.clear();
     if (this.checkTimer !== undefined) this.deps.cancel(this.checkTimer);
     if (this.expiryTimer !== undefined) this.deps.cancel(this.expiryTimer);
@@ -209,7 +215,7 @@ export class Access {
   }
 
   onResume(reason: 'online' | 'foreground'): void {
-    if (!this.alive) return;
+    if (!this.alive || this.ownerBuild) return;
     this.refresh();
     if (this.busy && reason === 'online') this.retryOnReconnect = true;
     void this.check(reason);
@@ -231,6 +237,7 @@ export class Access {
 
   async activate(code: string) {
     if (!this.alive) return fail('stale');
+    if (this.ownerBuild) return fail('owner_build');
     if (this.hasLease()) return fail('release_first');
     try { code = normalizeCode(code); } catch { return fail('invalid_code'); }
     if (!this.device()) await this.initializeDevice();
@@ -248,6 +255,7 @@ export class Access {
 
   private async call(action: 'activate' | 'renew' | 'release', background: boolean, code = ''): Promise<AccessResult> {
     if (!this.alive) return fail('stale');
+    if (this.ownerBuild) return fail('owner_build');
     const current = this.lease();
     // Recheck under the activation lock before the server can allocate a seat.
     if (action === 'activate' && current) return fail('release_first');

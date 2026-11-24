@@ -116,4 +116,7 @@ if (!options.dryRun) {
     console.log('Installed Tangrow. Existing notes, folders, workspace state and plugin data were preserved.');
     console.log('Reload Obsidian or enable Tangrow in Community plugins, then run Tangrow: Set up companion Bases.');
   }
+  const ownerBuild = /^\/\* Tangrow \S+ owner build, no access checks \|/.test(await readFile(path.join(root, 'main.js'), 'utf8'));
+  console.log(ownerBuild ? 'This is an owner build: access is never restricted and the trial stays unused.'
+    : 'This build checks access: the vault needs a trial or an activation. Use npm run build:owner for your own vaults.');
 } else console.log('Dry run complete. No files were written.');

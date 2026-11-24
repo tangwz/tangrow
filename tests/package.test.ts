@@ -67,6 +67,14 @@ test('a stale MIT, proprietary or previous-version bundle cannot be packaged as 
   await assert.rejects(readFile(target.archive), { code: 'ENOENT' });
 });
 
+test('an owner build cannot be packaged as a release', async context => {
+  const target = await fixture(context);
+  await execute(process.execPath, [path.join(target.root, 'esbuild.config.mjs'), '--owner']);
+  assert.match(await readFile(path.join(target.root, 'main.js'), 'utf8'), /^\/\* Tangrow 0\.4\.0 owner build, no access checks \|/);
+  await assert.rejects(execute(process.execPath, [target.script]), /owner build without access checks/);
+  await assert.rejects(readFile(target.archive), { code: 'ENOENT' });
+});
+
 test('version and license metadata must agree before packaging', async context => {
   const target = await fixture(context);
   for (const metadata of [{ version: '0.3.0', license: 'GPL-3.0-or-later' }, { version: '0.4.0', license: 'MIT' }, { version: '0.4.0', license: 'SEE LICENSE IN LICENSE' }]) {
