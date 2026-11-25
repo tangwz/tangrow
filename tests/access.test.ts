@@ -406,6 +406,37 @@ test('startup renews expired leases with a 12s timeout and bounded retry delays'
   reopened.dispose();
 });
 
+for (const [elapsed, accepted] of [[8_000, true], [12_001, false]] as const) {
+  test(`background renewal handles a signed response after ${elapsed}ms`, async () => {
+    const { access, state, records, timers } = fixture();
+    assert.ok((await access.activate(vector.code)).ok);
+    state.now = vector.payload.exp * 1000;
+    const reply = deferred<ReturnType<typeof response>>();
+    state.request = async (path, body) => {
+      assert.equal(path, '/v1/renew');
+      assert.equal(body.lease, vector.lease);
+      return reply.promise;
+    };
+    access.onResume('online');
+
+    state.now += elapsed;
+    for (const [id, timer] of [...timers]) {
+      if (timer.delay > elapsed) continue;
+      timers.delete(id);
+      timer.callback();
+    }
+    await nextTurn();
+    const renewed = active(Math.floor(state.now / 1000));
+    reply.resolve(response(renewed));
+    await nextTurn();
+
+    assert.equal(records.get(leaseKey), JSON.stringify(accepted ? renewed : vector.lease));
+    assert.equal(access.snapshot().state, accepted ? 'active' : 'needs_network');
+    assert.ok([...timers.values()].some(timer => timer.delay === (accepted ? 6 : 1) * hour));
+    access.dispose();
+  });
+}
+
 function browserWindows(backend: 'Web Locks' | 'IndexedDB', performance: Pick<Performance, 'timeOrigin' | 'now'> = globalThis.performance) {
   const locks = backend === 'Web Locks' ? globalThis.navigator?.locks ?? testWebLocks() : undefined;
   const indexedDB = new IDBFactory();
