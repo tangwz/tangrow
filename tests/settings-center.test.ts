@@ -397,6 +397,74 @@ test('failed external settings writes notify listeners on rollback so integer fi
   }
 });
 
+for (const [name, read, write] of [
+  ['knowledge features', (plugin: TangrowPlugin) => plugin.settings.knowledgeEnabled,
+    (plugin: TangrowPlugin) => plugin.updateKnowledgeEnabled(!plugin.settings.knowledgeEnabled)],
+  ['journal format', (plugin: TangrowPlugin) => plugin.settings.journalFormat,
+    (plugin: TangrowPlugin) => plugin.updateJournalSettings('daily', 'YYYY/[Day] MM-DD')],
+  ['AI settings', (plugin: TangrowPlugin) => plugin.settings.aiEnabled,
+    (plugin: TangrowPlugin) => plugin.updateAiSettings({ aiEnabled: !plugin.settings.aiEnabled })],
+  ['AI key', (plugin: TangrowPlugin) => plugin.settings.aiApiKey,
+    (plugin: TangrowPlugin) => plugin.setAiKey('sk-ant-test-key')],
+  ['interface language', (plugin: TangrowPlugin) => plugin.settings.language,
+    (plugin: TangrowPlugin) => plugin.setLanguage(plugin.settings.language === 'en' ? 'zh-CN' : 'en')]
+] as const) test(`a failed ${name} write refreshes views with the restored value`, async () => {
+  const { plugin, dispose } = fixture();
+  const original = read(plugin);
+  const seen: unknown[] = [];
+  plugin.subscribe(() => seen.push(read(plugin)));
+  let rejectSave!: (reason: Error) => void;
+  plugin.saveData = () => new Promise<void>((_, reject) => { rejectSave = reject; });
+  const pending = write(plugin);
+  await new Promise(resolve => setImmediate(resolve));
+  // An unrelated refresh renders the unsaved value while the write is in flight.
+  await plugin.action('refresh');
+  assert.notDeepEqual(seen.at(-1), original);
+  rejectSave(new Error('Save failed'));
+  await assert.rejects(pending, /Save failed/);
+  assert.deepEqual([read(plugin), seen.at(-1)], [original, original]);
+  dispose();
+});
+
+test('a commit of the value another view is still saving is kept when that save fails', async () => {
+  const { plugin, row, navigate, dispose } = fixture();
+  navigate('Report settings');
+  const goal = row('activityGoalMinutes').querySelector('input')!;
+  const rendered = Number(goal.value);
+  const saveData = plugin.saveData.bind(plugin);
+  let rejectFirst!: (reason: Error) => void;
+  let writes = 0;
+  plugin.saveData = (data) => ++writes === 1 ? new Promise<void>((_, reject) => { rejectFirst = reject; }) : saveData(data);
+  // The report view starts saving a new goal; the settings field is being edited, so it keeps the user's input.
+  goal.focus();
+  const external = plugin.updateReportSettings({ activityGoalMinutes: rendered + 30 });
+  await new Promise(resolve => setImmediate(resolve));
+  goal.value = String(rendered + 30);
+  await goal.oninput?.();
+  const commit = goal.onchange?.();
+  rejectFirst(new Error('Save failed'));
+  await assert.rejects(external, /Save failed/);
+  await commit;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual([goal.value, plugin.settings.activityGoalMinutes], [String(rendered + 30), rendered + 30]);
+  dispose();
+});
+
+test('a view that fails to refresh after a rollback neither hides the save error nor blocks other views', async () => {
+  const { plugin, dispose } = fixture();
+  const original = plugin.settings.focusMinutes;
+  plugin.subscribe(() => { throw new Error('View refresh failed'); });
+  const seen: number[] = [];
+  plugin.subscribe(() => seen.push(plugin.settings.focusMinutes));
+  plugin.saveData = () => Promise.reject(new Error('Save failed'));
+  const errors = console.error;
+  console.error = () => undefined;
+  try { await assert.rejects(plugin.saveSettings({ focusMinutes: original + 5 }), /Save failed/); }
+  finally { console.error = errors; }
+  assert.deepEqual([plugin.settings.focusMinutes, seen.at(-1)], [original, original]);
+  dispose();
+});
+
 test('an integer typed back to its original value while the first save is in flight saves the original value', async () => {
   const { plugin, row, navigate, dispose } = fixture();
   navigate('Sidebar components');

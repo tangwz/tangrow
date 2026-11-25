@@ -149,8 +149,8 @@ export function renderSection(container: HTMLElement, id: Exclude<SectionId, 'ac
     const commit = async () => {
       const value = check();
       if (value === null || value === committed || !canEdit()) return;
-      // While an earlier save is in flight the stored value is not final, so it cannot stand in for this one.
-      if (inFlight === 0 && value === get()) { committed = value; return; }
+      // Save even when the setting already holds this value: another view's write of it may still be in flight and
+      // could fail, and an unsaved value cannot stand in for this commit. Saving an unchanged value is harmless.
       const inputRevision = latestCommit = ++revision;
       committed = value;
       inFlight++;
