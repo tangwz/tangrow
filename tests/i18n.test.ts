@@ -14,6 +14,9 @@ import reportSettings from '../src/locales/report-settings.zh-CN.json';
 import reportKnowledge from '../src/locales/report-knowledge.zh-CN.json';
 import workbench from '../src/locales/workbench.zh-CN.json';
 import chinese from '../src/locales/bases.zh-CN.json';
+import accessGate from '../src/locales/access-gate.zh-CN.json';
+import settingsCenter from '../src/locales/settings-center.zh-CN.json';
+import { readFileSync } from 'node:fs';
 
 function placeholders(value: string): string[] {
   return [...value.matchAll(/\{([a-zA-Z][a-zA-Z0-9_]*)\}/g)].map((match) => match[1]!).sort();
@@ -50,11 +53,19 @@ test('the Bases dictionary retains every interpolation token and supplies Chines
 
 test('all interface dictionaries keep shared terms and interpolation tokens consistent', () => {
   const seen = new Map<string, string>();
-  for (const dictionary of [core, sidebar, chinese, report, capture, expanded, reportSettings, activity, periodic, assistant, reportKnowledge, workbench]) {
+  for (const dictionary of [core, sidebar, chinese, report, capture, expanded, reportSettings, activity, periodic, assistant, reportKnowledge, workbench, accessGate, settingsCenter]) {
     for (const [source, translated] of Object.entries(dictionary)) {
       assert.deepEqual(placeholders(translated), placeholders(source), source);
       if (seen.has(source)) assert.equal(translated, seen.get(source), source);
       seen.set(source, translated);
     }
   }
+});
+
+test('errors for unreadable saved drafts are shown in Chinese', () => {
+  // The module imports Obsidian, so read its messages from the source instead of loading it.
+  const source = readFileSync(new URL('../src/draft-submissions.ts', import.meta.url), 'utf8');
+  const messages = new Set([...source.matchAll(/throw new Error\('([^']+)'\)/g)].map((match) => match[1]!));
+  assert.ok(messages.has('Saved recovery drafts are invalid.'));
+  for (const message of messages) assert.match(translate('zh-CN', message), /\p{Script=Han}/u, message);
 });

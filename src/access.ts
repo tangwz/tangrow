@@ -137,6 +137,12 @@ export class Access {
     return clock;
   }
 
+  /** The tag of the current activation. A value of another type is unreadable, so it compares as no tag. */
+  private binding(): string | null {
+    const tag = this.read('binding');
+    return tag === null || typeof tag === 'string' ? tag : this.invalid('binding');
+  }
+
   private lease() {
     const token = this.read('lease');
     if (token === null) return null;
@@ -258,7 +264,7 @@ export class Access {
     if (!this.alive) return fail('stale');
     if (this.ownerBuild) return fail('owner_build');
     const current = this.lease();
-    const binding = this.read('binding');
+    const binding = this.binding();
     // Recheck under the activation lock before the server can allocate a seat.
     if (action === 'activate' && current) return fail('release_first');
     if (action !== 'activate' && !current) return fail('no_lease');
@@ -276,8 +282,10 @@ export class Access {
     let timer: number | undefined;
     let success = false;
     const stale = () => !this.alive || generation !== this.generation || this.device() !== dev;
-    // Another vault on this device can renew, release or activate while this request is in flight.
-    const replaced = () => this.lease()?.token !== current?.token;
+    // Another vault on this device can renew, release or activate while this request is in flight. Signatures are
+    // deterministic, so a reactivation in the same second can store a lease identical to this one; only its tag differs.
+    const reactivated = () => this.binding() !== binding;
+    const replaced = () => this.lease()?.token !== current?.token || reactivated();
     try {
       const deadline = new Promise<never>((_, reject) => {
         this.stopRequest = () => reject(new Error('stale'));
@@ -326,12 +334,13 @@ export class Access {
         if (!this.write('lease', parsed.lease)) return fail('storage');
       } else {
         if (!current || action === 'activate' || (action === 'release' && payload.st !== 'released')) return fail('invalid_response');
-        // A renewal from another vault does not undo this end. A lease from a new activation since this request
-        // started carries a new tag, even within the same second, so it stays.
+        // A renewal from another vault does not undo this end. A new activation since this request started carries a
+        // new tag, even within the same second and even when its token is identical, so this end no longer applies,
+        // whether that activation's lease is still stored or has since ended too. Check before notifying listeners.
         const stored = this.lease();
-        if (stored && stored.token !== current.token && (stored.payload.lic !== payload.lic || this.read('binding') !== binding)) return fail('stale');
+        if (reactivated() || (stored && stored.payload.lic !== payload.lic)) return fail('stale');
         this.emit(payload.st);
-        if (stale() || this.lease()?.token !== stored?.token) return fail('stale');
+        if (stale() || this.lease()?.token !== stored?.token || reactivated()) return fail('stale');
         // Another vault may already have cleared the binding; leave unreadable records from other versions alone.
         if (stored && !this.write('lease', null)) return fail('storage');
       }

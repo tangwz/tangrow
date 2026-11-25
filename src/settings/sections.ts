@@ -49,6 +49,9 @@ export function renderSection(container: HTMLElement, id: Exclude<SectionId, 'ac
   const t = plugin.t.bind(plugin);
   const rows = settingRows(plugin, id);
   const pending: (() => void)[] = [];
+  // Fields that follow changes made elsewhere, such as the report view, while this section is open.
+  const syncs: (() => void)[] = [];
+  let disposed = false;
   if (id === 'guide') {
     const row = rows.row(container, 'tutorial');
     row.controlEl.createEl('a', {
@@ -133,33 +136,53 @@ export function renderSection(container: HTMLElement, id: Exclude<SectionId, 'ac
       control.setAttribute('aria-invalid', String(value === null));
       return value;
     };
-    // change, blur and leaving the section can all fire for one edit; only one save per value may be in flight.
-    let saving: number | null = null;
-    // Another view can change the setting while this page is open. Only a value that differs from what this field
-    // last showed or saved is the user's change, so a field left at, or typed back to, that value never writes it back.
-    let shown = get();
+    // The value this field showed when rendered, or last sent to be saved, even if that save is still in flight.
+    // Another view can change the setting while this page is open, so only a value that differs from it is the
+    // user's change: a field left at, or typed back to, that value never writes it back. change, blur and leaving
+    // the section can all fire for one edit, and comparing with it also saves that edit once.
+    let committed = get();
+    let inFlight = 0;
+    // Which commit set `committed`. A value can be committed more than once, so a failure is matched by commit, not
+    // by value: 45, 25, 45 with the first 45 failing must keep the last 45.
+    let latestCommit = 0;
     // Validate while typing, but save only the committed value: typing 300 must not store 3 and 30 on the way.
     const commit = async () => {
       const value = check();
-      if (value === null || value === shown || value === saving || !canEdit()) return;
-      if (value === get()) { shown = value; return; }
-      const inputRevision = ++revision;
-      saving = value;
-      try {
-        await save(value);
-        shown = value;
-      } catch (failure) {
-        if (inputRevision === revision) control.value = String(shown = get());
+      if (value === null || value === committed || !canEdit()) return;
+      // Save even when the setting already holds this value: another view's write of it may still be in flight and
+      // could fail, and an unsaved value cannot stand in for this commit. Saving an unchanged value is harmless.
+      const inputRevision = latestCommit = ++revision;
+      committed = value;
+      inFlight++;
+      try { await save(value); }
+      catch (failure) {
+        // Saves land in order, so when the latest commit fails every earlier one has finished and the stored value
+        // is final. A failure that later commits superseded changes nothing.
+        if (inputRevision === latestCommit) committed = get();
+        if (inputRevision === revision) control.value = String(get());
         presentError(failure);
-      } finally {
-        if (saving === value) saving = null;
-      }
+      } finally { inFlight--; }
+    };
+    const isFocused = () =>
+      control.ownerDocument.activeElement === control && control.ownerDocument.hasFocus?.() !== false;
+    // Show a value changed elsewhere unless the user is editing here or a save from this field is still landing, so
+    // the field never displays a stale value that typing it again could not restore.
+    const sync = () => {
+      const stored = get();
+      if (disposed || inFlight > 0 || stored === committed || isFocused() || wholeMinutes(control.value, max) !== committed) return;
+      committed = stored;
+      control.value = String(stored);
+      check();
     };
     control.oninput = () => { revision++; check(); };
     control.onchange = commit;
     // Closing settings can remove a focused field without a change event, so leaving the section commits too.
-    control.onblur = commit;
+    control.onblur = async () => {
+      await commit();
+      sync();
+    };
     pending.push(() => { void commit(); });
+    syncs.push(sync);
   }
 
   function folder(key: FolderSettingKey, parent?: HTMLElement): void {
@@ -266,7 +289,15 @@ export function renderSection(container: HTMLElement, id: Exclude<SectionId, 'ac
       break;
   }
   updateGate();
-  return { refresh: updateGate, dispose: () => { for (const commit of pending) commit(); } };
+  const unsubscribe = syncs.length ? plugin.subscribe(() => { for (const sync of syncs) sync(); }) : undefined;
+  return {
+    refresh: updateGate,
+    dispose: () => {
+      disposed = true;
+      unsubscribe?.();
+      for (const commit of pending) commit();
+    }
+  };
 }
 
 export function wholeMinutes(value: string, max: number): number | null {
