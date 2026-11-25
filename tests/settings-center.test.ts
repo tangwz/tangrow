@@ -283,6 +283,40 @@ test('an integer field nobody typed into never writes back a value another view 
   assert.equal(saves, 0);
 });
 
+test('an integer typed back to the value it showed does not overwrite a newer value from another view', async () => {
+  const { plugin, row, navigate, dispose } = fixture();
+  navigate('Report settings');
+  const goal = row('activityGoalMinutes').querySelector('input')!;
+  const rendered = Number(goal.value);
+  const updateReportSettings = plugin.updateReportSettings.bind(plugin);
+  // The report view changes the goal while the settings page still shows the old value.
+  await updateReportSettings({ activityGoalMinutes: rendered + 30 });
+  let saves = 0;
+  plugin.updateReportSettings = async (patch) => { saves++; await updateReportSettings(patch); };
+  for (const value of [String(rendered + 1), String(rendered)]) {
+    goal.value = value;
+    await goal.oninput?.();
+  }
+  await goal.onblur?.();
+  dispose();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(plugin.settings.activityGoalMinutes, rendered + 30);
+  assert.equal(saves, 0);
+});
+
+test('a different integer typed over a stale page still saves the user\'s value', async () => {
+  const { plugin, row, navigate, dispose } = fixture();
+  navigate('Report settings');
+  const goal = row('activityGoalMinutes').querySelector('input')!;
+  const rendered = Number(goal.value);
+  await plugin.updateReportSettings({ activityGoalMinutes: rendered + 30 });
+  goal.value = String(rendered + 5);
+  await goal.oninput?.();
+  dispose();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(plugin.settings.activityGoalMinutes, rendered + 5);
+});
+
 test('an integer saved once is not written again over a later change from another view', async () => {
   const { plugin, row, navigate, dispose } = fixture();
   navigate('Sidebar components');

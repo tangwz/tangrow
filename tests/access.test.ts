@@ -41,7 +41,8 @@ function fixture(records = new Map<string, string>(), overrides: Partial<AccessD
   const deps: AccessDependencies = {
     coordination: localCoordination(),
     storage: () => ({ getItem: key => records.get(key) ?? null, setItem: (key, value) => records.set(key, value), removeItem: key => records.delete(key) }),
-    now: () => state.now, bytes: () => Buffer.from(vector.deviceId, 'hex'), jitter: () => 0, keys: { 'test-1': vector.publicKey }, platform: 'iOS', version: '1',
+    // The device ID is fixed to match the vectors; other random values, such as activation tags, stay random.
+    now: () => state.now, bytes: size => size === 16 ? Buffer.from(vector.deviceId, 'hex') : nacl.randomBytes(size), jitter: () => 0, keys: { 'test-1': vector.publicKey }, platform: 'iOS', version: '1',
     request: (path, body) => state.request(path, body), later: (callback, delay) => { timers.set(++next, { callback, delay }); return next; },
     cancel: timer => { timers.delete(timer); }, warn: message => { warnings.push(message); }, ...overrides
   };
@@ -228,20 +229,37 @@ test('a release still succeeds after another vault already cleared the binding',
   assert.ok((await pending).ok); assert.equal(records.has(leaseKey), false); assert.equal(access.canUse(), false);
 });
 
-test('a late release never clears a newer activation or another license stored by another vault', async () => {
-  const released = terminal('released', { iat: vector.payload.iat + 60, rnb: vector.payload.rnb + 60 });
-  for (const replacement of [active(vector.payload.iat + 61), active(vector.payload.iat + 30, { lic: 'b'.repeat(32) })]) {
-    const { access, state, records } = fixture(); await access.activate(vector.code);
-    let deliver!: (reply: ReturnType<typeof response>) => void;
-    state.request = () => new Promise(resolve => { deliver = resolve; });
-    const pending = access.release();
-    records.set(leaseKey, JSON.stringify(replacement));
-    const seen: string[] = [];
-    access.subscribe(event => seen.push(event));
-    deliver(response(released));
-    assert.deepEqual(await pending, { ok: false, error: 'stale' }); assert.deepEqual(seen, []);
-    assert.equal(records.get(leaseKey), JSON.stringify(replacement)); assert.ok(access.canUse());
-  }
+test('a late release never clears a reactivation issued in the same second by another vault', async () => {
+  const { access, state, deps, records } = fixture(); await access.activate(vector.code);
+  const sibling = new Access(deps); sibling.start();
+  let deliver!: (reply: ReturnType<typeof response>) => void;
+  state.request = () => new Promise(resolve => { deliver = resolve; });
+  const pending = access.release();
+  // The server releases the device; the other vault learns of it on renewal and activates the same code again.
+  const second = vector.payload.iat + 60;
+  const released = terminal('released', { iat: second, rnb: vector.payload.rnb + 60 });
+  state.request = async () => response(released);
+  assert.ok((await sibling.renew()).ok); assert.equal(records.has(leaseKey), false);
+  const reactivated = active(second);
+  state.request = async () => response(reactivated);
+  assert.ok((await sibling.activate(vector.code)).ok);
+  const seen: string[] = [];
+  access.subscribe(event => seen.push(event));
+  deliver(response(released));
+  assert.deepEqual(await pending, { ok: false, error: 'stale' }); assert.deepEqual(seen, []);
+  assert.equal(records.get(leaseKey), JSON.stringify(reactivated)); assert.ok(access.canUse()); assert.ok(sibling.canUse());
+});
+
+test('a late release never clears a lease for another license stored by another vault', async () => {
+  const { access, state, records } = fixture(); await access.activate(vector.code);
+  let deliver!: (reply: ReturnType<typeof response>) => void;
+  state.request = () => new Promise(resolve => { deliver = resolve; });
+  const pending = access.release();
+  const replacement = active(vector.payload.iat + 30, { lic: 'b'.repeat(32) });
+  records.set(leaseKey, JSON.stringify(replacement));
+  deliver(response(terminal('released', { iat: vector.payload.iat + 60, rnb: vector.payload.rnb + 60 })));
+  assert.deepEqual(await pending, { ok: false, error: 'stale' });
+  assert.equal(records.get(leaseKey), JSON.stringify(replacement)); assert.ok(access.canUse());
 });
 
 test('a renewal from another vault still makes an outstanding renewal and its errors stale', async () => {

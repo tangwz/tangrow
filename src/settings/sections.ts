@@ -135,28 +135,27 @@ export function renderSection(container: HTMLElement, id: Exclude<SectionId, 'ac
     };
     // change, blur and leaving the section can all fire for one edit; only one save per value may be in flight.
     let saving: number | null = null;
-    // Another view can change the setting while this page is open, so a field nobody typed into never writes back
-    // the value it was rendered with.
-    let edited = false;
+    // Another view can change the setting while this page is open. Only a value that differs from what this field
+    // last showed or saved is the user's change, so a field left at, or typed back to, that value never writes it back.
+    let shown = get();
     // Validate while typing, but save only the committed value: typing 300 must not store 3 and 30 on the way.
     const commit = async () => {
-      if (!edited) return;
       const value = check();
-      if (value === null || value === saving || !canEdit()) return;
-      if (value === get()) { edited = false; return; }
+      if (value === null || value === shown || value === saving || !canEdit()) return;
+      if (value === get()) { shown = value; return; }
       const inputRevision = ++revision;
       saving = value;
       try {
         await save(value);
-        if (inputRevision === revision) edited = false;
+        shown = value;
       } catch (failure) {
-        if (inputRevision === revision) { control.value = String(get()); edited = false; }
+        if (inputRevision === revision) control.value = String(shown = get());
         presentError(failure);
       } finally {
         if (saving === value) saving = null;
       }
     };
-    control.oninput = () => { revision++; edited = true; check(); };
+    control.oninput = () => { revision++; check(); };
     control.onchange = commit;
     // Closing settings can remove a focused field without a change event, so leaving the section commits too.
     control.onblur = commit;

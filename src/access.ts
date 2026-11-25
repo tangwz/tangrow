@@ -15,7 +15,8 @@ export type DevicePlatform = typeof platforms[number];
 /** `platform` is null when the license server cannot read the stored value. */
 type Device = { platform: DevicePlatform | null; lastRenewedAt: number; isCurrent: boolean };
 type DeviceList = { devices: Device[]; deviceLimit: number };
-type RecordName = 'device' | 'trial' | 'lease';
+/** `binding` is a random tag written by each activation. Renewals keep it, so it tells a renewal from a reactivation. */
+type RecordName = 'device' | 'trial' | 'lease' | 'binding';
 /** `trustedAt` is the signed issue time that last corrected `maxSeenAt`. */
 type ClockRecord = { startedAt: number | null; maxSeenAt: number; trustedAt?: number };
 export type AccessState = 'active' | 'trial' | 'needs_network' | 'expired' | 'not_started';
@@ -257,6 +258,7 @@ export class Access {
     if (!this.alive) return fail('stale');
     if (this.ownerBuild) return fail('owner_build');
     const current = this.lease();
+    const binding = this.read('binding');
     // Recheck under the activation lock before the server can allocate a seat.
     if (action === 'activate' && current) return fail('release_first');
     if (action !== 'activate' && !current) return fail('no_lease');
@@ -319,13 +321,15 @@ export class Access {
         if (!this.write('trial', { startedAt, maxSeenAt, trustedAt } satisfies ClockRecord)) return fail('storage');
         this.trustedAt = trustedAt;
         this.highWater = maxSeenAt;
+        // Tag the activation before its lease becomes visible to other vaults.
+        if (action === 'activate' && !this.write('binding', hex(this.deps.bytes(8)))) return fail('storage');
         if (!this.write('lease', parsed.lease)) return fail('storage');
       } else {
         if (!current || action === 'activate' || (action === 'release' && payload.st !== 'released')) return fail('invalid_response');
-        // A renewal from another vault does not undo this end: the server issued it no earlier than that lease. A lease
-        // for another license, or one issued later, must have come from a new activation, so it stays.
+        // A renewal from another vault does not undo this end. A lease from a new activation since this request
+        // started carries a new tag, even within the same second, so it stays.
         const stored = this.lease();
-        if (stored && stored.token !== current.token && (stored.payload.lic !== payload.lic || stored.payload.iat > payload.iat)) return fail('stale');
+        if (stored && stored.token !== current.token && (stored.payload.lic !== payload.lic || this.read('binding') !== binding)) return fail('stale');
         this.emit(payload.st);
         if (stale() || this.lease()?.token !== stored?.token) return fail('stale');
         // Another vault may already have cleared the binding; leave unreadable records from other versions alone.
