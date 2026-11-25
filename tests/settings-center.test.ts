@@ -289,19 +289,46 @@ test('an integer typed back to the value it showed does not overwrite a newer va
   const goal = row('activityGoalMinutes').querySelector('input')!;
   const rendered = Number(goal.value);
   const updateReportSettings = plugin.updateReportSettings.bind(plugin);
-  // The report view changes the goal while the settings page still shows the old value.
+  goal.value = String(rendered + 1);
+  await goal.oninput?.();
+  // The report view changes the goal while the user is editing here, so the field keeps the user's input.
   await updateReportSettings({ activityGoalMinutes: rendered + 30 });
+  assert.equal(goal.value, String(rendered + 1));
   let saves = 0;
   plugin.updateReportSettings = async (patch) => { saves++; await updateReportSettings(patch); };
-  for (const value of [String(rendered + 1), String(rendered)]) {
-    goal.value = value;
-    await goal.oninput?.();
-  }
+  goal.value = String(rendered);
+  await goal.oninput?.();
   await goal.onblur?.();
   dispose();
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(plugin.settings.activityGoalMinutes, rendered + 30);
   assert.equal(saves, 0);
+});
+
+test('an untouched integer field shows a value changed elsewhere, and typing the old value then restores it', async () => {
+  const { plugin, row, navigate, dispose } = fixture();
+  navigate('Report settings');
+  const goal = row('activityGoalMinutes').querySelector('input')!;
+  const rendered = Number(goal.value);
+  // The report view changes the goal while the settings page is open.
+  await plugin.updateReportSettings({ activityGoalMinutes: rendered + 30 });
+  assert.equal(goal.value, String(rendered + 30));
+  goal.value = String(rendered);
+  await goal.oninput?.();
+  await goal.onblur?.();
+  dispose();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual([goal.value, plugin.settings.activityGoalMinutes], [String(rendered), rendered]);
+});
+
+test('closing settings stops integer fields from following later changes', async () => {
+  const { plugin, row, navigate, dispose } = fixture();
+  navigate('Sidebar components');
+  const duration = row('focusMinutes').querySelector('input')!;
+  const shown = duration.value;
+  dispose();
+  await plugin.saveSettings({ focusMinutes: Number(shown) + 5 });
+  assert.equal(duration.value, shown);
 });
 
 test('an integer typed back to its original value while the first save is in flight saves the original value', async () => {

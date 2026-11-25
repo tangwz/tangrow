@@ -49,6 +49,8 @@ export function renderSection(container: HTMLElement, id: Exclude<SectionId, 'ac
   const t = plugin.t.bind(plugin);
   const rows = settingRows(plugin, id);
   const pending: (() => void)[] = [];
+  // Fields that follow changes made elsewhere, such as the report view, while this section is open.
+  const syncs: (() => void)[] = [];
   if (id === 'guide') {
     const row = rows.row(container, 'tutorial');
     row.controlEl.createEl('a', {
@@ -165,6 +167,15 @@ export function renderSection(container: HTMLElement, id: Exclude<SectionId, 'ac
     // Closing settings can remove a focused field without a change event, so leaving the section commits too.
     control.onblur = commit;
     pending.push(() => { void commit(); });
+    // Show a value changed elsewhere unless the user is editing here or a save from this field is still landing, so
+    // the field never displays a stale value that typing it again could not restore.
+    syncs.push(() => {
+      const stored = get();
+      if (inFlight > 0 || stored === committed || wholeMinutes(control.value, max) !== committed) return;
+      committed = stored;
+      control.value = String(stored);
+      check();
+    });
   }
 
   function folder(key: FolderSettingKey, parent?: HTMLElement): void {
@@ -271,7 +282,14 @@ export function renderSection(container: HTMLElement, id: Exclude<SectionId, 'ac
       break;
   }
   updateGate();
-  return { refresh: updateGate, dispose: () => { for (const commit of pending) commit(); } };
+  const unsubscribe = syncs.length ? plugin.subscribe(() => { for (const sync of syncs) sync(); }) : undefined;
+  return {
+    refresh: updateGate,
+    dispose: () => {
+      unsubscribe?.();
+      for (const commit of pending) commit();
+    }
+  };
 }
 
 export function wholeMinutes(value: string, max: number): number | null {
