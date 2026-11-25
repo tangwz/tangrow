@@ -62,15 +62,24 @@ Match the proof required to the risk of the change:
    note text, API keys, redemption codes, license tokens, or local machine
    usernames/paths appear.
 5. **Attach directly to the PR**:
-   ```bash
-   gh pr comment <number> --repo tangwz/tangrow \
-     --body-file /path/to/ignored/pr-proof.md \
-     --attach /path/to/ignored/after.png
-   ```
-   Include exact branch/commit SHA, OS & Obsidian version, fixture setup,
-   validation commands (`npm run build && npm test`, `autoreview` verdict), and
-   known limitations in the comment body. If attachment upload fails, keep the
-   local files and report the exact failure instead of claiming upload succeeded.
+   - First check whether the installed GitHub CLI supports `--attach`
+     (`gh pr comment --help | grep -q -- --attach`, supported in newer `gh`
+     releases such as `2.105+`):
+     ```bash
+     gh pr comment <number> --repo tangwz/tangrow \
+       --body-file /path/to/ignored/pr-proof.md \
+       --attach /path/to/ignored/after.png
+     ```
+   - On older `gh` versions without `--attach`, upgrade `gh` or upload the
+     inspected image/video through the GitHub PR web UI and reference the
+     uploaded asset URL in `--body-file` before running `gh pr comment
+     <number> --repo tangwz/tangrow --body-file ...`. Never commit proof media
+     to a repository branch as a workaround.
+   - Include exact branch/commit SHA, OS & Obsidian version, fixture setup,
+     validation commands (`npm run build && npm test`, `autoreview` verdict),
+     and known limitations in the comment body. If attachment upload fails, keep
+     the local files and report the exact failure instead of claiming upload
+     succeeded.
 
 ## GitHub Comment & Action Hygiene
 

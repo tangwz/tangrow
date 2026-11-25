@@ -51,14 +51,17 @@ Run from the Tangrow repository root:
      `--source-context docs/ACCESS-CONTRACT.md --source-context scripts/package.mjs --source-context docs/LICENSING.md`.
 4. **Build and verify the release archive**
    - Run `npm run package` to generate `dist/tangrow-<version>.zip`.
-   - Verify archive entries match the exact 7-file allowlist:
+   - Verify archive entries match the exact top-level `tangrow/` directory entry
+     (created by `zip -q -r` in `scripts/package.mjs`) plus the 7-file allowlist
+     (matching `tests/package.test.ts`):
      ```bash
-     unzip -Z1 "dist/tangrow-<version>.zip"
+     unzip -Z1 "dist/tangrow-<version>.zip" | sort
      ```
      Expected entries only:
-     `tangrow/manifest.json`, `tangrow/main.js`, `tangrow/styles.css`,
-     `tangrow/LICENSE`, `tangrow/NOTICE`, `tangrow/LICENSE-MIT-LEGACY`,
-     `tangrow/THIRD_PARTY_NOTICES.md`.
+     `tangrow/`, `tangrow/LICENSE`, `tangrow/LICENSE-MIT-LEGACY`,
+     `tangrow/NOTICE`, `tangrow/THIRD_PARTY_NOTICES.md`, `tangrow/main.js`,
+     `tangrow/manifest.json`, `tangrow/styles.css` (no extra files or
+     subdirectories).
    - Confirm `main.js` header starts with `/* Tangrow <version> | GPL-3.0-or-later |`
      and compute `shasum -a 256 "dist/tangrow-<version>.zip"`.
 5. **Verify temp-vault install & real-host acceptance**
