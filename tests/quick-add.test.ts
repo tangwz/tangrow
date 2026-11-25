@@ -81,6 +81,7 @@ const harness = moduleObject.exports as {
 function setup(text: string, kind: QuickKind = 'capture', source?: CardSource) {
   const app = harness.createMockApp();
   const plugin = new harness.TangrowPlugin(app);
+  Object.assign(plugin, { requireAccess: () => true });
   plugin.settings.language = 'en';
   plugin.aiReady = () => true;
   plugin.suggestCapture = async () => ({ kind: 'project', title: 'Launch', due: null, project: null, reason: 'Project material' });

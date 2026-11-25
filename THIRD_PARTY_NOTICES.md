@@ -23,6 +23,7 @@ AI 助手通过 Anthropic 官方 SDK 调用 Claude API。构建时 SDK 及其被
 | standardwebhooks | 1.1.1 | MIT | Copyright Standard Webhooks contributors · [standard-webhooks](https://github.com/standard-webhooks/standard-webhooks) |
 | @stablelib/base64 | 1.0.1 | MIT | Copyright (C) 2016 Dmitry Chestnykh · [stablelib](https://github.com/StableLib/stablelib) |
 | fast-sha256 | 1.3.0 | Unlicense（公有领域） | [fast-sha256-js](https://github.com/dchest/fast-sha256-js) |
+| tweetnacl | 1.0.3 | Unlicense（公有领域） | [TweetNaCl.js](https://github.com/dchest/tweetnacl-js)；授权租约使用纯 JavaScript Ed25519，SHA-256 使用上行实现。 |
 
 MIT 许可的两个组件适用下文 Obsidian API 一节中相同的 MIT 许可文本，版权人以上表为准。Apache-2.0 全文见本文件末尾。
 

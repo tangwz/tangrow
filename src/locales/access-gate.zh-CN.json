@@ -1,0 +1,19 @@
+{
+  "Activate Tangrow": "激活 Tangrow",
+  "Activate Tangrow to use this feature.": "请先激活 Tangrow 再使用此功能。",
+  "Open Settings → Tangrow → Activation and updates.": "请手动打开「设置 → Tangrow → 激活与更新」。",
+  "Your trial has ended": "试用已到期",
+  "Connect to renew access": "请联网续期以恢复使用",
+  "Trial ends {date}": "试用截止时间：{date}",
+  "Redemption code": "兑换码",
+  "Activate this device": "激活本机",
+  "Start 24-hour trial": "开始 24 小时试用",
+  "Renew now": "立即续期",
+  "Activation and updates": "激活与更新",
+  "Save to Inbox": "保存到收件箱",
+  "Copy to clipboard": "复制到剪贴板",
+  "Continue processing: {name}": "继续处理：{name}",
+  "Device limit reached. Review your devices in Activation and updates.": "设备名额已满，请到「激活与更新」查看已绑定设备。",
+  "Discard": "丢弃",
+  "Confirm discard": "确认丢弃"
+}

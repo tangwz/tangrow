@@ -1,3 +1,5 @@
+import { memoryStorage } from './obsidian-mock';
+import type { Access } from '../src/access';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import path from 'node:path';
@@ -13,6 +15,7 @@ import type { CardSource, Settings } from '../src/types';
 import type { MarkdownView, MockApp, Plugin as MockPlugin, createMockApp as AppFactory } from './obsidian-mock';
 
 interface ReportPlugin extends MockPlugin {
+  access: Access;
   settings: Settings;
   writes: Promise<void>;
   onload(): Promise<void>;
@@ -56,6 +59,7 @@ async function withEnvironment(run: (advance: (ms: number) => void) => Promise<v
   const timers = new Map<number, () => void>();
   Date.now = () => now;
   globalThis.window = {
+    localStorage: memoryStorage(),
     setTimeout: (callback: () => void) => { timers.set(++timerId, callback); return timerId; },
     clearTimeout: (id: number) => { timers.delete(id); },
     setInterval: () => ++timerId,
@@ -243,6 +247,11 @@ test('editing activity counts focused eligible edits and stores only aggregate h
     edit();
     advance(2000);
     edit();
+    assert.equal((await plugin.loadReport(1)).activity.totalMs, 0);
+    assert.ok(plugin.access.startTrial().ok);
+    edit();
+    advance(2000);
+    edit();
     assert.equal((await plugin.loadReport(1)).activity.totalMs, 2000);
     doc.hidden = true;
     advance(5000);
@@ -292,6 +301,7 @@ test('extracting a selection links its heading with a sanitized wikilink even wh
     app.fileManager.generateMarkdownLink = (file) => `[${file.basename}](${file.path})`;
     const plugin = new harness.TangrowPlugin(app);
     await plugin.onload();
+    assert.ok(plugin.access.startTrial().ok);
     let extracted: CardSource | undefined;
     plugin.openQuickAdd = (_kind, _text, cardSource) => { extracted = cardSource; };
     const items: Array<() => void> = [];

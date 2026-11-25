@@ -2,6 +2,7 @@ import momentLibrary from 'moment';
 import type { KeymapContext, KeymapEventListener, Modifier } from 'obsidian';
 
 export const notices: string[] = [];
+export async function requestUrl(): Promise<never> { throw new Error('Unexpected network request'); }
 export const Platform = { isDesktopApp: true, isMacOS: process.platform === 'darwin' };
 
 export function resolveSubpath(cache: { headings?: Array<{ heading: string }>; blocks?: Record<string, unknown> }, anchor: string): unknown {
@@ -330,7 +331,9 @@ export class Plugin {
   addCommand(): void {}
   removeCommand(): void {}
   addSettingTab(): void {}
+  register(): void {}
   registerEvent(): void {}
+  registerDomEvent(): void {}
   registerMarkdownPostProcessor(): void {}
   registerInterval(): void {}
 }
@@ -400,4 +403,35 @@ export function setTooltip(): void {}
 export function getFrontMatterInfo(content: string): { exists: boolean; frontmatter: string; from: number; to: number; contentStart: number } {
   const match = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(content);
   return { exists: !!match, frontmatter: match?.[1] ?? '', from: 0, to: match?.[0].length ?? 0, contentStart: match?.[0].length ?? 0 };
+}
+
+export function memoryStorage() {
+  const entries = new Map<string, string>();
+  return {
+    getItem: (key: string) => entries.get(key) ?? null,
+    setItem: (key: string, value: string) => { entries.set(key, value); },
+    removeItem: (key: string) => { entries.delete(key); }
+  };
+}
+
+// Node 22 has no native Web Locks. Model both admission modes for browser lifecycle tests.
+export function testWebLocks() {
+  const holders = new Map<string, Promise<void>>();
+  type Grant<T> = (lock: { name: string } | null) => T | Promise<T>;
+  return {
+    async request<T>(name: string, options: { ifAvailable: true } | Grant<T>, callback?: Grant<T>) {
+      const held = holders.get(name);
+      if (typeof options !== 'function' && options.ifAvailable && held) return callback!(null);
+      let release!: () => void;
+      const done = new Promise<void>(resolve => { release = resolve; });
+      holders.set(name, done);
+      try {
+        await held;
+        return await (typeof options === 'function' ? options : callback!)({ name });
+      } finally {
+        release();
+        if (holders.get(name) === done) holders.delete(name);
+      }
+    }
+  };
 }

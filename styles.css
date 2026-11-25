@@ -1028,3 +1028,90 @@ button.tangrow-report-day:hover { outline: 1px solid var(--text-accent); outline
   .tangrow-card-entry dl { display: block; }
   .tangrow-card-entry dd { margin-block-end: 6px; }
 }
+
+.tangrow-access-locked > :not(.tangrow-access-gate) {
+  display: none !important;
+}
+
+.tangrow-access-gate {
+  display: grid;
+  gap: var(--size-4-2);
+  padding: var(--size-4-4);
+}
+
+.tangrow-access-gate textarea {
+  display: block;
+  width: 100%;
+}
+
+.tangrow-settings .tangrow-settings-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+}
+.tangrow-settings .tangrow-settings-toolbar input {
+  flex: 1 1 auto;
+  min-width: min(12em, 100%);
+}
+.tangrow-settings .tangrow-settings-section-list,
+.tangrow-settings .tangrow-settings-results {
+  display: grid;
+  gap: var(--size-4-2);
+}
+.tangrow-settings [hidden] { display: none; }
+.tangrow-settings button.tangrow-settings-link {
+  display: grid;
+  gap: var(--size-2-2);
+  justify-items: start;
+  align-content: center;
+  height: auto;
+  min-height: var(--input-height);
+  padding: var(--size-4-2) var(--size-4-3);
+  text-align: start;
+  white-space: normal;
+}
+.tangrow-settings .tangrow-settings-fields {
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.tangrow-settings .setting-item,
+.tangrow-settings .setting-item-control { flex-wrap: wrap; }
+.tangrow-settings .setting-item-control input,
+.tangrow-settings .setting-item-control textarea { max-inline-size: 100%; }
+.tangrow-settings details { margin-block-start: var(--size-4-4); }
+.tangrow-settings summary { cursor: pointer; }
+.tangrow-settings .tangrow-settings-gate {
+  color: var(--text-muted);
+  background: var(--background-secondary);
+  padding: var(--size-4-3);
+}
+.tangrow-settings .tangrow-settings-error { color: var(--text-error); }
+.tangrow-settings .tangrow-settings-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  margin-inline-start: var(--size-4-2);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+.tangrow-settings .tangrow-settings-link .tangrow-settings-status { margin-inline-start: 0; }
+.tangrow-settings .tangrow-settings-dot {
+  inline-size: var(--size-4-2);
+  block-size: var(--size-4-2);
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+.tangrow-settings .tangrow-settings-dot.is-active,
+.tangrow-settings .tangrow-settings-dot.is-trial { background: var(--color-green); }
+.tangrow-settings .tangrow-settings-dot.is-expired,
+.tangrow-settings .tangrow-settings-dot.is-needs_network { background: var(--color-yellow); }
+.tangrow-settings .tangrow-settings-highlight {
+  animation: tangrow-settings-highlight 1.5s ease-out;
+}
+@keyframes tangrow-settings-highlight {
+  from { background: var(--text-highlight-bg); }
+  to { background: transparent; }
+}

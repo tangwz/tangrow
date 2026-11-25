@@ -34,7 +34,7 @@ export class ImmersiveCapture extends Modal {
     this.fullscreenButton = control(toolbar, '', 'maximize', () => fullscreen(this.modalEl, this.host));
     this.fullscreenButton.hidden = typeof this.modalEl.requestFullscreen !== 'function';
     this.closeButton = control(toolbar, '', 'minimize-2', () => this.close());
-    this.panel = new CapturePanel(this.host, { composerOnly: true });
+    this.panel = new CapturePanel(this.host, 'immersive');
     this.panel.mount(this.contentEl);
     this.unsubscribe = this.host.subscribe(() => this.refreshLanguage());
     this.refreshLanguage();

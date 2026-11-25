@@ -6,6 +6,7 @@
   "An idea, a question, a link...": "一个想法、一个问题、一条链接……",
   "Quick capture": "快速记录",
   "Save capture": "保存速记",
+  "Composition ended when focus moved. Start composing again to choose a candidate with the keyboard.": "焦点切换已结束上次组字。要用键盘选词，请重新组字。",
   "Saving capture...": "正在保存……",
   "Saved as Markdown": "保存为 Markdown",
   "{count} characters": "{count} 字符",
