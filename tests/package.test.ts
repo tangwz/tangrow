@@ -11,6 +11,10 @@ const execute = promisify(execFile);
 const packager = fileURLToPath(new URL('../scripts/package.mjs', import.meta.url));
 const files = ['manifest.json', 'main.js', 'styles.css', 'LICENSE', 'NOTICE', 'LICENSE-MIT-LEGACY', 'THIRD_PARTY_NOTICES.md'];
 
+function lockfile(version = '0.4.0', rootVersion = version, license = 'GPL-3.0-or-later') {
+  return { name: 'tangrow', version, lockfileVersion: 3, requires: true, packages: { '': { name: 'tangrow', version: rootVersion, license } } };
+}
+
 async function fixture(context: TestContext) {
   const root = await mkdtemp(path.join(tmpdir(), 'tangrow-package-test-'));
   context.after(() => rm(root, { recursive: true, force: true }));
@@ -18,6 +22,7 @@ async function fixture(context: TestContext) {
   const script = path.join(root, 'scripts', 'package.mjs');
   await copyFile(packager, script);
   await writeFile(path.join(root, 'package.json'), JSON.stringify({ version: '0.4.0', license: 'GPL-3.0-or-later' }));
+  await writeFile(path.join(root, 'package-lock.json'), JSON.stringify(lockfile()));
   for (const name of files) {
     const content = name === 'manifest.json' ? JSON.stringify({ id: 'tangrow', version: '0.4.0' })
       : name === 'main.js' ? '/* Tangrow 0.4.0 | GPL-3.0-or-later | See LICENSE and NOTICE */\n'
@@ -65,5 +70,22 @@ test('version and license metadata must agree before packaging', async context =
     await writeFile(path.join(target.root, 'package.json'), JSON.stringify(metadata));
     await assert.rejects(execute(process.execPath, [target.script]), /metadata does not match/);
   }
+  await assert.rejects(readFile(target.archive), { code: 'ENOENT' });
+});
+
+test('the lockfile root version and license must agree before packaging', async context => {
+  const target = await fixture(context);
+  const stale = [lockfile('0.3.0'), lockfile('0.4.0', '0.3.0'), lockfile('0.4.0', '0.4.0', 'MIT'), { name: 'tangrow', version: '0.4.0', lockfileVersion: 3 }];
+  for (const lock of stale) {
+    await writeFile(path.join(target.root, 'package-lock.json'), JSON.stringify(lock));
+    await assert.rejects(execute(process.execPath, [target.script]), /Package lock version or GPL license metadata does not match/);
+  }
+  await assert.rejects(readFile(target.archive), { code: 'ENOENT' });
+});
+
+test('a development bundle with an inline source map cannot be packaged as the release', async context => {
+  const target = await fixture(context);
+  await writeFile(path.join(target.root, 'main.js'), '/* Tangrow 0.4.0 | GPL-3.0-or-later | See LICENSE and NOTICE */\n"use strict";\n//# sourceMappingURL=data:application/json;base64,e30=\n');
+  await assert.rejects(execute(process.execPath, [target.script]), /development build with an inline source map/);
   await assert.rejects(readFile(target.archive), { code: 'ENOENT' });
 });

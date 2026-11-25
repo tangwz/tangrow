@@ -67,6 +67,9 @@ for (const name of files) {
 }
 const manifest = JSON.parse(await readFile(path.join(root, 'manifest.json'), 'utf8'));
 if (manifest.id !== 'tangrow') throw new Error('The source manifest must use the tangrow plugin ID.');
+if (!(await readFile(path.join(root, 'main.js'), 'utf8')).startsWith(`/* Tangrow ${manifest.version} | GPL-3.0-or-later |`)) {
+  throw new Error('main.js has a stale version or license banner. Run npm run build before installing. No changes were made.');
+}
 
 const communityPath = path.join(config, 'community-plugins.json');
 let communityContent = null;

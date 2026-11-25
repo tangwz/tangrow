@@ -1,4 +1,4 @@
-import { copyFile, lstat, mkdir, mkdtemp, readFile, rename, rm } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,14 +15,26 @@ if (manifest.id !== 'tangrow' || !/^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(man
 if (metadata.version !== manifest.version || metadata.license !== 'GPL-3.0-or-later') {
   throw new Error('Package version or GPL license metadata does not match the release.');
 }
+const lock = JSON.parse(await readFile(path.join(root, 'package-lock.json'), 'utf8'));
+const lockRoot = lock.packages?.[''];
+if (lock.version !== manifest.version || lockRoot?.version !== manifest.version || lockRoot?.license !== 'GPL-3.0-or-later') {
+  throw new Error('Package lock version or GPL license metadata does not match the release. Run npm install to refresh package-lock.json.');
+}
 const files = ['manifest.json', 'main.js', 'styles.css', 'LICENSE', 'NOTICE', 'LICENSE-MIT-LEGACY', 'THIRD_PARTY_NOTICES.md'];
 for (const name of files) {
   const stat = await lstat(path.join(root, name));
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Expected a regular build file: ${name}`);
 }
 const banner = `/* Tangrow ${manifest.version} | GPL-3.0-or-later |`;
-if (!(await readFile(path.join(root, 'main.js'), 'utf8')).startsWith(banner)) {
+// Archive the exact bytes checked here, even if a watcher rewrites main.js meanwhile.
+const bundle = await readFile(path.join(root, 'main.js'));
+const source = bundle.toString('utf8');
+if (!source.startsWith(banner)) {
   throw new Error('The production bundle has a stale version or license banner. Run npm run build before packaging.');
+}
+// npm run dev writes the same banner but appends an inline source map; only production builds are released.
+if (/\n\/\/# sourceMappingURL=data:[^\n]*\n?$/.test(source)) {
+  throw new Error('main.js is a development build with an inline source map. Run npm run build before packaging.');
 }
 const dist = path.join(root, 'dist');
 try {
@@ -34,7 +46,10 @@ const temporary = await mkdtemp(path.join(tmpdir(), 'tangrow-package-'));
 try {
   const plugin = path.join(temporary, 'tangrow');
   await mkdir(plugin);
-  for (const name of files) await copyFile(path.join(root, name), path.join(plugin, name));
+  for (const name of files) {
+    if (name === 'main.js') await writeFile(path.join(plugin, name), bundle);
+    else await copyFile(path.join(root, name), path.join(plugin, name));
+  }
   const archive = path.join(temporary, 'tangrow.zip');
   await promisify(execFile)('zip', ['-q', '-r', archive, 'tangrow'], { cwd: temporary });
   const output = path.join(dist, `tangrow-${manifest.version}.zip`);

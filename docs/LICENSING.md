@@ -66,6 +66,6 @@ npm run package
 git diff --check
 ```
 
-预期为安装、备份和 ZIP 均保留 GPL、项目附加声明、历史 MIT 和第三方声明；缺少任一声明时在写入前失败。旧 MIT、旧专有许可或版本不符的运行文件不能被打包为当前 GPL 版本。归档检查不自动证明实际发布地点已经提供完整对应源码。
+预期为安装、备份和 ZIP 均保留 GPL、项目附加声明、历史 MIT 和第三方声明；缺少任一声明时在写入前失败。旧 MIT、旧专有许可或版本不符的运行文件既不能安装，也不能被打包为当前 GPL 版本；打包还要求 `package-lock.json` 的根版本与许可一致，并拒绝带内联 source map 的开发构建。归档检查不自动证明实际发布地点已经提供完整对应源码。
 
 维护依据：[GNU GPL 正文](https://www.gnu.org/licenses/gpl-3.0.html)、[GNU 许可使用说明](https://www.gnu.org/licenses/gpl-howto.en.html)、[GNU 关于闭源宿主插件的说明](https://www.gnu.org/licenses/gpl-faq.en.html#GPLPluginsInNF)。具体义务以适用的 GPL、独立许可及法律为准。

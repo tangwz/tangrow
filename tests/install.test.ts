@@ -26,7 +26,9 @@ async function fixture(context: TestContext) {
   await mkdir(home);
   await copyFile(installer, script);
   for (const name of installFiles) {
-    await writeFile(path.join(source, name), name === 'manifest.json' ? '{"id":"tangrow"}\n' : `New ${name}\n`);
+    await writeFile(path.join(source, name), name === 'manifest.json' ? '{"id":"tangrow","version":"0.4.0"}\n'
+      : name === 'main.js' ? '/* Tangrow 0.4.0 | GPL-3.0-or-later | See LICENSE and NOTICE */\nNew main.js\n'
+        : `New ${name}\n`);
   }
   await writeFile(community, '["other-plugin"]\n');
   await writeFile(preload, `import os from 'node:os';
@@ -95,6 +97,20 @@ for (const missing of ['LICENSE', 'NOTICE', 'LICENSE-MIT-LEGACY', 'THIRD_PARTY_N
     assert.deepEqual(await readdir(target.home), []);
   });
 }
+
+test('a stale MIT or previous-version bundle fails before changing the vault or creating backups', async context => {
+  const target = await fixture(context);
+  await seedExistingFiles(target);
+  for (const banner of ['/* Tangrow | MIT License | Copyright (c) 2026 Terence */\n', '/* Tangrow 0.3.0 | GPL-3.0-or-later | */\n']) {
+    await writeFile(path.join(target.source, 'main.js'), banner);
+    await assert.rejects(install(target, '--enable'), /main\.js has a stale version or license banner/);
+    for (const name of installFiles) {
+      assert.equal(await readFile(path.join(target.destination, name), 'utf8'), `Previous ${name}\n`);
+    }
+    assert.equal(await readFile(target.community, 'utf8'), '["other-plugin"]\n');
+    assert.deepEqual(await readdir(target.home), []);
+  }
+});
 
 test('dry run includes all license notices without changing installed files or creating backups', async context => {
   const target = await fixture(context);
