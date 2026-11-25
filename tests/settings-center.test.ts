@@ -15,7 +15,7 @@ type ElementOptions = { text?: string; value?: string; type?: string; cls?: stri
 class Element extends EventTarget {
   children: Element[] = [];
   parentElement: Element | null = null;
-  ownerDocument = { activeElement: null as Element | null };
+  ownerDocument = { activeElement: null as Element | null, hasFocus: () => true };
   attributes: Record<string, string> = {};
   dataset: Record<string, string> = {};
   classes = new Set<string>();
@@ -329,6 +329,72 @@ test('closing settings stops integer fields from following later changes', async
   dispose();
   await plugin.saveSettings({ focusMinutes: Number(shown) + 5 });
   assert.equal(duration.value, shown);
+});
+
+test('a focused integer field keeps in-progress input across unrelated refreshes and catches up on blur', async () => {
+  const { plugin, row, navigate, dispose } = fixture();
+  navigate('Report settings');
+  const goal = row('activityGoalMinutes').querySelector('input')!;
+  const rendered = Number(goal.value);
+  goal.focus();
+  goal.value = String(rendered + 1);
+  await goal.oninput?.();
+  // Report view updates the goal while the user is actively typing here.
+  await plugin.updateReportSettings({ activityGoalMinutes: rendered + 30 });
+  assert.equal(goal.value, String(rendered + 1));
+  // User edits back through the old value (e.g. heading toward another number) while still focused.
+  goal.value = String(rendered);
+  await goal.oninput?.();
+  await plugin.action('refresh');
+  assert.equal(goal.value, String(rendered));
+  // Blurring preserves the newer external value and immediately displays it so the old value can be typed again.
+  let saves = 0;
+  const updateReportSettings = plugin.updateReportSettings.bind(plugin);
+  plugin.updateReportSettings = async (patch) => { saves++; await updateReportSettings(patch); };
+  goal.ownerDocument.activeElement = null;
+  await goal.onblur?.();
+  assert.deepEqual([goal.value, plugin.settings.activityGoalMinutes, saves], [String(rendered + 30), rendered + 30, 0]);
+  goal.value = String(rendered);
+  await goal.oninput?.();
+  await goal.onblur?.();
+  dispose();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual([goal.value, plugin.settings.activityGoalMinutes, saves], [String(rendered), rendered, 1]);
+});
+
+test('a focused untouched integer field in an inactive window still follows external changes', async () => {
+  const { plugin, row, navigate, dispose } = fixture();
+  navigate('Report settings');
+  const goal = row('activityGoalMinutes').querySelector('input')!;
+  const rendered = Number(goal.value);
+  goal.focus();
+  goal.ownerDocument.hasFocus = () => false;
+  await plugin.updateReportSettings({ activityGoalMinutes: rendered + 30 });
+  assert.equal(goal.value, String(rendered + 30));
+  dispose();
+});
+
+test('failed external settings writes notify listeners on rollback so integer fields never keep phantom values', async () => {
+  for (const [section, id, key, trigger] of [
+    ['Report settings', 'activityGoalMinutes', 'activityGoalMinutes', (plugin: TangrowPlugin, value: number) => plugin.updateReportSettings({ activityGoalMinutes: value })],
+    ['Sidebar components', 'focusMinutes', 'focusMinutes', (plugin: TangrowPlugin, value: number) => plugin.saveSettings({ focusMinutes: value })]
+  ] as const) {
+    const { plugin, row, navigate, dispose } = fixture();
+    navigate(section);
+    const field = row(id).querySelector('input')!;
+    const original = plugin.settings[key];
+    let rejectSave!: (reason: Error) => void;
+    plugin.saveData = () => new Promise<void>((_, reject) => { rejectSave = reject; });
+    const pending = trigger(plugin, original + 20);
+    await new Promise(resolve => setImmediate(resolve));
+    // An unrelated refresh runs while the optimistic write is in flight.
+    await plugin.action('refresh');
+    assert.equal(field.value, String(original + 20));
+    rejectSave(new Error('Save failed'));
+    await assert.rejects(pending, /Save failed/);
+    assert.deepEqual([field.value, plugin.settings[key]], [String(original), original]);
+    dispose();
+  }
 });
 
 test('an integer typed back to its original value while the first save is in flight saves the original value', async () => {

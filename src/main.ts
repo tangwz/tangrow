@@ -595,7 +595,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       const changes = typeof patch === 'function' ? patch(previous) : patch;
       this.settings = { ...previous, ...changes };
       try { await this.persist(); }
-      catch (error) { this.settings = previous; throw error; }
+      catch (error) { this.settings = previous; this.notify(); throw error; }
       if (changes.wideByDefault !== undefined) this.widePages.clear();
       this.notify();
     });
@@ -715,7 +715,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       }
       this.settings = next;
       try { await this.persist(); }
-      catch (error) { this.settings = previous; throw error; }
+      catch (error) { this.settings = previous; this.notify(); throw error; }
       this.lastActivityEvent = null;
       this.reportSource.invalidate();
       this.notify();
