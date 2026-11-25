@@ -350,6 +350,47 @@ test('a failed earlier integer save does not undo a later commit that is still i
   assert.deepEqual([field.value, plugin.settings.focusMinutes, calls], [String(original + 30), original + 30, 2]);
 });
 
+test('a failed first save of a value committed twice does not drop a later return to the original', async () => {
+  const { plugin, row, navigate, dispose } = fixture();
+  navigate('Sidebar components');
+  const field = row('focusMinutes').querySelector('input')!;
+  const original = plugin.settings.focusMinutes;
+  const changed = original + 20;
+  const saveSettings = plugin.saveSettings.bind(plugin);
+  // Like the plugin's save queue, writes run one at a time in order. The first one is slow and fails.
+  let release!: () => void;
+  const slowWrite = new Promise<void>(resolve => { release = resolve; });
+  let queue = Promise.resolve();
+  let calls = 0;
+  plugin.saveSettings = (patch) => {
+    const call = ++calls;
+    const write = queue.then(async () => {
+      if (call === 1) { await slowWrite; throw new Error('Save failed'); }
+      await saveSettings(patch);
+    });
+    queue = write.catch(() => undefined);
+    return write;
+  };
+  const commits: Promise<void>[] = [];
+  for (const value of [changed, original, changed]) {
+    field.value = String(value);
+    field.oninput?.();
+    commits.push(field.onchange?.() ?? Promise.resolve());
+  }
+  release();
+  await commits[0];
+  // Back to the original while the second and third saves may still be queued.
+  field.value = String(original);
+  field.oninput?.();
+  commits.push(field.onchange?.() ?? Promise.resolve());
+  await field.onblur?.();
+  dispose();
+  await Promise.all(commits);
+  await queue;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual([field.value, plugin.settings.focusMinutes, calls], [String(original), original, 4]);
+});
+
 test('a different integer typed over a stale page still saves the user\'s value', async () => {
   const { plugin, row, navigate, dispose } = fixture();
   navigate('Report settings');

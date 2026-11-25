@@ -139,19 +139,23 @@ export function renderSection(container: HTMLElement, id: Exclude<SectionId, 'ac
     // the section can all fire for one edit, and comparing with it also saves that edit once.
     let committed = get();
     let inFlight = 0;
+    // Which commit set `committed`. A value can be committed more than once, so a failure is matched by commit, not
+    // by value: 45, 25, 45 with the first 45 failing must keep the last 45.
+    let latestCommit = 0;
     // Validate while typing, but save only the committed value: typing 300 must not store 3 and 30 on the way.
     const commit = async () => {
       const value = check();
       if (value === null || value === committed || !canEdit()) return;
       // While an earlier save is in flight the stored value is not final, so it cannot stand in for this one.
       if (inFlight === 0 && value === get()) { committed = value; return; }
-      const inputRevision = ++revision;
+      const inputRevision = latestCommit = ++revision;
       committed = value;
       inFlight++;
       try { await save(value); }
       catch (failure) {
-        // Saves land in order, so the latest commit decides; a failed one leaves the stored value in place.
-        if (committed === value) committed = get();
+        // Saves land in order, so when the latest commit fails every earlier one has finished and the stored value
+        // is final. A failure that later commits superseded changes nothing.
+        if (inputRevision === latestCommit) committed = get();
         if (inputRevision === revision) control.value = String(get());
         presentError(failure);
       } finally { inFlight--; }

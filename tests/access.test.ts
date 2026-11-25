@@ -270,6 +270,36 @@ test('a late release never clears a same-second reactivation whose lease is iden
   assert.equal(records.get(leaseKey), JSON.stringify(vector.lease)); assert.ok(access.canUse()); assert.ok(sibling.canUse());
 });
 
+test('a late release after another vault reactivated and released again notifies nobody and reports stale', async () => {
+  const { access, state, deps, records } = fixture(); await access.activate(vector.code);
+  const sibling = new Access(deps); sibling.start();
+  let deliver!: (reply: ReturnType<typeof response>) => void;
+  state.request = () => new Promise(resolve => { deliver = resolve; });
+  const pending = access.release();
+  state.request = async () => response(terminal('released'));
+  assert.ok((await sibling.renew()).ok);
+  state.request = async () => response(active(vector.payload.iat + 30));
+  assert.ok((await sibling.activate(vector.code)).ok);
+  state.request = async () => response(terminal('released', { iat: vector.payload.iat + 40, rnb: vector.payload.rnb + 40 }));
+  assert.ok((await sibling.release()).ok); assert.equal(records.has(leaseKey), false);
+  const seen: string[] = [];
+  access.subscribe(event => seen.push(event));
+  deliver(response(terminal('released')));
+  assert.deepEqual(await pending, { ok: false, error: 'stale' }); assert.deepEqual(seen, []);
+});
+
+test('an unreadable activation tag does not block activation, renewal or release', async () => {
+  const records = new Map([['tangrow:binding:v1', '{}']]);
+  const { access, state, warnings } = fixture(records);
+  assert.ok((await access.activate(vector.code)).ok);
+  assert.equal(typeof JSON.parse(records.get('tangrow:binding:v1')!), 'string');
+  records.set('tangrow:binding:v1', '[]');
+  assert.ok((await access.renew()).ok);
+  state.request = async () => response(terminal('released'));
+  assert.ok((await access.release()).ok); assert.equal(records.has(leaseKey), false);
+  assert.ok(warnings.includes('Tangrow access: binding'));
+});
+
 test('a late release never clears a lease for another license stored by another vault', async () => {
   const { access, state, records } = fixture(); await access.activate(vector.code);
   let deliver!: (reply: ReturnType<typeof response>) => void;
