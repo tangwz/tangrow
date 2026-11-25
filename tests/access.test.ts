@@ -250,6 +250,26 @@ test('a late release never clears a reactivation issued in the same second by an
   assert.equal(records.get(leaseKey), JSON.stringify(reactivated)); assert.ok(access.canUse()); assert.ok(sibling.canUse());
 });
 
+test('a late release never clears a same-second reactivation whose lease is identical to the released one', async () => {
+  const { access, state, deps, records } = fixture(); await access.activate(vector.code);
+  const sibling = new Access(deps); sibling.start();
+  let deliver!: (reply: ReturnType<typeof response>) => void;
+  state.request = () => new Promise(resolve => { deliver = resolve; });
+  const pending = access.release();
+  // Activation, release and reactivation share one second, and signatures are deterministic, so the new lease is
+  // byte-for-byte the old one; only the activation tag tells them apart.
+  state.request = async () => response(terminal('released'));
+  assert.ok((await sibling.renew()).ok); assert.equal(records.has(leaseKey), false);
+  state.request = async () => response(vector.lease);
+  assert.ok((await sibling.activate(vector.code)).ok);
+  assert.equal(records.get(leaseKey), JSON.stringify(vector.lease));
+  const seen: string[] = [];
+  access.subscribe(event => seen.push(event));
+  deliver(response(terminal('released')));
+  assert.deepEqual(await pending, { ok: false, error: 'stale' }); assert.deepEqual(seen, []);
+  assert.equal(records.get(leaseKey), JSON.stringify(vector.lease)); assert.ok(access.canUse()); assert.ok(sibling.canUse());
+});
+
 test('a late release never clears a lease for another license stored by another vault', async () => {
   const { access, state, records } = fixture(); await access.activate(vector.code);
   let deliver!: (reply: ReturnType<typeof response>) => void;

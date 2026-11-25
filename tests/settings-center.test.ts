@@ -304,6 +304,52 @@ test('an integer typed back to the value it showed does not overwrite a newer va
   assert.equal(saves, 0);
 });
 
+test('an integer typed back to its original value while the first save is in flight saves the original value', async () => {
+  const { plugin, row, navigate, dispose } = fixture();
+  navigate('Sidebar components');
+  const field = row('focusMinutes').querySelector('input')!;
+  const original = plugin.settings.focusMinutes;
+  const saveSettings = plugin.saveSettings.bind(plugin);
+  let release!: () => void;
+  const slowWrite = new Promise<void>(resolve => { release = resolve; });
+  plugin.saveSettings = async (patch) => { await slowWrite; await saveSettings(patch); };
+  field.value = String(original + 20);
+  field.oninput?.();
+  const first = field.onchange?.();
+  field.value = String(original);
+  field.oninput?.();
+  const second = field.onchange?.();
+  await field.onblur?.();
+  dispose();
+  release();
+  await Promise.all([first, second]);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual([field.value, plugin.settings.focusMinutes], [String(original), original]);
+});
+
+test('a failed earlier integer save does not undo a later commit that is still in flight', async () => {
+  const { plugin, row, navigate, dispose } = fixture();
+  navigate('Sidebar components');
+  const field = row('focusMinutes').querySelector('input')!;
+  const original = plugin.settings.focusMinutes;
+  const saveSettings = plugin.saveSettings.bind(plugin);
+  let calls = 0;
+  plugin.saveSettings = async (patch) => {
+    if (++calls === 1) throw new Error('Save failed');
+    await saveSettings(patch);
+  };
+  field.value = String(original + 20);
+  field.oninput?.();
+  const first = field.onchange?.();
+  field.value = String(original + 30);
+  field.oninput?.();
+  await Promise.all([first, field.onchange?.()]);
+  await field.onblur?.();
+  dispose();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual([field.value, plugin.settings.focusMinutes, calls], [String(original + 30), original + 30, 2]);
+});
+
 test('a different integer typed over a stale page still saves the user\'s value', async () => {
   const { plugin, row, navigate, dispose } = fixture();
   navigate('Report settings');

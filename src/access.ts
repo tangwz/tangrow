@@ -276,8 +276,10 @@ export class Access {
     let timer: number | undefined;
     let success = false;
     const stale = () => !this.alive || generation !== this.generation || this.device() !== dev;
-    // Another vault on this device can renew, release or activate while this request is in flight.
-    const replaced = () => this.lease()?.token !== current?.token;
+    // Another vault on this device can renew, release or activate while this request is in flight. Signatures are
+    // deterministic, so a reactivation in the same second can store a lease identical to this one; only its tag differs.
+    const reactivated = () => this.read('binding') !== binding;
+    const replaced = () => this.lease()?.token !== current?.token || reactivated();
     try {
       const deadline = new Promise<never>((_, reject) => {
         this.stopRequest = () => reject(new Error('stale'));
@@ -327,11 +329,11 @@ export class Access {
       } else {
         if (!current || action === 'activate' || (action === 'release' && payload.st !== 'released')) return fail('invalid_response');
         // A renewal from another vault does not undo this end. A lease from a new activation since this request
-        // started carries a new tag, even within the same second, so it stays.
+        // started carries a new tag, even within the same second and even when its token is identical, so it stays.
         const stored = this.lease();
-        if (stored && stored.token !== current.token && (stored.payload.lic !== payload.lic || this.read('binding') !== binding)) return fail('stale');
+        if (stored && (stored.payload.lic !== payload.lic || reactivated())) return fail('stale');
         this.emit(payload.st);
-        if (stale() || this.lease()?.token !== stored?.token) return fail('stale');
+        if (stale() || this.lease()?.token !== stored?.token || reactivated()) return fail('stale');
         // Another vault may already have cleared the binding; leave unreadable records from other versions alone.
         if (stored && !this.write('lease', null)) return fail('storage');
       }
