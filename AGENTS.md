@@ -51,8 +51,21 @@ Read the relevant contracts before modifying a subsystem:
      `--source-context` because the reviewer sandbox is empty.
 3. **Real-host acceptance (when applicable)**: Static review and mocks cannot
    certify native IME behavior, multi-window focus, live Obsidian layout, or
-   real-device storage sharing. Follow `docs/NATIVE-IME-ACCEPTANCE.md` and
-   `docs/ACCESS-CONTRACT.md` when touching those surfaces.
+   real-device storage sharing. Follow `docs/NATIVE-IME-ACCEPTANCE.md`,
+   `docs/ACCESS-CONTRACT.md`, and `.agents/skills/tangrow-pr-evidence/SKILL.md`
+   when touching those surfaces.
+
+## Repository Skills & Workflows
+
+Use the matching skill under `.agents/skills/` when working on these areas:
+
+| Skill | Use for |
+| --- | --- |
+| `.agents/skills/autoreview/SKILL.md` | Independent diff code review via the shared `autoreview` helper (`--prompt-file .agents/skills/autoreview/review-checklist.md`) |
+| `.agents/skills/tangrow-release/SKILL.md` | Manual release packaging (`npm run package`), production license config checks, temp-vault smoke install, and GitHub Release publishing |
+| `.agents/skills/tangrow-ui-audit/SKILL.md` | `styles.css` selector scoping, Obsidian CSS token compliance, light/dark & narrow-sidebar UI audit, accessibility, and i18n checks |
+| `.agents/skills/tangrow-pr-evidence/SKILL.md` | PR review evidence bar, real-Obsidian proof capture & before/after attachments, and live `gh pr` verification |
+| `.agents/skills/technical-documentation/SKILL.md` | Authoring and drift-auditing `README.md`, `CONTEXT.md`, `docs/*.md`, `AGENTS.md`, and `.agents/skills/` |
 
 Shared agent workflows: install or symlink
 `https://github.com/openclaw/agent-skills` for `autoreview` at
