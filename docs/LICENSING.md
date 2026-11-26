@@ -30,7 +30,7 @@ Tangrow 通过宿主插件 API 调用 Obsidian。在 GPL 第 7 节允许的范�
 
 ## 安装包和对应源码
 
-安装器与插件 ZIP 保留以下七个文件：
+安装器与插件 ZIP 保留以下六个文件（旧 MIT 全文 `LICENSE-MIT-LEGACY` 只保留在源码仓库，不随插件分发）：
 
 ```text
 manifest.json
@@ -38,7 +38,6 @@ main.js
 styles.css
 LICENSE
 NOTICE
-LICENSE-MIT-LEGACY
 THIRD_PARTY_NOTICES.md
 ```
 
@@ -66,6 +65,6 @@ npm run package
 git diff --check
 ```
 
-预期为安装、备份和 ZIP 均保留 GPL、项目附加声明、历史 MIT 和第三方声明；缺少任一声明时在写入前失败。旧 MIT、旧专有许可或版本不符的运行文件不能被打包为当前 GPL 版本。归档检查不自动证明实际发布地点已经提供完整对应源码。
+预期为安装、备份和 ZIP 均保留 GPL、项目附加声明和第三方声明；缺少任一声明时在写入前失败。旧 MIT、旧专有许可或版本不符的运行文件不能被打包为当前 GPL 版本。归档检查不自动证明实际发布地点已经提供完整对应源码。
 
 维护依据：[GNU GPL 正文](https://www.gnu.org/licenses/gpl-3.0.html)、[GNU 许可使用说明](https://www.gnu.org/licenses/gpl-howto.en.html)、[GNU 关于闭源宿主插件的说明](https://www.gnu.org/licenses/gpl-faq.en.html#GPLPluginsInNF)。具体义务以适用的 GPL、独立许可及法律为准。

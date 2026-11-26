@@ -15,7 +15,7 @@ if (manifest.id !== 'tangrow' || !/^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(man
 if (metadata.version !== manifest.version || metadata.license !== 'GPL-3.0-or-later') {
   throw new Error('Package version or GPL license metadata does not match the release.');
 }
-const files = ['manifest.json', 'main.js', 'styles.css', 'LICENSE', 'NOTICE', 'LICENSE-MIT-LEGACY', 'THIRD_PARTY_NOTICES.md'];
+const files = ['manifest.json', 'main.js', 'styles.css', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md'];
 for (const name of files) {
   const stat = await lstat(path.join(root, name));
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Expected a regular build file: ${name}`);

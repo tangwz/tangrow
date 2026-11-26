@@ -99,7 +99,7 @@ npm run install:vault -- --vault /absolute/path/to/vault
 
 随后在 Obsidian 的 Community plugins 中启用 Tangrow。也可以在安装命令后增加 `--enable`，将插件 ID 追加到现有启用列表；如果应用已经运行，重新加载应用后生效。安装器不修改受限模式，不自动批准其他插件。若安装期间启用列表被 Obsidian 修改，安装器会保留最新列表并停止启用步骤；此时运行文件已经安装，可在应用内启用 Tangrow 或重新运行安装命令。
 
-安装器在 `.obsidian/plugins/tangrow/` 部署 `manifest.json`、`main.js`、`styles.css`、`LICENSE`、`NOTICE`、`LICENSE-MIT-LEGACY` 和 `THIRD_PARTY_NOTICES.md` 七个文件，不会覆盖 `data.json`。替换已有文件或启用列表前，会将原文件备份到用户主目录的 `.local/state/tangrow/backups`。它不触碰现有 Markdown、目录分类或 `workspace.json`，并拒绝通过插件路径的符号链接写入。交付 ZIP 或已安装的插件目录时，应保留 GPL、项目附加声明、旧 MIT 全文和第三方声明，并按 GPL 提供对应源码。
+安装器在 `.obsidian/plugins/tangrow/` 部署 `manifest.json`、`main.js`、`styles.css`、`LICENSE`、`NOTICE` 和 `THIRD_PARTY_NOTICES.md` 六个文件，不会覆盖 `data.json`。替换已有文件或启用列表前，会将原文件备份到用户主目录的 `.local/state/tangrow/backups`。它不触碰现有 Markdown、目录分类或 `workspace.json`，并拒绝通过插件路径的符号链接写入。交付 ZIP 或已安装的插件目录时，应保留 GPL、项目附加声明和第三方声明，并按 GPL 提供对应源码。
 
 首次使用时打开命令面板，执行「Tangrow: 打开侧栏」；在设置中核对路径，再执行「Tangrow: 初始化补充数据库」。英文界面的对应命令为 `Tangrow: Open companion` 和 `Tangrow: Set up companion Bases`。首次初始化只新增补充目录和缺失的视图文件；只有全部 13 个数据库及补充说明文件都存在时，初始化状态才显示为就绪。补充目录默认位于笔记库根目录的 `99-Tangrow`，普通新笔记仍进入 `00-Inbox`；新项目默认在 `20-Project` 下创建以标题命名的子目录，并将项目笔记放入其中，也可明确选择已有项目子目录，不在项目根目录平铺笔记。可在插件设置中替换为自己已有的路径，无需重新组织目录。修改目录设置不会改写已有 Bases；如需调整旧视图，请手动修改其筛选条件，或选择新的补充目录后重新初始化。
 
