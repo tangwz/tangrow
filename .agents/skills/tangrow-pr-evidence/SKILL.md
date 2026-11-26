@@ -69,18 +69,22 @@ Match the proof required to the risk of the change:
    note text, API keys, redemption codes, license tokens, or local machine
    usernames/paths appear.
 5. **Attach directly to the PR**:
-   - First check whether the installed GitHub CLI supports `--attach`
-     (`gh pr comment --help | grep -q -- --attach`):
+   - `--attach` exists only in newer GitHub CLI releases (present in
+     `gh 2.105.0`, absent in `2.96.0`), and older versions fail with
+     `unknown flag: --attach` before posting anything. Run the command below
+     only when `gh pr comment --help | grep -q -- --attach` succeeds:
      ```bash
      gh pr comment <number> --repo tangwz/tangrow \
        --body-file /path/to/ignored/pr-proof.md \
        --attach /path/to/ignored/after.png
      ```
-   - If `gh` lacks `--attach`, upload the
-     inspected image/video through the GitHub PR web UI and reference the
-     uploaded asset URL in `--body-file` before running `gh pr comment
-     <number> --repo tangwz/tangrow --body-file ...`. Never commit proof media
-     to a repository branch as a workaround.
+   - Otherwise, drag the inspected image/video into a PR comment box in the
+     GitHub web UI. GitHub uploads it and inserts a
+     `https://github.com/user-attachments/assets/...` link. Either post that
+     comment from the web UI, or copy the link into the body file and run
+     `gh pr comment <number> --repo tangwz/tangrow --body-file ...` without
+     `--attach`. Never commit proof media to a repository branch as a
+     workaround.
    - Include exact branch/commit SHA, OS & Obsidian version, fixture setup,
      validation commands (`npm run build && npm test`, `autoreview` verdict),
      and known limitations in the comment body. If attachment upload fails, keep
