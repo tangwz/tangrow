@@ -95,7 +95,7 @@ flowchart LR
 
 | 维度 | 约定 | 不应代替的含义 |
 | --- | --- | --- |
-| 内容角色 | `tangrow_kind` 沿用现有值，增加 `literature`、`card`、`hub` | 不表达所属目录或处理进度 |
+| 内容角色 | `tangrow_kind` 沿用现有值，增加 `literature`、`card`、`hub`；整理引擎另增 `wiki`（规划中，见 [AI-ENGINE.md](AI-ENGINE.md) 8.5） | 不表达所属目录或处理进度 |
 | 周期上下文 | 沿用 `journal` 与日期属性；有效属性优先，路径只按明确配置识别 | 不覆盖原有 `tangrow_kind`；冲突元数据提示用户检查 |
 | 速记处理 | 沿用 `tangrow_processed_at`；未完成操作另行显示“需继续处理” | 有结果不等于已处理 |
 | 卡片成熟度 | `tangrow_stage: seed / growing / evergreen`，由用户选择 | 字数、连接数、查看次数都不自动决定成熟度 |
