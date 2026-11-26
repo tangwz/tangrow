@@ -1,4 +1,4 @@
-# GPL 许可与旧版 MIT 权利
+# GPL 许可
 
 自 `0.4.0` 起，Tangrow 采用 **GNU GPL 第 3 版或任何后续版本**（`GPL-3.0-or-later`）。[LICENSE](../LICENSE) 保留标准 GPLv3 全文；项目版权声明、生效版本和附加许可放在 [NOTICE](../NOTICE)，不改写 GPL 正文。此前本地拟定的专有商业许可草案由此方案替代，不再要求购买授权、单用户席位或设备数量限制。
 
@@ -10,17 +10,12 @@
 - 分发 GPL 覆盖的修改作品时，应继续提供 GPL 赋予接收者的权利，不能另加“不得复制、不得再分发、不得转售”等限制。
 - GPL 不保证维护、更新或支持，也不要求每个人都必须向任何人提供副本；提供副本时须遵守其条件。
 
-## 生效版本和既有授权
+## 生效版本和第三方授权
 
 | 范围 | 适用规则 |
 | --- | --- |
 | 首次 GPL 版本 | `0.4.0`，适用 GPLv3 或任何后续版本 |
-| 已实际按 MIT 发布的材料 | 原 MIT 授权继续有效，不因新版本改用 GPL 而收回 |
-| 旧版公开参考 | [`47549973f5f8a5157f7849468223aad942f9ce20`](https://github.com/tangwz/tangrow/tree/47549973f5f8a5157f7849468223aad942f9ce20) 及其已按 MIT 发布的历史 |
-| 原 MIT 全文 | [LICENSE-MIT-LEGACY](../LICENSE-MIT-LEGACY)，与原声明逐字节一致 |
 | 第三方组件及其他独立有效授权 | 各自许可和既有权利继续适用，不因项目更换许可证而失效 |
-
-实际材料及授权记录决定边界，不能只根据版本号判断。旧版 MIT 材料仍可按 MIT 条件复制、修改、分发和销售；包含新增 GPL 内容的完整新作品则须满足其适用的 GPL 条件。保留旧 MIT 文件不表示整个新版本同时采用 MIT。若曾独立授予其他有效许可，其已有权利同样不因本次变更被收回。
 
 ## Obsidian 宿主和生成内容
 
@@ -30,7 +25,7 @@ Tangrow 通过宿主插件 API 调用 Obsidian。在 GPL 第 7 节允许的范�
 
 ## 安装包和对应源码
 
-安装器与插件 ZIP 保留以下七个文件：
+安装器与插件 ZIP 保留以下六个文件：
 
 ```text
 manifest.json
@@ -38,7 +33,6 @@ main.js
 styles.css
 LICENSE
 NOTICE
-LICENSE-MIT-LEGACY
 THIRD_PARTY_NOTICES.md
 ```
 
@@ -66,6 +60,6 @@ npm run package
 git diff --check
 ```
 
-预期为安装、备份和 ZIP 均保留 GPL、项目附加声明、历史 MIT 和第三方声明；缺少任一声明时在写入前失败。旧 MIT、旧专有许可或版本不符的运行文件既不能安装，也不能被打包为当前 GPL 版本；打包还要求 `package-lock.json` 的根版本与许可一致，并拒绝带内联 source map 的开发构建。归档检查不自动证明实际发布地点已经提供完整对应源码。
+预期为安装、备份和 ZIP 均保留 GPL、项目附加声明和第三方声明；缺少任一声明时在写入前失败。旧许可首部或版本不符的运行文件既不能安装，也不能被打包为当前 GPL 版本；打包还要求 `package-lock.json` 的根版本与许可一致，并拒绝带内联 source map 的开发构建。归档检查不自动证明实际发布地点已经提供完整对应源码。
 
 维护依据：[GNU GPL 正文](https://www.gnu.org/licenses/gpl-3.0.html)、[GNU 许可使用说明](https://www.gnu.org/licenses/gpl-howto.en.html)、[GNU 关于闭源宿主插件的说明](https://www.gnu.org/licenses/gpl-faq.en.html#GPLPluginsInNF)。具体义务以适用的 GPL、独立许可及法律为准。

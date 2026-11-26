@@ -20,7 +20,7 @@ const lockRoot = lock.packages?.[''];
 if (lock.version !== manifest.version || lockRoot?.version !== manifest.version || lockRoot?.license !== 'GPL-3.0-or-later') {
   throw new Error('Package lock version or GPL license metadata does not match the release. Run npm install to refresh package-lock.json.');
 }
-const files = ['manifest.json', 'main.js', 'styles.css', 'LICENSE', 'NOTICE', 'LICENSE-MIT-LEGACY', 'THIRD_PARTY_NOTICES.md'];
+const files = ['manifest.json', 'main.js', 'styles.css', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md'];
 for (const name of files) {
   const stat = await lstat(path.join(root, name));
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Expected a regular build file: ${name}`);

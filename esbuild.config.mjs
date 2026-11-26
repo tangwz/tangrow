@@ -11,7 +11,7 @@ const context = await esbuild.context({
   external: ['obsidian'],
   sourcemap: watch ? 'inline' : false,
   minify: false,
-  banner: { js: `/* Tangrow ${version} | GPL-3.0-or-later | Copyright (c) 2026 Terence | See LICENSE and NOTICE; legacy MIT: LICENSE-MIT-LEGACY */` }
+  banner: { js: `/* Tangrow ${version} | GPL-3.0-or-later | Copyright (c) 2026 Terence | See LICENSE and NOTICE */` }
 });
 if (watch) await context.watch();
 else { await context.rebuild(); await context.dispose(); }
