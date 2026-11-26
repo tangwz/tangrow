@@ -42,9 +42,16 @@ Match the proof required to the risk of the change:
 
 ## Capturing & Attaching Proof
 
-1. **Use an isolated temporary vault**: install the candidate build with
+1. **Use an isolated temporary vault**: create it in Obsidian first (or
+   `mkdir -p /abs/path/to/temp-vault/.obsidian`), because the installer refuses
+   a folder without `.obsidian`. Then install the candidate build with
    `npm run install:vault -- --vault /abs/path/to/temp-vault`. Never record
    against a personal vault containing private notes.
+   - For UI proof that is not about access gating, build with
+     `npm run build:owner` so the feature is reachable without a trial. A
+     production `npm run build` shows the access gate, and starting its trial
+     spends this device's single 24-hour trial, which every vault on the
+     device shares. Use production builds only for access-gate evidence.
 2. **Keep proof artifacts out of Git**: store raw screenshots, recordings, and
    comment drafts in gitignored local directories (such as `output/` or a
    private directory outside the repo). Never commit PR proof videos or ad-hoc

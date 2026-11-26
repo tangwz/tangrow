@@ -28,9 +28,12 @@ judgment-based suggestions; never present aesthetic preference as an error.
    explicitly state whether evidence came from a live Obsidian temporary vault
    or a static preview):
    - Verify both **light** and **dark** Obsidian themes (`theme/parity`).
-   - Verify narrow sidebar breakpoints (`180px`, `260px`) and report/settings
-     widths (`440px`, `740px`, `920px`) matching `@container` rules in
-     `styles.css` (`layout/overflow`).
+   - Verify narrow sidebar breakpoints (`180px`, `260px`), report/settings
+     widths (`360px`, `440px`, `740px`, `920px`), and the capture panel's
+     `min-width: 360px` rule (`layout/overflow`). These match the `@container`
+     rules in `styles.css` today; list them with
+     `grep -n '@container' styles.css` before auditing, since new breakpoints
+     may be added.
    - Verify empty, loading, typical, dense, error, disabled, and access-gated
      states where applicable (`component/state`).
 4. Emit curated findings using the format below. When asked to fix findings,

@@ -89,7 +89,9 @@ Run from the Tangrow repository root:
      and compute `shasum -a 256 "dist/tangrow-<version>.zip"`.
 5. **Verify temp-vault install & real-host acceptance**
    - Smoke-test installation against an isolated temporary Obsidian vault (never
-     a personal vault):
+     a personal vault). Create the vault in Obsidian first (or
+     `mkdir -p /abs/path/to/temp-vault/.obsidian`), because the installer
+     refuses a folder without `.obsidian`:
      ```bash
      npm run install:vault -- --vault /abs/path/to/temp-vault --dry-run
      npm run install:vault -- --vault /abs/path/to/temp-vault

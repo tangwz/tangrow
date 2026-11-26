@@ -25,6 +25,9 @@ Inventory the relevant surfaces before editing or reviewing:
   `docs/PROVENANCE.md`, `docs/LICENSING.md`, `THIRD_PARTY_NOTICES.md`.
 - **Historical dated snapshots** (preserve as dated records; do not silently
   rewrite past baselines): `docs/PARITY-AUDIT.md`, `docs/REUSE-AUDIT.md`.
+  A correction the user explicitly directs may change them when it is recorded
+  with its date in `docs/PROVENANCE.md` (for example, the 2026-11-26 removal of
+  the earlier license wording); do not report or revert such an edit as drift.
 
 ## Workflow
 

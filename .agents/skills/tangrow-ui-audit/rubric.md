@@ -13,7 +13,7 @@
 | `a11y/focus` | Keyboard focus ring (`:focus-visible`) is removed without replacement, or menus/modals break `Esc`/arrow/`Enter` focus flow |
 | `a11y/reduced-motion` | New animation or transition ignores `prefers-reduced-motion` |
 | `component/state` | Interactive control lacks coherent hover, focus, active, disabled, selected, or error state |
-| `layout/overflow` | Text, heatmap, table, or toolbar clips or causes accidental horizontal overflow at sidebar (`180px`/`260px`) or pane (`440px`/`740px`/`920px`) widths |
+| `layout/overflow` | Text, heatmap, table, or toolbar clips or causes accidental horizontal overflow at sidebar (`180px`/`260px`) or pane (`360px`/`440px`/`740px`/`920px`) widths, or on either side of any other `@container` breakpoint in `styles.css` |
 | `theme/parity` | Light or dark Obsidian theme loses text legibility, contrast, borders, or visual hierarchy |
 | `dom/cleanup` | Listeners, timers, `access.subscribe` hooks, body classes, or immersive DOM state are not cleaned up on `onunload()`/`dispose()` |
 | `dom/container-scope` | Multi-window view assumes global `window`/`document` or `getMostRecentLeaf()` instead of `leaf.getContainer()` / owner document |
