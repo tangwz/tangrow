@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 export const root = fileURLToPath(new URL('../', import.meta.url));
 const { version } = JSON.parse(await readFile(new URL('../manifest.json', import.meta.url), 'utf8'));
-const notice = 'GPL-3.0-or-later | Copyright (c) 2026 Terence | See LICENSE and NOTICE; legacy MIT: LICENSE-MIT-LEGACY';
+const notice = 'GPL-3.0-or-later | Copyright (c) 2026 Terence | See LICENSE and NOTICE';
 
 export const buildOptions = {
   absWorkingDir: root,

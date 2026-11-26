@@ -2,7 +2,7 @@ Tangrow
 Copyright (c) 2026 Terence and the respective contributors.
 SPDX-License-Identifier: GPL-3.0-or-later
 First version under this notice: 0.4.0
-Notice date: 2026-11-10
+Notice date: 2026-11-26
 
 Tangrow is free software: you can redistribute it and/or modify it under the
 terms of the GNU General Public License as published by the Free Software
@@ -15,18 +15,10 @@ PARTICULAR PURPOSE. See the GNU General Public License for more details.
 You should have received a copy of the GNU General Public License along with
 Tangrow in LICENSE. If not, see <https://www.gnu.org/licenses/>.
 
-Existing licenses
+Third-party material
 
-Material previously released under MIT, including Tangrow 0.3.0 and its earlier
-MIT releases, retains its existing MIT rights. A historical public reference is:
-https://github.com/tangwz/tangrow/tree/47549973f5f8a5157f7849468223aad942f9ce20
-
-The original Tangrow MIT copyright notice and license are preserved verbatim in
-LICENSE-MIT-LEGACY. This GPL release does not revoke or narrow rights already
-granted under MIT or any other independently applicable license, regardless of
-version number. Third-party material remains subject to its applicable notices
-and licenses; see THIRD_PARTY_NOTICES.md. This release does not make the complete
-new work available under MIT merely because it incorporates legacy MIT material.
+Third-party material remains subject to its applicable notices and licenses;
+see THIRD_PARTY_NOTICES.md.
 
 Additional permission under GNU GPL version 3 section 7: Obsidian host
 
