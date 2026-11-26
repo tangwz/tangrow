@@ -4,9 +4,9 @@
 
 ## 1. 一句话定位
 
-**Tangrow：AI 时代开箱即用的 Obsidian 个人工作台。以 PARA 安放每一条记录，用卡片笔记让想法生长，由 AI 承担整理，你只做判断。**
+**Tangrow：开箱即用的 AI-Native Obsidian 个人工作台。用卡片笔记让想法生长，以 PARA 存放，由 AI 整理和回顾，由你来产出。**
 
-英文：*Tangrow — the out-of-the-box AI workbench for Obsidian. PARA gives every note a place, Zettelkasten cards let ideas grow, and AI does the tidying while you make the calls.*
+英文：*Tangrow — the out-of-the-box, AI-native personal workbench for Obsidian. Zettelkasten cards let ideas grow, PARA keeps them in place, AI organizes and reviews, and you create.*
 
 ## 2. 核心闭环
 
@@ -45,8 +45,8 @@ flowchart LR
 
 宣传时与闭环一起出现，回答「为什么敢把笔记库交给它」。
 
-1. **你的库还是你的库。** 不要求迁移，不移动、不重命名、不删除已有笔记；所有数据都是原生 Markdown 和属性，卸载后照样可读。
-2. **AI 提议，你决定。** 整理引擎（即将推出）的每一次写入都先列成清单，可逐项勾选、编辑、拒绝。能写什么由代码白名单限定，不靠提示词约束。
+1. **零迁移，不锁定。** 装上就接入你现有的笔记库，多年积累的笔记当天就能进入闭环，不用搬家、不用改目录。Tangrow 只新增，不移动、不重命名、不删除已有笔记；所有数据都是原生 Markdown 和属性，卸载后照样可读，随时可以带走。
+2. **AI 驱动。** 归位、提炼、连接、回顾的繁琐劳动都由 AI 起草，你只需逐项勾选、编辑或拒绝（整理引擎即将推出）。能写什么由代码白名单限定，不靠提示词约束。
 3. **开箱即用。** 装上就能用：沿用你现有的目录，不要求迁移。整理引擎推出后，填一个 API 密钥就能启用 AI 整理，不需要另装插件；一键建立 PARA 结构和手机端 AI 也在规划中。对外宣传时，规划中的部分须按第 4 节标注「即将推出」。
 
 ## 4. 当前实现状态
@@ -91,7 +91,7 @@ flowchart LR
 
 1. **首屏**：主标语 + 闭环动图（一条速记走完六步）+ 「免费试用」。
 2. **闭环六步**：每步一张截图、一句痛点、一句解法。
-3. **三个承诺**：你的库还是你的库 / AI 提议你决定 / 开箱即用。
+3. **三个承诺**：零迁移，不锁定 / AI 驱动 / 开箱即用。
 4. **AI 怎么工作**：确认清单的截图，说明白名单和隐私预览。
 5. **适合谁**：用 Obsidian 做 PARA 或卡片笔记、想写作或做内容的人；觉得「收藏很多、产出很少」的人。
 6. **定价与试用**、**FAQ**（数据在哪、离线能不能用、要不要自己的 API 密钥、支持哪些模型、手机能不能用）。
