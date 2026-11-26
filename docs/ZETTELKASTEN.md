@@ -1,6 +1,6 @@
 # Tangrow：记录、知识与写作的统一设计
 
-状态：设计提案，部分已实现。已实现的有五区导航、知识区列表、新建卡片与选中文本提炼为卡片、每日卡片回顾和卡片报表明细；这些没有严格按第 10 节的分期顺序落地，其余部分待实现。更新于 2026-11-20。
+状态：设计提案，部分已实现。已实现的有五区导航、知识区列表、新建卡片与选中文本提炼为卡片、每日卡片回顾和卡片报表明细；这些没有严格按第 10 节的分期顺序落地，其余部分待实现。更新于 2026-11-26（同步整理引擎的决策）。
 
 [v4 交互原型](../output/design/zettelkasten-v4.html) 可直接打开[创作](../output/design/zettelkasten-v4.html?scenario=compose#prototype)、[AI](../output/design/zettelkasten-v4.html?scenario=ai#prototype)、[今天主页](../output/design/zettelkasten-v4.html?scenario=today#prototype)、[报表总览](../output/design/zettelkasten-v4.html?scenario=overview#prototype)或[卡片明细](../output/design/zettelkasten-v4.html?scenario=report#prototype)。演示日期固定为 2026-11-17，便于核对日期窗口与回顾队列。[v3](../output/design/zettelkasten-v3.html) 与 [v2](../output/design/zettelkasten-v2.html) 保留为历史参考。
 
@@ -190,7 +190,7 @@ Journal 视图可显示“当日创建的速记／卡片／稿件”，但必须
 | 转为任务 | 追加到配置好的任务目标，并附原速记链接 | 仍待处理 |
 | 标记已处理 | 仅更新处理时间，退出待处理列表 | 已处理 |
 
-“整理为笔记”表单只编辑标题与正文，默认使用现有资源目录（示例为 40-Resources），不再增加笔记类型或目的地选择。阅读理解和独立观点都先作为普通笔记留下，需要时再在知识区明确类型或提炼卡片。“转为任务”只确认行动文字，沿用配置好的任务目标；原型示例为 10-Life(Meta)/12-Tasks.md。
+“整理为笔记”表单只编辑标题与正文，默认使用现有资源目录（示例为 40-Resources），不再增加笔记类型或目的地选择。阅读理解和独立观点都先作为普通笔记留下，需要时再在知识区明确类型或提炼卡片。[整理引擎](AI-ENGINE.md)的 PARA 归位是例外：经用户逐项确认后，可以把新笔记建在项目、领域或资源目录（仍只新建、不移动）；它的卡片提炼也可以直接以速记为来源，速记的处理状态不变。“转为任务”只确认行动文字，沿用配置好的任务目标；原型示例为 10-Life(Meta)/12-Tasks.md。
 
 “标记已处理”独立放在两个主按钮下方，保存弹窗不再附带完成选择。用户可以保存笔记、追加任务后结束，也可以直接结束。旧凭据继续按原确认参数恢复；新发起的操作采用上述规则。
 
@@ -251,7 +251,7 @@ Journal 视图可显示“当日创建的速记／卡片／稿件”，但必须
 
 | 字段 | 约定 | 兼容与范围 |
 | --- | --- | --- |
-| `tangrow_kind` | 新增 `card / literature / hub` | 保留已有种类与未知值；`draft` 继续是稿件的存储种类 |
+| `tangrow_kind` | 新增 `card / literature / hub`；整理引擎另增 `wiki`（主题百科，见 [AI-ENGINE.md](AI-ENGINE.md) 8.5） | 保留已有种类与未知值；`draft` 继续是稿件的存储种类 |
 | `tangrow_id` | 新建知识对象及新提炼操作产生的稿件采用 UUID，生成后固定 | 旧对象可无 ID；已有合法的非 UUID 标识保留。ID 不参与笔记链接语法 |
 | `created` | 创建时的 ISO 时间 | 沿用既有字段；不因标记用途、回顾或移动而刷新 |
 | `tangrow_sources` | 库内提炼来源链接的列表，可含章节／块锚点 | 新字段；不改写外部 `source`，也不覆盖旧 `tangrow_source` |
@@ -348,7 +348,7 @@ A write can finish before its acknowledgement arrives.
 
 ### 7.2 复用协议，不直接改坏旧凭据
 
-保留当前 `CaptureJob` 的单目标解析与恢复路径，新速记动作固定为普通笔记或任务，采用独立完成规则。新卡片提炼使用版本化的 `tangrow_derivation`，通过独立的 `note-derivation.ts` 接受 Journal、文献笔记、普通笔记或稿件作为源；单卡片和多卡片使用同一协议。速记整理出的普通笔记可继续提炼，不在速记处理区直接提炼卡片。不要把旧 `target` 无版本地改成 `targets[]`。
+保留当前 `CaptureJob` 的单目标解析与恢复路径，新速记动作固定为普通笔记或任务，采用独立完成规则。新卡片提炼使用版本化的 `tangrow_derivation`，通过独立的 `note-derivation.ts` 接受 Journal、文献笔记、普通笔记或稿件作为源；单卡片和多卡片使用同一协议。速记整理出的普通笔记可继续提炼，不在速记处理区直接提炼卡片；整理引擎的卡片提炼可以直接以速记为源，走同一协议。不要把旧 `target` 无版本地改成 `targets[]`。
 
 同一源文件的旧处理凭据与新提炼凭据互斥；任一操作未结束时，其他会修改该源处理状态的动作都需先处理已有操作。字段未知版本时保留凭据并停止自动恢复，不按缺失状态重新开始。
 
