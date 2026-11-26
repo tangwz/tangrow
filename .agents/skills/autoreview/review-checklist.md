@@ -50,5 +50,5 @@ nits or speculative refactors.
 - Report suspected real credentials, private signing seeds, or plaintext secret
   exposure as P0 (without reproducing secret values).
 - Flag accidental commits of local absolute paths, private notes/exports, or
-  licensing metadata drift (`GPL-3.0-or-later`, `NOTICE`, `LICENSE-MIT-LEGACY`,
+  licensing metadata drift (`GPL-3.0-or-later`, `NOTICE`,
   `THIRD_PARTY_NOTICES.md`).
