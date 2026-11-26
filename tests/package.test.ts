@@ -9,7 +9,7 @@ import { promisify } from 'node:util';
 
 const execute = promisify(execFile);
 const packager = fileURLToPath(new URL('../scripts/package.mjs', import.meta.url));
-const files = ['manifest.json', 'main.js', 'styles.css', 'LICENSE', 'NOTICE', 'LICENSE-MIT-LEGACY', 'THIRD_PARTY_NOTICES.md'];
+const files = ['manifest.json', 'main.js', 'styles.css', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md'];
 
 async function fixture(context: TestContext) {
   const root = await mkdtemp(path.join(tmpdir(), 'tangrow-package-test-'));
@@ -35,7 +35,7 @@ async function fixture(context: TestContext) {
   return { root, script, config, publicClient, archive: path.join(root, 'dist', 'tangrow-0.4.0.zip') };
 }
 
-test('the release archive includes GPL, additional permissions, legacy MIT and third-party notices unchanged', async context => {
+test('the release archive includes GPL, additional permissions and third-party notices unchanged', async context => {
   const target = await fixture(context);
   await execute(process.execPath, [target.script]);
   const { stdout } = await execute('unzip', ['-Z1', target.archive]);
@@ -47,7 +47,7 @@ test('the release archive includes GPL, additional permissions, legacy MIT and t
   }
 });
 
-for (const missing of ['LICENSE', 'NOTICE', 'LICENSE-MIT-LEGACY', 'THIRD_PARTY_NOTICES.md']) {
+for (const missing of ['LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md']) {
   test(`packaging requires ${missing} before replacing an existing archive`, async context => {
     const target = await fixture(context);
     await mkdir(path.dirname(target.archive));

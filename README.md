@@ -81,9 +81,9 @@ Bases 是查询视图，不是另一份笔记存储。笔记、近期修改、�
 
 ## 许可与使用
 
-自 `0.4.0` 起，Tangrow 采用 [GPLv3 或任何后续版本](LICENSE)（`GPL-3.0-or-later`）。可以免费用于个人或商业工作，修改和再分发不要求购买授权、席位或设备许可。分发 GPL 覆盖的作品时，须遵守对应源码、声明保留等条件，不能另加禁止复制、再分发或转售的限制；仅供自己使用的修改不要求公开。
+自 `0.4.0` 起，Tangrow 采用 [GPLv3 或任何后续版本](LICENSE)（`GPL-3.0-or-later`）。许可条款本身不附加付费、席位或设备数量限制：可以用于个人或商业工作，修改和再分发不需要另行购买授权。官方安装包会检查使用权限，可免激活试用 24 小时，之后需用购买的兑换码激活本机（一个兑换码最多同时激活 3 台设备），详见 [PURCHASE-ACTIVATION.md](docs/PURCHASE-ACTIVATION.md)。分发 GPL 覆盖的作品时，须遵守对应源码、声明保留等条件，不能另加禁止复制、再分发或转售的限制；仅供自己使用的修改不要求公开。
 
-此前已实际按 MIT 发布的材料继续保留 MIT 权利，原文见 [LICENSE-MIT-LEGACY](LICENSE-MIT-LEGACY)；其他独立有效授权和第三方许可也不被收回。用户自己的笔记不因使用插件变成 GPL 作品。[NOTICE](NOTICE) 包含 Obsidian 宿主链接和正常生成内容的附加许可，具体版本边界及对应源码交付说明见 [LICENSING.md](docs/LICENSING.md)。
+其他独立有效授权和第三方许可不因项目改用 GPL 而被收回。用户自己的笔记不因使用插件变成 GPL 作品。[NOTICE](NOTICE) 包含 Obsidian 宿主链接和正常生成内容的附加许可，具体版本边界及对应源码交付说明见 [LICENSING.md](docs/LICENSING.md)。
 
 ## 安装
 
@@ -99,7 +99,7 @@ npm run install:vault -- --vault /absolute/path/to/vault
 
 随后在 Obsidian 的 Community plugins 中启用 Tangrow。也可以在安装命令后增加 `--enable`，将插件 ID 追加到现有启用列表；如果应用已经运行，重新加载应用后生效。安装器不修改受限模式，不自动批准其他插件。若安装期间启用列表被 Obsidian 修改，安装器会保留最新列表并停止启用步骤；此时运行文件已经安装，可在应用内启用 Tangrow 或重新运行安装命令。
 
-安装器在 `.obsidian/plugins/tangrow/` 部署 `manifest.json`、`main.js`、`styles.css`、`LICENSE`、`NOTICE`、`LICENSE-MIT-LEGACY` 和 `THIRD_PARTY_NOTICES.md` 七个文件，不会覆盖 `data.json`。替换已有文件或启用列表前，会将原文件备份到用户主目录的 `.local/state/tangrow/backups`。它不触碰现有 Markdown、目录分类或 `workspace.json`，并拒绝通过插件路径的符号链接写入。交付 ZIP 或已安装的插件目录时，应保留 GPL、项目附加声明、旧 MIT 全文和第三方声明，并按 GPL 提供对应源码。
+安装器在 `.obsidian/plugins/tangrow/` 部署 `manifest.json`、`main.js`、`styles.css`、`LICENSE`、`NOTICE` 和 `THIRD_PARTY_NOTICES.md` 六个文件，不会覆盖 `data.json`。替换已有文件或启用列表前，会将原文件备份到用户主目录的 `.local/state/tangrow/backups`。它不触碰现有 Markdown、目录分类或 `workspace.json`，并拒绝通过插件路径的符号链接写入。交付 ZIP 或已安装的插件目录时，应保留 GPL、项目附加声明和第三方声明，并按 GPL 提供对应源码。
 
 首次使用时打开命令面板，执行「Tangrow: 打开侧栏」；在设置中核对路径，再执行「Tangrow: 初始化补充数据库」。英文界面的对应命令为 `Tangrow: Open companion` 和 `Tangrow: Set up companion Bases`。首次初始化只新增补充目录和缺失的视图文件；只有全部 13 个数据库及补充说明文件都存在时，初始化状态才显示为就绪。补充目录默认位于笔记库根目录的 `99-Tangrow`，普通新笔记仍进入 `00-Inbox`；新项目默认在 `20-Project` 下创建以标题命名的子目录，并将项目笔记放入其中，也可明确选择已有项目子目录，不在项目根目录平铺笔记。可在插件设置中替换为自己已有的路径，无需重新组织目录。修改目录设置不会改写已有 Bases；如需调整旧视图，请手动修改其筛选条件，或选择新的补充目录后重新初始化。
 
@@ -162,9 +162,9 @@ npm run build
 npm run package
 ```
 
-`npm run package` 生成 `dist/tangrow-0.4.0.zip`，包含运行文件、GPL 全文、项目附加声明、旧 MIT 全文和第三方声明。发布时还须提供与运行文件实际对应的完整源码；获取方式见 [LICENSING.md](docs/LICENSING.md)。`main.js`、依赖与发布包不提交到源码仓库。
+`npm run package` 生成 `dist/tangrow-0.4.0.zip`，包含运行文件、GPL 全文、项目附加声明和第三方声明。发布时还须提供与运行文件实际对应的完整源码；获取方式见 [LICENSING.md](docs/LICENSING.md)。`main.js`、依赖与发布包不提交到源码仓库。
 
-正式打包前，在 [客户端授权配置](src/license/client.json) 填入生产 HTTPS 源站和按 `kid` 索引的 Ed25519 公钥（32 字节，无填充 base64url），再执行 `npm run build` 和 `npm run package`。打包会检查开发占位值、包版本、GPL 元数据、七文件清单，并重新编译比对待分发的 `main.js`。日常开发和临时库验收可直接使用 `npm run build`，这种构建会检查使用权限，需要先开始试用或激活。
+正式打包前，在 [客户端授权配置](src/license/client.json) 填入生产 HTTPS 源站和按 `kid` 索引的 Ed25519 公钥（32 字节，无填充 base64url），再执行 `npm run build` 和 `npm run package`。打包会检查开发占位值、包版本、GPL 元数据、六文件清单，并重新编译比对待分发的 `main.js`。日常开发和临时库验收可直接使用 `npm run build`，这种构建会检查使用权限，需要先开始试用或激活。
 
 维护者自己日常使用的笔记库请改用主人版：先执行 `npm run build:owner`，再用 `npm run install:vault` 安装。主人版从不限制使用、不占用本机试用，也不连接激活服务；安装器会说明这次装的是哪一种构建。主人版的 `main.js` 首行标有 `owner build`，打包脚本会拒绝它。
 
@@ -183,11 +183,11 @@ npm run package
 11. 在两个写作视图交错编辑、中文组字及同时归档，确认新稿不会被旧视图或旧保存结果覆盖，归档只创建一篇。
 12. 仅在副本中核对显式迁移：整个辅助目录及其中自定义文件移动至 `99-Tangrow`，链接与生成查询跟随更新、自定义内容不以模板覆盖；目标占用时停止。升级本身不调用迁移。
 13. 对照统计文档核对剪藏、日记、孤岛索引待确认、编辑活跃采样及周期目标；改变笔记统计排除目录时，原文与 Bases 不变。
-14. 核对单张年度图的四种类型与日期明细、原文入口，以及插件目录中的运行文件、GPL、项目附加声明、旧 MIT 全文与第三方声明；关闭并重新启用插件，确认原笔记、其他插件与工作区不受影响。
+14. 核对单张年度图的四种类型与日期明细、原文入口，以及插件目录中的运行文件、GPL、项目附加声明与第三方声明；关闭并重新启用插件，确认原笔记、其他插件与工作区不受影响。
 15. 在日历选日，依次打开日、周、月、季、年笔记，核对路径、周期起止、模板与已有正文；对照跨年 ISO 周和闰年二月。用自定义路径格式适配已有目录后，再开始创建。
 16. 在侧栏、小窗和沉浸速记间切换输入，退出后草稿应保留；核对保存快捷键、退出按钮、中文输入法及系统全屏。对已有 Markdown 使用沉浸命令，切换文件和停用插件后应恢复布局。
 17. 用快速新建各存一条速记、笔记、任务和项目，核对路径；任务总览中原有查询保持不变。在主页勾选一条任务，确认只有原笔记的那一行变为 `[x]`。
 18. 未开启即时建议时确认 Tangrow 没有网络请求；开启后在快速新建里点「AI 分拣」，确认只预填表单。
 19. 未安装 Claudian 时，AI 工作区应只显示安装引导。安装并打开一个对话后运行「检查未完成任务」，确认没有文件被修改、回复出现在侧栏；再运行「整理收件箱」，确认代理先给出计划，回复确认后才写入，原速记正文保持不变。点「安装技能」后在 Claudian 里输入 `/tangrow` 应能看到六个技能。
 
-报表定义见 [REPORTING.md](docs/REPORTING.md)，功能对照见 [PARITY-AUDIT.md](docs/PARITY-AUDIT.md)，发布前代码、样式、素材与模板复用核查见 [REUSE-AUDIT.md](docs/REUSE-AUDIT.md)，设计边界见 [DESIGN.md](docs/DESIGN.md)，实现来源见 [PROVENANCE.md](docs/PROVENANCE.md)。复用核查只支持其固定基线的静态技术判断，不是独立创作或不侵权证明。当前 GPL、附加许可、历史 MIT 与第三方权利的边界见 [LICENSING.md](docs/LICENSING.md)。
+报表定义见 [REPORTING.md](docs/REPORTING.md)，功能对照见 [PARITY-AUDIT.md](docs/PARITY-AUDIT.md)，发布前代码、样式、素材与模板复用核查见 [REUSE-AUDIT.md](docs/REUSE-AUDIT.md)，设计边界见 [DESIGN.md](docs/DESIGN.md)，实现来源见 [PROVENANCE.md](docs/PROVENANCE.md)。复用核查只支持其固定基线的静态技术判断，不是独立创作或不侵权证明。当前 GPL、附加许可与第三方权利的边界见 [LICENSING.md](docs/LICENSING.md)。
