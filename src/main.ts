@@ -409,7 +409,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       const previous = this.settings.language;
       if (previous === language) return;
       this.settings.language = language;
-      try { await this.persist(); } catch (error) { this.settings.language = previous; throw error; }
+      try { await this.persist(); } catch (error) { this.settings.language = previous; this.notifyAfterRollback(); throw error; }
       if (!this.alive) return;
       try { await this.localizeManagedFiles(previous); }
       finally {
@@ -521,7 +521,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       journalPath(next, period, dayKey(), (value, pattern) => dateTime(value).format(pattern));
       this.settings = next;
       try { await this.persist(); }
-      catch (error) { this.settings = previous; throw error; }
+      catch (error) { this.settings = previous; this.notifyAfterRollback(); throw error; }
       this.notify();
     });
   }
@@ -549,7 +549,15 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     if (!this.alive) return;
     this.cachedSnapshot = null;
     this.applyWidths();
-    for (const listener of this.listeners) listener();
+    // One view failing to refresh must not leave the others showing stale state.
+    for (const listener of this.listeners) {
+      try { listener(); } catch (error) { console.error('Tangrow view refresh failed', error); }
+    }
+  }
+  /** After a failed write is undone, views that rendered the unsaved value must show the restored one. */
+  private notifyAfterRollback(): void {
+    // The caller rethrows the write error, which must not be replaced by a refresh error.
+    try { this.notify(); } catch (error) { console.error('Tangrow view refresh failed', error); }
   }
   private scheduleRefresh(): void {
     window.clearTimeout(this.refreshTimer);
@@ -586,7 +594,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   private async replaceFocus(next: FocusSession | null): Promise<void> {
     const previous = this.focus;
     this.focus = next;
-    try { await this.persist(); } catch (error) { this.focus = previous; this.notify(); throw error; }
+    try { await this.persist(); } catch (error) { this.focus = previous; this.notifyAfterRollback(); throw error; }
     this.notify();
   }
   async saveSettings(patch: LocalSettingsPatch | ((current: Settings) => LocalSettingsPatch) = {}): Promise<void> {
@@ -595,7 +603,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       const changes = typeof patch === 'function' ? patch(previous) : patch;
       this.settings = { ...previous, ...changes };
       try { await this.persist(); }
-      catch (error) { this.settings = previous; throw error; }
+      catch (error) { this.settings = previous; this.notifyAfterRollback(); throw error; }
       if (changes.wideByDefault !== undefined) this.widePages.clear();
       this.notify();
     });
@@ -631,7 +639,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       const previous = this.settings;
       this.settings = { ...previous, knowledgeEnabled: enabled };
       try { await this.persist(); }
-      catch (error) { this.settings = previous; throw error; }
+      catch (error) { this.settings = previous; this.notifyAfterRollback(); throw error; }
       if (!enabled) this.workbenchCards = undefined;
       this.notify();
     });
@@ -715,7 +723,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       }
       this.settings = next;
       try { await this.persist(); }
-      catch (error) { this.settings = previous; throw error; }
+      catch (error) { this.settings = previous; this.notifyAfterRollback(); throw error; }
       this.lastActivityEvent = null;
       this.reportSource.invalidate();
       this.notify();
@@ -758,7 +766,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       const previous = this.settings[key];
       this.settings[key] = folder;
       try { await this.persist(); }
-      catch (error) { this.settings[key] = previous; this.notify(); throw error; }
+      catch (error) { this.settings[key] = previous; this.notifyAfterRollback(); throw error; }
       this.notify();
     });
   }
@@ -1207,7 +1215,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       if (secrets) { secrets.setSecret(AI_SECRET_ID, key); this.settings.aiApiKey = ''; }
       else this.settings.aiApiKey = key;
       try { await this.persist(); }
-      catch (error) { this.settings.aiApiKey = previous; throw error; }
+      catch (error) { this.settings.aiApiKey = previous; this.notifyAfterRollback(); throw error; }
       this.notify();
     });
   }
@@ -1222,7 +1230,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       }
       this.settings = next;
       try { await this.persist(); }
-      catch (error) { this.settings = previous; throw error; }
+      catch (error) { this.settings = previous; this.notifyAfterRollback(); throw error; }
       this.notify();
     });
   }
@@ -1694,7 +1702,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     const previous = this.settings.habits;
     this.settings.habits = habits;
     try { await this.persist(); }
-    catch (error) { this.settings.habits = previous; this.notify(); throw error; }
+    catch (error) { this.settings.habits = previous; this.notifyAfterRollback(); throw error; }
     this.notify();
   }
 }

@@ -15,7 +15,7 @@ type ElementOptions = { text?: string; value?: string; type?: string; cls?: stri
 class Element extends EventTarget {
   children: Element[] = [];
   parentElement: Element | null = null;
-  ownerDocument = { activeElement: null as Element | null };
+  ownerDocument = { activeElement: null as Element | null, hasFocus: () => true };
   attributes: Record<string, string> = {};
   dataset: Record<string, string> = {};
   classes = new Set<string>();
@@ -289,19 +289,267 @@ test('an integer typed back to the value it showed does not overwrite a newer va
   const goal = row('activityGoalMinutes').querySelector('input')!;
   const rendered = Number(goal.value);
   const updateReportSettings = plugin.updateReportSettings.bind(plugin);
-  // The report view changes the goal while the settings page still shows the old value.
+  goal.value = String(rendered + 1);
+  await goal.oninput?.();
+  // The report view changes the goal while the user is editing here, so the field keeps the user's input.
   await updateReportSettings({ activityGoalMinutes: rendered + 30 });
+  assert.equal(goal.value, String(rendered + 1));
   let saves = 0;
   plugin.updateReportSettings = async (patch) => { saves++; await updateReportSettings(patch); };
-  for (const value of [String(rendered + 1), String(rendered)]) {
-    goal.value = value;
-    await goal.oninput?.();
-  }
+  goal.value = String(rendered);
+  await goal.oninput?.();
   await goal.onblur?.();
   dispose();
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(plugin.settings.activityGoalMinutes, rendered + 30);
   assert.equal(saves, 0);
+});
+
+test('an untouched integer field shows a value changed elsewhere, and typing the old value then restores it', async () => {
+  const { plugin, row, navigate, dispose } = fixture();
+  navigate('Report settings');
+  const goal = row('activityGoalMinutes').querySelector('input')!;
+  const rendered = Number(goal.value);
+  // The report view changes the goal while the settings page is open.
+  await plugin.updateReportSettings({ activityGoalMinutes: rendered + 30 });
+  assert.equal(goal.value, String(rendered + 30));
+  goal.value = String(rendered);
+  await goal.oninput?.();
+  await goal.onblur?.();
+  dispose();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual([goal.value, plugin.settings.activityGoalMinutes], [String(rendered), rendered]);
+});
+
+test('closing settings stops integer fields from following later changes', async () => {
+  const { plugin, row, navigate, dispose } = fixture();
+  navigate('Sidebar components');
+  const duration = row('focusMinutes').querySelector('input')!;
+  const shown = duration.value;
+  dispose();
+  await plugin.saveSettings({ focusMinutes: Number(shown) + 5 });
+  assert.equal(duration.value, shown);
+});
+
+test('a focused integer field keeps in-progress input across unrelated refreshes and catches up on blur', async () => {
+  const { plugin, row, navigate, dispose } = fixture();
+  navigate('Report settings');
+  const goal = row('activityGoalMinutes').querySelector('input')!;
+  const rendered = Number(goal.value);
+  goal.focus();
+  goal.value = String(rendered + 1);
+  await goal.oninput?.();
+  // Report view updates the goal while the user is actively typing here.
+  await plugin.updateReportSettings({ activityGoalMinutes: rendered + 30 });
+  assert.equal(goal.value, String(rendered + 1));
+  // User edits back through the old value (e.g. heading toward another number) while still focused.
+  goal.value = String(rendered);
+  await goal.oninput?.();
+  await plugin.action('refresh');
+  assert.equal(goal.value, String(rendered));
+  // Blurring preserves the newer external value and immediately displays it so the old value can be typed again.
+  let saves = 0;
+  const updateReportSettings = plugin.updateReportSettings.bind(plugin);
+  plugin.updateReportSettings = async (patch) => { saves++; await updateReportSettings(patch); };
+  goal.ownerDocument.activeElement = null;
+  await goal.onblur?.();
+  assert.deepEqual([goal.value, plugin.settings.activityGoalMinutes, saves], [String(rendered + 30), rendered + 30, 0]);
+  goal.value = String(rendered);
+  await goal.oninput?.();
+  await goal.onblur?.();
+  dispose();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual([goal.value, plugin.settings.activityGoalMinutes, saves], [String(rendered), rendered, 1]);
+});
+
+test('a focused untouched integer field in an inactive window still follows external changes', async () => {
+  const { plugin, row, navigate, dispose } = fixture();
+  navigate('Report settings');
+  const goal = row('activityGoalMinutes').querySelector('input')!;
+  const rendered = Number(goal.value);
+  goal.focus();
+  goal.ownerDocument.hasFocus = () => false;
+  await plugin.updateReportSettings({ activityGoalMinutes: rendered + 30 });
+  assert.equal(goal.value, String(rendered + 30));
+  dispose();
+});
+
+test('failed external settings writes notify listeners on rollback so integer fields never keep phantom values', async () => {
+  for (const [section, id, key, trigger] of [
+    ['Report settings', 'activityGoalMinutes', 'activityGoalMinutes', (plugin: TangrowPlugin, value: number) => plugin.updateReportSettings({ activityGoalMinutes: value })],
+    ['Sidebar components', 'focusMinutes', 'focusMinutes', (plugin: TangrowPlugin, value: number) => plugin.saveSettings({ focusMinutes: value })]
+  ] as const) {
+    const { plugin, row, navigate, dispose } = fixture();
+    navigate(section);
+    const field = row(id).querySelector('input')!;
+    const original = plugin.settings[key];
+    let rejectSave!: (reason: Error) => void;
+    plugin.saveData = () => new Promise<void>((_, reject) => { rejectSave = reject; });
+    const pending = trigger(plugin, original + 20);
+    await new Promise(resolve => setImmediate(resolve));
+    // An unrelated refresh runs while the optimistic write is in flight.
+    await plugin.action('refresh');
+    assert.equal(field.value, String(original + 20));
+    rejectSave(new Error('Save failed'));
+    await assert.rejects(pending, /Save failed/);
+    assert.deepEqual([field.value, plugin.settings[key]], [String(original), original]);
+    dispose();
+  }
+});
+
+for (const [name, read, write] of [
+  ['knowledge features', (plugin: TangrowPlugin) => plugin.settings.knowledgeEnabled,
+    (plugin: TangrowPlugin) => plugin.updateKnowledgeEnabled(!plugin.settings.knowledgeEnabled)],
+  ['journal format', (plugin: TangrowPlugin) => plugin.settings.journalFormat,
+    (plugin: TangrowPlugin) => plugin.updateJournalSettings('daily', 'YYYY/[Day] MM-DD')],
+  ['AI settings', (plugin: TangrowPlugin) => plugin.settings.aiEnabled,
+    (plugin: TangrowPlugin) => plugin.updateAiSettings({ aiEnabled: !plugin.settings.aiEnabled })],
+  ['AI key', (plugin: TangrowPlugin) => plugin.settings.aiApiKey,
+    (plugin: TangrowPlugin) => plugin.setAiKey('sk-ant-test-key')],
+  ['interface language', (plugin: TangrowPlugin) => plugin.settings.language,
+    (plugin: TangrowPlugin) => plugin.setLanguage(plugin.settings.language === 'en' ? 'zh-CN' : 'en')]
+] as const) test(`a failed ${name} write refreshes views with the restored value`, async () => {
+  const { plugin, dispose } = fixture();
+  const original = read(plugin);
+  const seen: unknown[] = [];
+  plugin.subscribe(() => seen.push(read(plugin)));
+  let rejectSave!: (reason: Error) => void;
+  plugin.saveData = () => new Promise<void>((_, reject) => { rejectSave = reject; });
+  const pending = write(plugin);
+  await new Promise(resolve => setImmediate(resolve));
+  // An unrelated refresh renders the unsaved value while the write is in flight.
+  await plugin.action('refresh');
+  assert.notDeepEqual(seen.at(-1), original);
+  rejectSave(new Error('Save failed'));
+  await assert.rejects(pending, /Save failed/);
+  assert.deepEqual([read(plugin), seen.at(-1)], [original, original]);
+  dispose();
+});
+
+test('a commit of the value another view is still saving is kept when that save fails', async () => {
+  const { plugin, row, navigate, dispose } = fixture();
+  navigate('Report settings');
+  const goal = row('activityGoalMinutes').querySelector('input')!;
+  const rendered = Number(goal.value);
+  const saveData = plugin.saveData.bind(plugin);
+  let rejectFirst!: (reason: Error) => void;
+  let writes = 0;
+  plugin.saveData = (data) => ++writes === 1 ? new Promise<void>((_, reject) => { rejectFirst = reject; }) : saveData(data);
+  // The report view starts saving a new goal; the settings field is being edited, so it keeps the user's input.
+  goal.focus();
+  const external = plugin.updateReportSettings({ activityGoalMinutes: rendered + 30 });
+  await new Promise(resolve => setImmediate(resolve));
+  goal.value = String(rendered + 30);
+  await goal.oninput?.();
+  const commit = goal.onchange?.();
+  rejectFirst(new Error('Save failed'));
+  await assert.rejects(external, /Save failed/);
+  await commit;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual([goal.value, plugin.settings.activityGoalMinutes], [String(rendered + 30), rendered + 30]);
+  dispose();
+});
+
+test('a view that fails to refresh after a rollback neither hides the save error nor blocks other views', async () => {
+  const { plugin, dispose } = fixture();
+  const original = plugin.settings.focusMinutes;
+  plugin.subscribe(() => { throw new Error('View refresh failed'); });
+  const seen: number[] = [];
+  plugin.subscribe(() => seen.push(plugin.settings.focusMinutes));
+  plugin.saveData = () => Promise.reject(new Error('Save failed'));
+  const errors = console.error;
+  console.error = () => undefined;
+  try { await assert.rejects(plugin.saveSettings({ focusMinutes: original + 5 }), /Save failed/); }
+  finally { console.error = errors; }
+  assert.deepEqual([plugin.settings.focusMinutes, seen.at(-1)], [original, original]);
+  dispose();
+});
+
+test('an integer typed back to its original value while the first save is in flight saves the original value', async () => {
+  const { plugin, row, navigate, dispose } = fixture();
+  navigate('Sidebar components');
+  const field = row('focusMinutes').querySelector('input')!;
+  const original = plugin.settings.focusMinutes;
+  const saveSettings = plugin.saveSettings.bind(plugin);
+  let release!: () => void;
+  const slowWrite = new Promise<void>(resolve => { release = resolve; });
+  plugin.saveSettings = async (patch) => { await slowWrite; await saveSettings(patch); };
+  field.value = String(original + 20);
+  field.oninput?.();
+  const first = field.onchange?.();
+  field.value = String(original);
+  field.oninput?.();
+  const second = field.onchange?.();
+  await field.onblur?.();
+  dispose();
+  release();
+  await Promise.all([first, second]);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual([field.value, plugin.settings.focusMinutes], [String(original), original]);
+});
+
+test('a failed earlier integer save does not undo a later commit that is still in flight', async () => {
+  const { plugin, row, navigate, dispose } = fixture();
+  navigate('Sidebar components');
+  const field = row('focusMinutes').querySelector('input')!;
+  const original = plugin.settings.focusMinutes;
+  const saveSettings = plugin.saveSettings.bind(plugin);
+  let calls = 0;
+  plugin.saveSettings = async (patch) => {
+    if (++calls === 1) throw new Error('Save failed');
+    await saveSettings(patch);
+  };
+  field.value = String(original + 20);
+  field.oninput?.();
+  const first = field.onchange?.();
+  field.value = String(original + 30);
+  field.oninput?.();
+  await Promise.all([first, field.onchange?.()]);
+  await field.onblur?.();
+  dispose();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual([field.value, plugin.settings.focusMinutes, calls], [String(original + 30), original + 30, 2]);
+});
+
+test('a failed first save of a value committed twice does not drop a later return to the original', async () => {
+  const { plugin, row, navigate, dispose } = fixture();
+  navigate('Sidebar components');
+  const field = row('focusMinutes').querySelector('input')!;
+  const original = plugin.settings.focusMinutes;
+  const changed = original + 20;
+  const saveSettings = plugin.saveSettings.bind(plugin);
+  // Like the plugin's save queue, writes run one at a time in order. The first one is slow and fails.
+  let release!: () => void;
+  const slowWrite = new Promise<void>(resolve => { release = resolve; });
+  let queue = Promise.resolve();
+  let calls = 0;
+  plugin.saveSettings = (patch) => {
+    const call = ++calls;
+    const write = queue.then(async () => {
+      if (call === 1) { await slowWrite; throw new Error('Save failed'); }
+      await saveSettings(patch);
+    });
+    queue = write.catch(() => undefined);
+    return write;
+  };
+  const commits: Promise<void>[] = [];
+  for (const value of [changed, original, changed]) {
+    field.value = String(value);
+    field.oninput?.();
+    commits.push(field.onchange?.() ?? Promise.resolve());
+  }
+  release();
+  await commits[0];
+  // Back to the original while the second and third saves may still be queued.
+  field.value = String(original);
+  field.oninput?.();
+  commits.push(field.onchange?.() ?? Promise.resolve());
+  await field.onblur?.();
+  dispose();
+  await Promise.all(commits);
+  await queue;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual([field.value, plugin.settings.focusMinutes, calls], [String(original), original, 4]);
 });
 
 test('a different integer typed over a stale page still saves the user\'s value', async () => {

@@ -250,6 +250,56 @@ test('a late release never clears a reactivation issued in the same second by an
   assert.equal(records.get(leaseKey), JSON.stringify(reactivated)); assert.ok(access.canUse()); assert.ok(sibling.canUse());
 });
 
+test('a late release never clears a same-second reactivation whose lease is identical to the released one', async () => {
+  const { access, state, deps, records } = fixture(); await access.activate(vector.code);
+  const sibling = new Access(deps); sibling.start();
+  let deliver!: (reply: ReturnType<typeof response>) => void;
+  state.request = () => new Promise(resolve => { deliver = resolve; });
+  const pending = access.release();
+  // Activation, release and reactivation share one second, and signatures are deterministic, so the new lease is
+  // byte-for-byte the old one; only the activation tag tells them apart.
+  state.request = async () => response(terminal('released'));
+  assert.ok((await sibling.renew()).ok); assert.equal(records.has(leaseKey), false);
+  state.request = async () => response(vector.lease);
+  assert.ok((await sibling.activate(vector.code)).ok);
+  assert.equal(records.get(leaseKey), JSON.stringify(vector.lease));
+  const seen: string[] = [];
+  access.subscribe(event => seen.push(event));
+  deliver(response(terminal('released')));
+  assert.deepEqual(await pending, { ok: false, error: 'stale' }); assert.deepEqual(seen, []);
+  assert.equal(records.get(leaseKey), JSON.stringify(vector.lease)); assert.ok(access.canUse()); assert.ok(sibling.canUse());
+});
+
+test('a late release after another vault reactivated and released again notifies nobody and reports stale', async () => {
+  const { access, state, deps, records } = fixture(); await access.activate(vector.code);
+  const sibling = new Access(deps); sibling.start();
+  let deliver!: (reply: ReturnType<typeof response>) => void;
+  state.request = () => new Promise(resolve => { deliver = resolve; });
+  const pending = access.release();
+  state.request = async () => response(terminal('released'));
+  assert.ok((await sibling.renew()).ok);
+  state.request = async () => response(active(vector.payload.iat + 30));
+  assert.ok((await sibling.activate(vector.code)).ok);
+  state.request = async () => response(terminal('released', { iat: vector.payload.iat + 40, rnb: vector.payload.rnb + 40 }));
+  assert.ok((await sibling.release()).ok); assert.equal(records.has(leaseKey), false);
+  const seen: string[] = [];
+  access.subscribe(event => seen.push(event));
+  deliver(response(terminal('released')));
+  assert.deepEqual(await pending, { ok: false, error: 'stale' }); assert.deepEqual(seen, []);
+});
+
+test('an unreadable activation tag does not block activation, renewal or release', async () => {
+  const records = new Map([['tangrow:binding:v1', '{}']]);
+  const { access, state, warnings } = fixture(records);
+  assert.ok((await access.activate(vector.code)).ok);
+  assert.equal(typeof JSON.parse(records.get('tangrow:binding:v1')!), 'string');
+  records.set('tangrow:binding:v1', '[]');
+  assert.ok((await access.renew()).ok);
+  state.request = async () => response(terminal('released'));
+  assert.ok((await access.release()).ok); assert.equal(records.has(leaseKey), false);
+  assert.ok(warnings.includes('Tangrow access: binding'));
+});
+
 test('a late release never clears a lease for another license stored by another vault', async () => {
   const { access, state, records } = fixture(); await access.activate(vector.code);
   let deliver!: (reply: ReturnType<typeof response>) => void;
@@ -385,6 +435,37 @@ test('startup renews expired leases with a 12s timeout and bounded retry delays'
   }
   reopened.dispose();
 });
+
+for (const [elapsed, accepted] of [[8_000, true], [12_001, false]] as const) {
+  test(`background renewal handles a signed response after ${elapsed}ms`, async () => {
+    const { access, state, records, timers } = fixture();
+    assert.ok((await access.activate(vector.code)).ok);
+    state.now = vector.payload.exp * 1000;
+    const reply = deferred<ReturnType<typeof response>>();
+    state.request = async (path, body) => {
+      assert.equal(path, '/v1/renew');
+      assert.equal(body.lease, vector.lease);
+      return reply.promise;
+    };
+    access.onResume('online');
+
+    state.now += elapsed;
+    for (const [id, timer] of [...timers]) {
+      if (timer.delay > elapsed) continue;
+      timers.delete(id);
+      timer.callback();
+    }
+    await nextTurn();
+    const renewed = active(Math.floor(state.now / 1000));
+    reply.resolve(response(renewed));
+    await nextTurn();
+
+    assert.equal(records.get(leaseKey), JSON.stringify(accepted ? renewed : vector.lease));
+    assert.equal(access.snapshot().state, accepted ? 'active' : 'needs_network');
+    assert.ok([...timers.values()].some(timer => timer.delay === (accepted ? 6 : 1) * hour));
+    access.dispose();
+  });
+}
 
 function browserWindows(backend: 'Web Locks' | 'IndexedDB', performance: Pick<Performance, 'timeOrigin' | 'now'> = globalThis.performance) {
   const locks = backend === 'Web Locks' ? globalThis.navigator?.locks ?? testWebLocks() : undefined;
