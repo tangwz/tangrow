@@ -8,7 +8,7 @@
 | `token/raw-color` | Hardcoded hex or raw palette color where an Obsidian semantic token (`--text-*`, `--background-*`, `--interactive-accent`, etc.) or `color-mix(...)` should be used |
 | `token/undefined` | Custom `--tangrow-*` variable referenced without a definition in its scope |
 | `icon/host-setIcon` | Bundled or copied raw third-party SVG icon instead of Obsidian's `setIcon` (`THIRD_PARTY_NOTICES.md`) |
-| `i18n/hardcoded-copy` | User-visible label, tooltip, placeholder, `aria-label`, or notice bypasses `src/i18n.ts` / `src/locales/*.zh-CN.json` |
+| `i18n/hardcoded-copy` | User-visible label, tooltip, placeholder, `aria-label`, or notice bypasses `src/i18n.ts` translation (its English source string is the `en` copy), or lacks a matching `src/locales/*.zh-CN.json` entry |
 | `a11y/name` | Interactive control or icon-only button lacks an accessible name (`aria-label` or visible text) |
 | `a11y/focus` | Keyboard focus ring (`:focus-visible`) is removed without replacement, or menus/modals break `Esc`/arrow/`Enter` focus flow |
 | `a11y/reduced-motion` | New animation or transition ignores `prefers-reduced-motion` |

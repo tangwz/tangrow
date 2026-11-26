@@ -70,14 +70,13 @@ Match the proof required to the risk of the change:
    usernames/paths appear.
 5. **Attach directly to the PR**:
    - First check whether the installed GitHub CLI supports `--attach`
-     (`gh pr comment --help | grep -q -- --attach`, supported in newer `gh`
-     releases such as `2.105+`):
+     (`gh pr comment --help | grep -q -- --attach`):
      ```bash
      gh pr comment <number> --repo tangwz/tangrow \
        --body-file /path/to/ignored/pr-proof.md \
        --attach /path/to/ignored/after.png
      ```
-   - On older `gh` versions without `--attach`, upgrade `gh` or upload the
+   - If `gh` lacks `--attach`, upload the
      inspected image/video through the GitHub PR web UI and reference the
      uploaded asset URL in `--body-file` before running `gh pr comment
      <number> --repo tangwz/tangrow --body-file ...`. Never commit proof media

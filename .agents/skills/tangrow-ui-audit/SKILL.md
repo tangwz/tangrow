@@ -21,7 +21,8 @@ judgment-based suggestions; never present aesthetic preference as an error.
      reduced-motion handling (`a11y/reduced-motion`).
    - Check UI code for Obsidian `setIcon` usage (`icon/host-setIcon`),
      localization via `src/i18n.ts` + `src/locales/*.zh-CN.json`
-     (`i18n/hardcoded-copy`), accessible names & keyboard navigation
+     (`i18n/hardcoded-copy`: the English source string is the `en` copy, and
+     each one needs a matching zh-CN entry), accessible names & keyboard navigation
      (`a11y/name`, `a11y/focus`), lifecycle cleanup (`dom/cleanup`), and
      multi-window container scoping (`dom/container-scope`).
 3. Inspect **rendered UI** when visual or layout changes are in scope (and
