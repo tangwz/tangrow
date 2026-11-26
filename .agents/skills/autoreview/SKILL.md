@@ -33,8 +33,10 @@ python3 "$HOME/.agents/skills/autoreview/scripts/autoreview" \
   --prompt-file .agents/skills/autoreview/review-checklist.md
 ```
 
-Pre-PR / release / high-risk branch review (licensing, access gating, packaging,
-or persistence changes, P0–P3):
+Pre-PR / high-risk branch review (licensing, access gating, packaging, or
+persistence changes, P0–P3). For a release, use the previous release tag as
+`--base` instead, as `.agents/skills/tangrow-release/SKILL.md` describes; on a
+clean `main`, `--base origin/main` selects an empty range:
 
 ```bash
 python3 "$HOME/.agents/skills/autoreview/scripts/autoreview" \
