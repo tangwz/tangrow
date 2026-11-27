@@ -1,6 +1,6 @@
 # Tangrow 产品定位与核心闭环
 
-状态：产品定位，2026-11-26 确定。本文是 Tangrow 对外宣传、售卖文案和功能取舍的依据。功能实现以 [设计边界](DESIGN.md)、[统一设计方案](ZETTELKASTEN.md)、[PARA 设计](PARA.md) 和 [整理引擎设计](AI-ENGINE.md) 为准，术语以 [领域语言](../CONTEXT.md) 为准。
+状态：产品定位，2026-11-26 确定，2026-11-27 更新。本文是 Tangrow 对外宣传、售卖文案和功能取舍的依据。功能实现以 [设计边界](DESIGN.md)、[统一设计方案](ZETTELKASTEN.md)、[PARA 设计](PARA.md) 和 [整理引擎设计](AI-ENGINE.md) 为准，术语以 [领域语言](../CONTEXT.md) 为准。
 
 ## 1. 一句话定位
 
