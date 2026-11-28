@@ -399,7 +399,10 @@ export class MarkdownView extends FileView {
 export function setIcon(): void {}
 export function normalizePath(path: string): string { return path.replace(/\/+/g, '/').replace(/^\/+|\/+$/g, ''); }
 export const moment = momentLibrary;
-export function setTooltip(): void {}
+export const tooltipBehavior = { set: (_element: { setAttribute(key: string, value: string): void }, _text: string): void => {} };
+export function setTooltip(element: { setAttribute(key: string, value: string): void }, text: string): void {
+  tooltipBehavior.set(element, text);
+}
 export function getFrontMatterInfo(content: string): { exists: boolean; frontmatter: string; from: number; to: number; contentStart: number } {
   const match = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(content);
   return { exists: !!match, frontmatter: match?.[1] ?? '', from: 0, to: match?.[0].length ?? 0, contentStart: match?.[0].length ?? 0 };

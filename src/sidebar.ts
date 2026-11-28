@@ -16,7 +16,7 @@ import { sortTaskDisplay } from './task-display';
 import { renderTaskMetadata } from './task-row';
 import { ProjectWorkbench, rankWorkbenchProjects } from './project-workbench';
 import type { WorkbenchProject } from './project-workbench-data';
-import { SidebarUI, icon } from './ui';
+import { SidebarUI, icon, nameTooltipButton } from './ui';
 import { workbenchDestination, type ProjectTab, type KnowledgeTab, type MoreTab, type WorkbenchEntry, type WorkbenchTab } from './workbench-navigation';
 
 export const VIEW_TYPE = 'tangrow-sidebar';
@@ -26,7 +26,7 @@ const SECTIONS: { id: WorkbenchTab; label: string; icon: string }[] = [
   { id: 'captures', label: 'Captures', icon: 'inbox' },
   { id: 'knowledge', label: 'Knowledge', icon: 'brain' },
   { id: 'projects', label: 'Projects', icon: 'folder-kanban' },
-  { id: 'more', label: 'More workspaces', icon: 'ellipsis' }
+  { id: 'more', label: 'More', icon: 'ellipsis' }
 ];
 
 const PROJECT_TABS = { list: 'Projects', areas: 'Areas', drafts: 'Drafts' } as const;
@@ -856,10 +856,11 @@ export class TangrowSidebar extends ItemView {
     for (const { task, display } of sortTaskDisplay(openTasks, today).slice(0, 6)) {
       const label = display.title || this.ui.t('Untitled task');
       const row = list.createDiv({ cls: 'tangrow-task-item' });
-      const check = row.createEl('button', { cls: 'tangrow-task-check', attr: { type: 'button', 'aria-label': this.ui.t('Complete: {task}', { task: label }) } });
+      const check = row.createEl('button', { cls: 'tangrow-task-check', attr: { type: 'button' } });
       check.disabled = !!task.labelPending;
       check.dataset.tangrowAction = `task-check-${task.path}:${task.line}`;
       setTooltip(check, this.ui.t(task.labelPending ? 'Open the note to complete this task' : 'Mark done in the note'));
+      nameTooltipButton(check, this.ui.t('Complete: {task}', { task: label }));
       check.addEventListener('click', () => {
         if (check.disabled) return;
         check.disabled = true;

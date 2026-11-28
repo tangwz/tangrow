@@ -9,6 +9,13 @@ export function icon(parent: HTMLElement, name: string): HTMLElement {
   return element;
 }
 
+/** Name a button independently of the aria-label Obsidian uses for its hover tooltip. */
+export function nameTooltipButton(button: HTMLButtonElement, name: string): void {
+  const id = `tangrow-button-name-${crypto.randomUUID()}`;
+  button.createSpan({ text: name, attr: { id, hidden: '' } });
+  button.setAttribute('aria-labelledby', id);
+}
+
 export interface ButtonOptions {
   icon?: string;
   cls?: string;
