@@ -89,10 +89,19 @@
 
 .tangrow-sidebar {
   container-type: inline-size;
-  padding: 18px 14px calc(16px + var(--status-bar-scroll-padding, var(--tangrow-status-bar-height, 0px)));
+  padding: 18px 14px;
   overflow-y: auto;
   scrollbar-gutter: stable;
   font-size: var(--font-ui-small);
+}
+
+/* Preserve sidebar clearance when Obsidian also sets the leaf's bottom padding. */
+.tangrow-sidebar,
+.workspace-leaf-content .view-content.tangrow-sidebar {
+  padding-bottom: max(
+    var(--safe-area-inset-bottom, 0px),
+    calc(16px + var(--status-bar-scroll-padding, var(--tangrow-status-bar-height, 0px)))
+  );
 }
 
 .tangrow-header,
