@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -357,6 +358,24 @@ test('finishing a dismissed guide leaves a newly opened guide alone', async () =
   await finish;
   assert.equal(Modal.current, second);
   second.close();
+  dispose();
+});
+
+test('the organizing engine status follows the coming soon preference', async () => {
+  const { navigate, row, byText, dispose } = fixture();
+  navigate('AI');
+  const preference = row('showComingSoon').querySelector('input')!;
+  const status = byText('Coming soon');
+  assert.equal(status.hidden, false);
+  preference.checked = false;
+  await preference.onchange?.();
+  assert.equal(status.hidden, true);
+  preference.checked = true;
+  await preference.onchange?.();
+  assert.equal(status.hidden, false);
+  // A later display rule with equal specificity would override the settings [hidden] rule in Obsidian.
+  const styles = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  assert.match(styles, /\.tangrow-settings\s+\.tangrow-settings-status:not\(\[hidden\]\)\s*\{[^}]*\bdisplay:\s*inline-flex\b/);
   dispose();
 });
 
