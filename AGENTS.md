@@ -8,7 +8,10 @@ companion folder).
 
 Read the relevant contracts before modifying a subsystem:
 - Domain terminology: `CONTEXT.md`
+- Product positioning & core loop: `docs/POSITIONING.md`
 - Architecture & additive boundaries: `docs/DESIGN.md`, `docs/ZETTELKASTEN.md`
+- PARA folders, filing destinations & archive decision: `docs/PARA.md`
+- AI organizing engine (proposal): `docs/AI-ENGINE.md`
 - Licensing & cross-vault access contract: `docs/ACCESS-CONTRACT.md`, `docs/PURCHASE-ACTIVATION.md`
 - Reporting metrics & semantics: `docs/REPORTING.md`
 - Native IME & multi-window acceptance: `docs/NATIVE-IME-ACCEPTANCE.md`

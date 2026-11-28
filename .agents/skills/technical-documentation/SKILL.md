@@ -19,8 +19,9 @@ Inventory the relevant surfaces before editing or reviewing:
   *(Distinguish this from the runtime vault-side `AGENTS.md` generated inside a
   user's companion folder.)*
 - **Domain glossary (terminology source of truth)**: `CONTEXT.md`.
-- **Product & architecture contracts**: `README.md`, `docs/DESIGN.md`,
-  `docs/ZETTELKASTEN.md`, `docs/REPORTING.md`, `docs/ACCESS-CONTRACT.md`,
+- **Product & architecture contracts**: `README.md`, `docs/POSITIONING.md`,
+  `docs/DESIGN.md`, `docs/ZETTELKASTEN.md`, `docs/PARA.md`, `docs/AI-ENGINE.md`,
+  `docs/REPORTING.md`, `docs/ACCESS-CONTRACT.md`,
   `docs/PURCHASE-ACTIVATION.md`, `docs/NATIVE-IME-ACCEPTANCE.md`,
   `docs/PROVENANCE.md`, `docs/LICENSING.md`, `THIRD_PARTY_NOTICES.md`.
 - **Historical dated snapshots** (preserve as dated records; do not silently
