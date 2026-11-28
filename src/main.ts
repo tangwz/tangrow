@@ -1101,7 +1101,14 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
         const file = source.captureFile ? this.captureFile(source.path) : this.app.vault.getAbstractFileByPath(source.path);
         if (source.captureFile && file !== source.captureFile) throw new Error('This capture no longer exists.');
         if (!(file instanceof TFile) || file.extension !== 'md') throw new Error('The card source no longer exists.');
-        fields.tangrow_sources = [this.propertyLink(file, path, source.anchor)];
+        const cardBasename = path.slice(folder.length + 1, -3);
+        if (file.basename.normalize('NFC').toLowerCase() === cardBasename.normalize('NFC').toLowerCase()) {
+          // Obsidian may return a bare basename because the same-name card does not exist yet.
+          const sourcePath = file.path.includes('/') ? file.path.slice(0, -3) : `${'../'.repeat(folder.split('/').length)}${file.basename}`;
+          fields.tangrow_sources = [`[[${sourcePath}${source.anchor ?? ''}]]`];
+        } else {
+          fields.tangrow_sources = [this.propertyLink(file, path, source.anchor)];
+        }
       }
       body = rebaseMarkdownLinks(body, source.path, path,
         (link, from) => this.app.metadataCache.getFirstLinkpathDest(link, from)?.path ?? null, { sourceLocalAnchors: true });
