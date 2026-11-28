@@ -1,0 +1,1706 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!--PAGE-HEAD-START-->
+<title>Tangrow 手动闭环 v1</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: a design review page — controls, a live mock of the Obsidian window with the Tangrow sidebar, per-screen notes beside it, then the written review.
+   Colors: ONLY Obsidian theme variable names. Their values below approximate Obsidian's default theme so the mock renders outside Obsidian;
+   inside the plugin these declarations disappear and the host theme supplies them. */
+:root {
+  --background-primary: #ffffff;
+  --background-primary-alt: #fafafa;
+  --background-secondary: #f6f6f6;
+  --background-secondary-alt: #ececec;
+  --background-modifier-hover: rgba(0, 0, 0, 0.066);
+  --background-modifier-active-hover: rgba(139, 108, 239, 0.14);
+  --background-modifier-border: #e3e3e3;
+  --background-modifier-border-hover: #cfcfcf;
+  --background-modifier-form-field: #ffffff;
+  --background-modifier-cover: rgba(10, 10, 10, 0.32);
+  --text-normal: #222222;
+  --text-muted: #5c5c5c;
+  --text-faint: #a3a3a3;
+  --text-on-accent: #ffffff;
+  --text-accent: #7552e8;
+  --interactive-normal: #ffffff;
+  --interactive-hover: #f2f2f2;
+  --interactive-accent: #8b6cef;
+  --interactive-accent-hover: #7e5ee8;
+  --color-red: #e93147;
+  --color-orange: #d96a00;
+  --color-green: #08a045;
+  --shadow-s: 0 1px 2px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.05);
+  --shadow-l: 0 10px 40px rgba(0, 0, 0, 0.14), 0 2px 6px rgba(0, 0, 0, 0.06);
+  --font-interface: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+  --font-monospace: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --font-ui-smaller: 11px;
+  --font-ui-small: 12.5px;
+  --font-ui-medium: 14px;
+  --font-ui-large: 19px;
+  --size-4-1: 4px; --size-4-2: 8px; --size-4-3: 12px; --size-4-4: 16px; --size-4-6: 24px; --size-4-8: 32px;
+  --radius-s: 4px; --radius-m: 8px; --radius-l: 12px;
+  --status-bar-scroll-padding: 30px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --background-primary: #1e1e1e; --background-primary-alt: #242424; --background-secondary: #262626; --background-secondary-alt: #2e2e2e;
+    --background-modifier-hover: rgba(255, 255, 255, 0.075); --background-modifier-active-hover: rgba(139, 108, 239, 0.22);
+    --background-modifier-border: #363636; --background-modifier-border-hover: #4a4a4a; --background-modifier-form-field: #1b1b1b;
+    --background-modifier-cover: rgba(0, 0, 0, 0.55);
+    --text-normal: #dadada; --text-muted: #a8a8a8; --text-faint: #6b6b6b; --text-on-accent: #ffffff; --text-accent: #a68af9;
+    --interactive-normal: #2c2c2c; --interactive-hover: #333333; --interactive-accent: #8b6cef; --interactive-accent-hover: #9a7ff2;
+    --color-red: #fb5f65; --color-orange: #e9973f; --color-green: #44cf6e;
+    --shadow-s: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.25); --shadow-l: 0 12px 44px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --background-primary: #1e1e1e; --background-primary-alt: #242424; --background-secondary: #262626; --background-secondary-alt: #2e2e2e;
+  --background-modifier-hover: rgba(255, 255, 255, 0.075); --background-modifier-active-hover: rgba(139, 108, 239, 0.22);
+  --background-modifier-border: #363636; --background-modifier-border-hover: #4a4a4a; --background-modifier-form-field: #1b1b1b;
+  --background-modifier-cover: rgba(0, 0, 0, 0.55);
+  --text-normal: #dadada; --text-muted: #a8a8a8; --text-faint: #6b6b6b; --text-on-accent: #ffffff; --text-accent: #a68af9;
+  --interactive-normal: #2c2c2c; --interactive-hover: #333333; --interactive-accent: #8b6cef; --interactive-accent-hover: #9a7ff2;
+  --color-red: #fb5f65; --color-orange: #e9973f; --color-green: #44cf6e;
+  --shadow-s: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.25); --shadow-l: 0 12px 44px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--background-secondary); color: var(--text-normal); font: 14px/1.6 var(--font-interface); -webkit-font-smoothing: antialiased; }
+button, input, textarea, select { font: inherit; color: inherit; min-width: 0; }
+button { cursor: pointer; }
+button:disabled { cursor: default; }
+:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 1px; }
+h1, h2, h3, h4, p { margin: 0; }
+svg.i { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.75; fill: none; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+svg.i.s { width: 14px; height: 14px; }
+svg.i.xs { width: 12px; height: 12px; }
+#ov, #toast { display: contents; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* ───────── review page chrome ───────── */
+.page { max-width: 1320px; margin: 0 auto; padding-block: 28px 80px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.intro { display: grid; gap: 8px; max-width: 860px; }
+.eyebrow { font-size: var(--font-ui-smaller); color: var(--text-muted); letter-spacing: .06em; }
+.intro h1 { font-size: 26px; line-height: 1.3; font-weight: 650; letter-spacing: -.01em; text-wrap: balance; }
+.intro p { color: var(--text-muted); max-width: 68ch; }
+.controls { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; padding: 10px 0; margin-top: 18px; background: var(--background-secondary); border-bottom: 1px solid var(--background-modifier-border); }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 30; background: var(--background-secondary); }
+.ctl { display: inline-flex; align-items: center; gap: 6px; font-size: var(--font-ui-smaller); color: var(--text-muted); }
+.seg { display: inline-flex; border: 1px solid var(--background-modifier-border); border-radius: 7px; padding: 2px; background: var(--background-primary); }
+.seg button { border: 0; background: transparent; padding: 3px 9px; border-radius: 5px; font-size: 12px; color: var(--text-muted); }
+.seg button[aria-pressed="true"] { background: var(--background-modifier-hover); color: var(--text-normal); font-weight: 600; }
+.jump { display: flex; flex-wrap: wrap; gap: 4px; margin: 16px 0 10px; }
+.jump button { border: 1px solid transparent; background: transparent; padding: 4px 10px; border-radius: 99px; font-size: 12.5px; color: var(--text-muted); }
+.jump button:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+.jump button[aria-pressed="true"] { border-color: var(--background-modifier-border-hover); color: var(--text-normal); background: var(--background-primary); font-weight: 600; }
+.stage { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 20px; align-items: start; }
+@media (max-width: 1120px) { .stage { grid-template-columns: minmax(0, 1fr); } }
+
+/* mock Obsidian window */
+.win { position: relative; height: 760px; border: 1px solid var(--background-modifier-border); border-radius: var(--radius-l); overflow: hidden; background: var(--background-primary); box-shadow: var(--shadow-l); display: grid; grid-template-columns: 42px minmax(0, 1fr) var(--sb-w, 300px); grid-template-rows: 34px minmax(0, 1fr); }
+.win[data-w="wide"] { --sb-w: 400px; }
+.win[data-w="narrow"] { --sb-w: 300px; }
+.titlebar { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; padding: 0 10px; background: var(--background-secondary); border-bottom: 1px solid var(--background-modifier-border); font-size: 12px; color: var(--text-muted); }
+.titlebar .dots { display: flex; gap: 6px; }
+.titlebar .dots i { width: 10px; height: 10px; border-radius: 50%; background: var(--background-modifier-border-hover); }
+.titlebar .tab { margin-left: 52px; padding: 4px 12px; background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-bottom: 0; border-radius: 6px 6px 0 0; align-self: end; color: var(--text-normal); }
+.ribbon { background: var(--background-secondary); border-right: 1px solid var(--background-modifier-border); display: flex; flex-direction: column; align-items: center; gap: 12px; padding-top: 12px; color: var(--text-faint); }
+.editor { overflow: hidden; padding: 34px clamp(20px, 5%, 56px); color: var(--text-normal); }
+.editor .crumb { font-size: 12px; color: var(--text-faint); margin-bottom: 18px; }
+.editor h2 { font-size: 24px; font-weight: 700; margin-bottom: 14px; }
+.editor p { font-size: 15px; line-height: 1.8; margin-bottom: 12px; max-width: 62ch; color: var(--text-normal); }
+.editor .prop { font-size: 12px; color: var(--text-muted); border-left: 2px solid var(--background-modifier-border); padding-left: 10px; margin-bottom: 20px; display: grid; gap: 2px; }
+.side { position: relative; border-left: 1px solid var(--background-modifier-border); background: var(--background-secondary); min-width: 0; overflow: hidden; }
+.statusbar { position: absolute; right: 0; bottom: 0; z-index: 6; display: flex; gap: 14px; padding: 4px 12px; font-size: 11.5px; color: var(--text-muted); background: var(--background-secondary); border: 1px solid var(--background-modifier-border); border-right: 0; border-bottom: 0; border-radius: 8px 0 0 0; }
+@media (max-width: 760px) {
+  .win { grid-template-columns: minmax(0, 1fr); height: 720px; }
+  .ribbon, .editor, .titlebar .tab { display: none; }
+  .win[data-w] { --sb-w: 100%; }
+}
+
+/* notes panel */
+.notes { position: sticky; top: 70px; display: grid; gap: 14px; }
+.card { background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m); padding: 14px 16px; }
+.notes h3 { font-size: 14px; font-weight: 650; margin-bottom: 8px; }
+.notes ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; font-size: 13px; line-height: 1.6; }
+.notes li { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 6px; }
+.iss { display: inline-flex; justify-content: center; align-items: center; height: 18px; min-width: 22px; padding: 0 5px; border-radius: 99px; border: 1px solid var(--background-modifier-border-hover); font-size: 10.5px; font-weight: 600; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.iss.new { border-style: dashed; }
+.before-shot { display: grid; gap: 6px; }
+.before-shot a { display: block; border: 1px solid var(--background-modifier-border); border-radius: 6px; overflow: hidden; }
+.before-shot img { display: block; width: 100%; height: auto; }
+.cap { font-size: 11.5px; color: var(--text-muted); }
+
+/* review document */
+.doc { margin-top: 56px; display: grid; gap: 40px; }
+.doc section > h2 { font-size: 20px; font-weight: 650; margin-bottom: 4px; text-wrap: balance; }
+.doc section > .lede { color: var(--text-muted); font-size: 13.5px; margin-bottom: 16px; max-width: 72ch; }
+.issues { display: grid; gap: 12px; }
+.issue { display: grid; grid-template-columns: 200px minmax(0, 1fr) minmax(0, 1fr) minmax(0, .8fr); gap: 0; background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m); overflow: hidden; }
+.issue > div { padding: 12px 14px; font-size: 13px; line-height: 1.65; min-width: 0; }
+.issue > div + div { border-left: 1px solid var(--background-modifier-border); }
+.issue .k { font-size: 10.5px; color: var(--text-faint); letter-spacing: .06em; display: block; margin-bottom: 3px; }
+.issue .t { font-weight: 650; font-size: 14px; display: flex; gap: 8px; align-items: center; }
+.issue .t + .cap { margin-top: 6px; }
+@media (max-width: 960px) { .issue { grid-template-columns: minmax(0, 1fr); } .issue > div + div { border-left: 0; border-top: 1px solid var(--background-modifier-border); } }
+.decisions { display: grid; gap: 10px; counter-reset: d; }
+.dec { background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m); padding: 12px 16px; display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 4px 10px; font-size: 13px; }
+.dec .n { font-weight: 700; color: var(--text-muted); font-variant-numeric: tabular-nums; grid-row: span 3; padding-top: 1px; }
+.dec h4 { font-size: 14px; font-weight: 650; }
+.dec .rec { color: var(--text-normal); }
+.dec .rec b { font-weight: 650; }
+.dec .alt { color: var(--text-muted); }
+.prs { display: grid; gap: 0; background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m); overflow: hidden; }
+.pr { display: grid; grid-template-columns: 44px minmax(0, 1fr) 190px; gap: 12px; padding: 12px 16px; font-size: 13px; }
+.pr + .pr { border-top: 1px solid var(--background-modifier-border); }
+.pr .n { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text-muted); }
+.pr h4 { font-size: 14px; font-weight: 650; margin-bottom: 2px; }
+.pr .dep { font-size: 12px; color: var(--text-muted); }
+@media (max-width: 760px) { .pr { grid-template-columns: 34px minmax(0, 1fr); } .pr .dep { grid-column: 2; } }
+.rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.rules .card h4 { font-size: 13.5px; font-weight: 650; margin-bottom: 6px; }
+.rules .card p, .rules .card li { font-size: 12.5px; color: var(--text-muted); }
+.rules ul { margin: 0; padding-left: 18px; }
+code { font-family: var(--font-monospace); font-size: .88em; background: var(--background-modifier-hover); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+.method { font-size: 12.5px; color: var(--text-muted); max-width: 90ch; }
+
+/* ───────── Tangrow sidebar (prefix .tg-; becomes .tangrow- in the plugin) ───────── */
+.tg { position: absolute; inset: 0; display: flex; flex-direction: column; font-size: var(--font-ui-small); color: var(--text-normal); }
+.tg-head { display: flex; align-items: center; gap: 6px; padding: 10px 10px 6px 14px; }
+.tg-brand { display: flex; align-items: center; gap: 6px; font-weight: 650; font-size: 13.5px; flex: 1; min-width: 0; }
+.tg-brand svg { color: var(--text-muted); }
+.tg-ib { width: 28px; height: 28px; display: inline-grid; place-items: center; border: 0; border-radius: var(--radius-s); background: transparent; color: var(--text-muted); position: relative; }
+.tg-ib:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+.tg-nav { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); padding: 0 6px; border-bottom: 1px solid var(--background-modifier-border); }
+.tg-nav button { position: relative; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 6px 0 7px; border: 0; background: transparent; color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.tg-nav button:hover { color: var(--text-normal); }
+.tg-nav button[aria-selected="true"] { color: var(--text-normal); font-weight: 600; }
+.tg-nav button[aria-selected="true"]::after { content: ""; position: absolute; left: 22%; right: 22%; bottom: -1px; height: 2px; border-radius: 2px; background: var(--interactive-accent); }
+.tg-nav .badge { position: absolute; top: 3px; left: calc(50% + 7px); font-size: 9.5px; line-height: 14px; min-width: 14px; padding: 0 3px; border-radius: 7px; background: var(--background-modifier-hover); color: var(--text-muted); font-weight: 600; font-variant-numeric: tabular-nums; }
+.tg-pane { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 14px 14px calc(var(--status-bar-scroll-padding) + var(--size-4-4)); display: flex; flex-direction: column; gap: 22px; scrollbar-width: thin; }
+.tg.no-fix .tg-pane { padding-bottom: 6px; }
+.tg-sec { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.tg-h { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
+.tg-h h4 { font-size: var(--font-ui-smaller); font-weight: 600; color: var(--text-muted); letter-spacing: .02em; }
+.tg-link { border: 0; background: transparent; padding: 2px 0; color: var(--text-muted); font-size: var(--font-ui-smaller); display: inline-flex; align-items: center; gap: 2px; }
+.tg-link:hover { color: var(--text-normal); }
+.tg-link.strong { color: var(--text-normal); font-weight: 600; font-size: var(--font-ui-small); }
+.tg-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 6px 8px; margin: 0 -8px; border-radius: var(--radius-s); border: 0; background: transparent; text-align: left; width: calc(100% + 16px); color: inherit; }
+.tg-row:hover { background: var(--background-modifier-hover); }
+.tg-row .ttl { font-size: var(--font-ui-small); color: var(--text-normal); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tg-row .ttl.wrap { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.tg-row .meta { font-size: var(--font-ui-smaller); color: var(--text-muted); display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: center; }
+.tg-row .end { color: var(--text-faint); font-size: var(--font-ui-smaller); display: inline-flex; align-items: center; gap: 2px; font-variant-numeric: tabular-nums; }
+.tg-row .lead { color: var(--text-faint); }
+.tg-btn { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 5px 11px; border-radius: var(--radius-s); border: 1px solid var(--background-modifier-border); background: transparent; color: var(--text-normal); font-size: var(--font-ui-small); white-space: nowrap; }
+.tg-btn:hover:not(:disabled) { background: var(--background-modifier-hover); border-color: var(--background-modifier-border-hover); }
+.tg-btn.cta { background: var(--interactive-accent); border-color: transparent; color: var(--text-on-accent); font-weight: 550; }
+.tg-btn.cta:hover:not(:disabled) { background: var(--interactive-accent-hover); }
+.tg-btn:disabled { opacity: .45; }
+.tg-btn.full { width: 100%; }
+.tg-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.tg-soon { display: flex; align-items: center; gap: 8px; padding: 6px 0; color: var(--text-faint); font-size: var(--font-ui-smaller); }
+.tg-soon .lbl { flex: 1; min-width: 0; }
+.tg-pill { flex-shrink: 0; font-size: 10px; line-height: 16px; padding: 0 6px; border-radius: 99px; border: 1px solid var(--background-modifier-border); color: var(--text-muted); white-space: nowrap; }
+.tg-input { width: 100%; border: 1px solid var(--background-modifier-border); background: var(--background-modifier-form-field); border-radius: var(--radius-s); padding: 6px 9px; font-size: var(--font-ui-small); }
+.tg-input:hover { border-color: var(--background-modifier-border-hover); }
+.tg-input::placeholder, .tg-compose textarea::placeholder { color: var(--text-faint); }
+.tg-muted { color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.tg-faint { color: var(--text-faint); }
+
+/* today */
+.tg-day { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; }
+.tg-day .d { font-size: var(--font-ui-large); font-weight: 650; line-height: 1.2; letter-spacing: -.01em; }
+.tg-day .w { font-size: var(--font-ui-smaller); color: var(--text-muted); }
+.tg-periods { display: flex; gap: 0; }
+.tg-periods button { border: 0; background: transparent; padding: 2px 6px; border-radius: var(--radius-s); font-size: var(--font-ui-smaller); color: var(--text-muted); }
+.tg-periods button:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+.tg-loop { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; }
+.tg-loop .step { font-size: 10.5px; color: var(--text-faint); font-weight: 600; letter-spacing: .02em; align-self: start; padding-top: 2px; }
+.tg-loop .ttl { white-space: normal; }
+.tg-loop .meta { margin-top: 1px; }
+
+/* compose */
+.tg-compose { border: 1px solid var(--background-modifier-border); background: var(--background-modifier-form-field); border-radius: var(--radius-m); transition: border-color .12s; }
+.tg-compose:focus-within { border-color: var(--background-modifier-border-hover); box-shadow: var(--shadow-s); }
+.tg-compose textarea { display: block; width: 100%; border: 0; background: transparent; resize: none; padding: 9px 10px 4px; font-size: var(--font-ui-small); line-height: 1.6; min-height: 62px; outline: none; }
+.tg-compose.one textarea { min-height: 0; height: 36px; padding: 8px 10px; }
+.tg-compose.one:focus-within textarea, .tg-compose.one.has textarea { height: 76px; }
+.tg-compose .bar { display: flex; align-items: center; gap: 2px; padding: 3px 4px 4px 10px; }
+.tg-compose.one .bar { display: none; }
+.tg-compose.one:focus-within .bar, .tg-compose.one.has .bar { display: flex; }
+.tg-compose .bar .dest { flex: 1; min-width: 0; font-size: 10.5px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tg-compose .bar .tg-ib { width: 26px; height: 26px; }
+.tg-compose .bar .tg-btn { padding: 3px 10px; font-size: 12px; margin-left: 2px; }
+
+/* captures */
+.tg-filter { display: flex; align-items: center; gap: 12px; }
+.tg-tabs { display: flex; gap: 12px; flex: 1; min-width: 0; }
+.tg-tabs button { border: 0; background: transparent; padding: 2px 0; color: var(--text-muted); font-size: var(--font-ui-small); white-space: nowrap; }
+.tg-tabs button[aria-pressed="true"] { color: var(--text-normal); font-weight: 600; }
+.tg-tabs .c { color: var(--text-faint); font-weight: 400; margin-left: 3px; font-variant-numeric: tabular-nums; }
+.tg-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; }
+.tg-week button { border: 0; background: transparent; border-radius: var(--radius-s); padding: 3px 0 4px; display: grid; justify-items: center; gap: 0; color: var(--text-normal); }
+.tg-week button:hover { background: var(--background-modifier-hover); }
+.tg-week .wd { font-size: 10px; color: var(--text-faint); }
+.tg-week .dn { font-size: 12.5px; font-variant-numeric: tabular-nums; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; }
+.tg-week .today .dn { box-shadow: inset 0 0 0 1px var(--text-muted); font-weight: 650; }
+.tg-week .sel { background: var(--background-modifier-active-hover); }
+.tg-week .sel .dn { font-weight: 650; }
+.tg-week .out .dn { color: var(--text-faint); }
+.tg-week .dot { height: 5px; display: flex; gap: 2px; }
+.tg-week .dot i { width: 4px; height: 4px; border-radius: 50%; background: var(--text-muted); }
+.tg-calbar { display: flex; justify-content: space-between; align-items: center; }
+.tg-day-label { font-size: var(--font-ui-smaller); color: var(--text-faint); padding: 6px 0 0; font-weight: 600; }
+.tg-cap { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 4px 8px; padding: 7px 8px; margin: 0 -8px; border-radius: var(--radius-s); }
+.tg-cap:hover, .tg-cap.open { background: var(--background-modifier-hover); }
+.tg-cap .tm { font-size: var(--font-ui-smaller); color: var(--text-faint); padding-top: 2px; font-variant-numeric: tabular-nums; }
+.tg-cap .tx { font-size: var(--font-ui-small); line-height: 1.55; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.tg-cap .ft { grid-column: 2; display: flex; align-items: center; gap: 8px; font-size: var(--font-ui-smaller); color: var(--text-muted); }
+.tg-cap .ft .sp { flex: 1; }
+.tg-proc { grid-column: 1 / -1; margin-top: 6px; background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m); padding: 4px; display: grid; gap: 0; }
+.tg-proc .tg-row { margin: 0; width: 100%; padding: 6px 8px; }
+.tg-proc .tg-row .ttl { font-weight: 550; }
+.tg-proc .lead { color: var(--text-muted); }
+.tg-proc .foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid var(--background-modifier-border); margin-top: 4px; padding: 6px 8px 4px; }
+.tg-proc .new { font-size: 9.5px; color: var(--text-muted); border: 1px dashed var(--background-modifier-border-hover); border-radius: 99px; padding: 0 5px; margin-left: 6px; font-weight: 400; }
+
+/* tasks */
+.tg-task { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 8px; padding: 5px 8px; margin: 0 -8px; border-radius: var(--radius-s); align-items: start; }
+.tg-task:hover { background: var(--background-modifier-hover); }
+.tg-check { width: 15px; height: 15px; margin-top: 2px; border-radius: 50%; border: 1.5px solid var(--text-faint); background: transparent; padding: 0; display: grid; place-items: center; color: transparent; }
+.tg-check:hover { border-color: var(--text-muted); color: var(--text-faint); }
+.tg-task.done .tg-check { background: var(--text-faint); border-color: var(--text-faint); color: var(--background-primary); }
+.tg-task.done .ttl { color: var(--text-faint); text-decoration: line-through; }
+.tg-task .ttl { font-size: var(--font-ui-small); line-height: 1.45; overflow-wrap: anywhere; }
+.tg-task .meta { display: flex; flex-wrap: wrap; gap: 0 10px; align-items: center; font-size: var(--font-ui-smaller); color: var(--text-muted); margin-top: 1px; }
+.tg-task .meta span { display: inline-flex; align-items: center; gap: 3px; }
+.tg-task .late { color: var(--color-red); }
+.tg-task .soon { color: var(--color-orange); }
+.p-highest { color: var(--color-red); }
+.p-high { color: var(--color-orange); }
+.tg-raw { font-family: var(--font-monospace); font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
+.tg-addtask { display: flex; align-items: center; gap: 8px; padding: 4px 0 6px; color: var(--text-faint); border-bottom: 1px solid var(--background-modifier-border); margin-bottom: 4px; }
+.tg-addtask input { flex: 1; border: 0; background: transparent; padding: 3px 0; font-size: var(--font-ui-small); outline: none; }
+.tg-addtask input::placeholder { color: var(--text-faint); }
+
+/* empty state */
+.tg-empty { display: grid; gap: 8px; padding: 6px 0 4px; }
+.tg-empty .ic { width: 30px; height: 30px; display: grid; place-items: center; border-radius: var(--radius-m); border: 1px solid var(--background-modifier-border); color: var(--text-muted); background: var(--background-primary); }
+.tg-empty h5 { margin: 0; font-size: var(--font-ui-medium); font-weight: 650; }
+.tg-empty p { font-size: var(--font-ui-small); color: var(--text-muted); line-height: 1.6; }
+.tg-empty .tg-actions { margin-top: 4px; }
+.tg-pick { margin-top: 6px; border-top: 1px solid var(--background-modifier-border); padding-top: 8px; display: grid; gap: 2px; }
+
+/* knowledge */
+.tg-subnav { display: flex; gap: 14px; overflow-x: auto; scrollbar-width: none; margin-top: -4px; }
+.tg-subnav button { border: 0; background: transparent; padding: 2px 0; color: var(--text-muted); font-size: var(--font-ui-small); white-space: nowrap; }
+.tg-subnav button[aria-pressed="true"] { color: var(--text-normal); font-weight: 650; }
+.tg-subnav .c { color: var(--text-faint); font-weight: 400; margin-left: 3px; font-variant-numeric: tabular-nums; }
+.tg-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tg-chips { display: flex; gap: 4px; flex-wrap: wrap; }
+.tg-chips button { border: 1px solid transparent; background: transparent; padding: 1px 8px; border-radius: 99px; font-size: var(--font-ui-smaller); color: var(--text-muted); }
+.tg-chips button:hover { color: var(--text-normal); }
+.tg-addrow { display: flex; align-items: center; gap: 8px; width: calc(100% + 16px); margin: 0 -8px; padding: 6px 8px; border: 0; border-radius: var(--radius-s); background: transparent; color: var(--text-faint); font-size: var(--font-ui-small); text-align: left; }
+.tg-addrow:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+.tg-ghead { display: flex; align-items: center; gap: 4px; width: calc(100% + 16px); margin: 0 -8px; padding: 2px 8px; border: 0; border-radius: var(--radius-s); background: transparent; color: var(--text-muted); font-size: var(--font-ui-smaller); font-weight: 600; text-align: left; }
+.tg-ghead:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+.tg-ghead .c { color: var(--text-faint); font-weight: 400; font-variant-numeric: tabular-nums; margin-left: 2px; }
+.tg-ghead svg { color: var(--text-faint); }
+.tg-group { gap: 0; }
+.tg-pane > .tg-subnav + .tg-toolbar, .tg-pane > .tg-toolbar + * { margin-top: -10px; }
+.tg-destlist { display: grid; gap: 6px; max-height: 260px; overflow-y: auto; padding: 2px 0; }
+.tg-destg .gh { font-size: var(--font-ui-smaller); color: var(--text-faint); padding: 2px 8px; display: flex; align-items: center; }
+.tg-destg .new { font-size: 9.5px; color: var(--text-muted); border: 1px dashed var(--background-modifier-border-hover); border-radius: 99px; padding: 0 5px; margin-left: 6px; }
+.tg-dest { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; padding: 4px 8px; border: 0; border-radius: var(--radius-s); background: transparent; color: var(--text-normal); font-size: var(--font-ui-small); text-align: left; }
+.tg-dest:hover { background: var(--background-modifier-hover); }
+.tg-dest[hidden], .tg-destg[hidden] { display: none; }
+.tg-dest .ttl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tg-dest .sub { font-size: var(--font-ui-smaller); color: var(--text-faint); }
+.tg-dest .rd { width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--background-modifier-border-hover); }
+.tg-dest[aria-checked="true"] .rd { border: 4px solid var(--interactive-accent); }
+.tg-sortsel { border: 0; background: transparent; box-shadow: none; height: auto; padding: 2px 0; color: var(--text-muted); font-size: var(--font-ui-smaller); text-align: right; cursor: pointer; }
+.tg-sortsel:hover { color: var(--text-normal); }
+.tg-note { border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m); padding: 10px 12px; display: grid; gap: 6px; }
+.tg-note .t { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: var(--font-ui-small); }
+.tg-note p { color: var(--text-muted); font-size: var(--font-ui-smaller); line-height: 1.55; margin: 0; }
+.tg-groups { display: flex; flex-direction: column; gap: 10px; }
+.tg-row.nolead { grid-template-columns: minmax(0, 1fr) auto; }
+.tg-chips button[aria-pressed="true"] { border-color: var(--background-modifier-border-hover); color: var(--text-normal); background: var(--background-primary); }
+.stage-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; border: 1.5px solid var(--text-faint); }
+.stage-dot.growing { border-color: var(--text-muted); background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-muted); }
+.stage-dot.evergreen { border-color: var(--text-muted); background: var(--text-muted); }
+.tg-warn { color: var(--color-orange); }
+.tg-review { background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m); padding: 12px; display: grid; gap: 8px; }
+.tg-review .ey { font-size: var(--font-ui-smaller); color: var(--text-muted); display: flex; gap: 6px; flex-wrap: wrap; }
+.tg-review h5 { margin: 0; font-size: 14.5px; font-weight: 650; line-height: 1.4; }
+.tg-review p { font-size: var(--font-ui-small); color: var(--text-muted); line-height: 1.6; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.tg-progress { display: flex; align-items: center; gap: 8px; font-size: var(--font-ui-smaller); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.tg-progress .bar { flex: 1; height: 3px; border-radius: 3px; background: var(--background-modifier-border); overflow: hidden; }
+.tg-progress .bar i { display: block; height: 100%; background: var(--text-muted); border-radius: 3px; }
+
+/* more & focus */
+.tg-back { display: flex; align-items: center; gap: 4px; margin: -4px 0 -6px -6px; }
+.tg-back h4 { font-size: var(--font-ui-medium); font-weight: 650; }
+.tg-clock { font-size: 46px; font-weight: 300; letter-spacing: -.02em; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.tg-durs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+.tg-durs button, .tg-durs input { border: 1px solid var(--background-modifier-border); background: transparent; border-radius: var(--radius-s); padding: 5px 0; font-size: var(--font-ui-small); text-align: center; font-variant-numeric: tabular-nums; color: var(--text-muted); }
+.tg-durs button:hover { color: var(--text-normal); border-color: var(--background-modifier-border-hover); }
+.tg-durs [aria-pressed="true"] { border-color: var(--interactive-accent); color: var(--text-normal); font-weight: 600; box-shadow: inset 0 0 0 1px var(--interactive-accent); }
+.tg-durs input { color: var(--text-normal); width: 100%; background: var(--background-modifier-form-field); }
+
+/* popover + toast */
+.tg-pop { position: absolute; z-index: 15; top: 40px; right: 10px; width: 200px; background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m); box-shadow: var(--shadow-l); padding: 4px; }
+.tg-pop button { width: 100%; display: flex; align-items: center; gap: 8px; border: 0; background: transparent; padding: 6px 8px; border-radius: var(--radius-s); font-size: var(--font-ui-small); text-align: left; }
+.tg-pop button:hover { background: var(--background-modifier-hover); }
+.tg-pop kbd { margin-left: auto; font: 10.5px var(--font-monospace); color: var(--text-faint); }
+.tg-pop hr { border: 0; border-top: 1px solid var(--background-modifier-border); margin: 4px 0; }
+.toast { position: absolute; z-index: 40; left: 50%; bottom: 44px; transform: translateX(-50%); background: var(--background-primary); color: var(--text-normal); border: 1px solid var(--background-modifier-border-hover); border-radius: var(--radius-m); padding: 7px 12px; font-size: 12.5px; box-shadow: var(--shadow-l); max-width: min(420px, calc(100% - 24px)); }
+
+/* modal (settings, onboarding, new card) */
+.ov { position: absolute; inset: 34px 0 0 0; z-index: 30; background: var(--background-modifier-cover); display: grid; place-items: center; padding: 18px; }
+.modal { background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: var(--radius-l); box-shadow: var(--shadow-l); width: min(100%, 560px); max-height: 100%; overflow: auto; position: relative; }
+.modal .x { position: absolute; top: 10px; right: 10px; }
+
+/* settings */
+.set { width: min(100%, 880px); height: min(100%, 660px); display: grid; grid-template-columns: 190px minmax(0, 1fr); overflow: hidden; container-type: inline-size; }
+.set-nav { background: var(--background-secondary); border-right: 1px solid var(--background-modifier-border); padding: 14px 8px; overflow: auto; font-size: 12.5px; }
+.set-nav .g { font-size: 10.5px; color: var(--text-faint); padding: 10px 8px 4px; font-weight: 600; }
+.set-nav div.it { padding: 4px 8px; border-radius: var(--radius-s); color: var(--text-muted); }
+.set-nav div.it.on { background: var(--background-modifier-active-hover); color: var(--text-normal); font-weight: 600; }
+.set-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.set-top { display: flex; align-items: center; gap: 8px; padding: 14px 44px 10px 22px; }
+.set-top h3 { font-size: 17px; font-weight: 650; flex: 1; display: flex; align-items: center; gap: 4px; min-width: 0; }
+.set-top .tg-input { width: 180px; }
+.set-body { flex: 1; overflow: auto; padding: 0 22px 20px; display: grid; gap: 20px; align-content: start; }
+.set-grp > h5 { margin: 0 0 6px; font-size: 11.5px; color: var(--text-muted); font-weight: 600; }
+.set-list { border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m); background: var(--background-primary); }
+.set-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 14px; align-items: center; padding: 10px 14px; width: 100%; border: 0; background: transparent; text-align: left; color: inherit; }
+.set-item + .set-item { border-top: 1px solid var(--background-modifier-border); }
+button.set-item:hover { background: var(--background-modifier-hover); }
+.set-item .nm { font-size: 13px; font-weight: 550; }
+.set-item .ds { font-size: 11.5px; color: var(--text-muted); line-height: 1.5; }
+.set-item .rt { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 12px; justify-self: end; }
+.set-item .ctrl { justify-self: end; display: flex; gap: 6px; align-items: center; }
+.dotst { width: 7px; height: 7px; border-radius: 50%; background: var(--color-green); display: inline-block; }
+.para { display: grid; grid-template-columns: 112px minmax(0, 1fr) 96px; gap: 6px 12px; align-items: center; padding: 9px 14px; }
+.para + .para { border-top: 1px solid var(--background-modifier-border); }
+.para .role { font-size: 13px; font-weight: 600; display: grid; }
+.para .role small { font-size: 11px; color: var(--text-muted); font-weight: 400; }
+.para .st { font-size: 11.5px; display: inline-flex; gap: 4px; align-items: center; color: var(--text-muted); }
+.para .st.ok svg { color: var(--color-green); }
+.para .st.miss { color: var(--color-orange); }
+.para .err { grid-column: 2 / -1; font-size: 11.5px; color: var(--color-red); }
+.fld { position: relative; }
+.fld svg { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); color: var(--text-faint); }
+.fld .tg-input { padding-left: 28px; font-family: var(--font-monospace); font-size: 12px; }
+.fld .tg-input.bad { border-color: var(--color-red); }
+.savebar { display: flex; align-items: center; gap: 8px; padding: 10px 22px; border-top: 1px solid var(--background-modifier-border); background: var(--background-primary-alt); font-size: 12.5px; }
+.savebar .sp { flex: 1; color: var(--text-muted); }
+.per { display: grid; grid-template-columns: 56px minmax(0, 1.2fr) minmax(0, 1fr); gap: 6px 10px; align-items: center; padding: 8px 14px; }
+.per + .per { border-top: 1px solid var(--background-modifier-border); }
+.per .pv { font: 11px var(--font-monospace); color: var(--text-muted); overflow-wrap: anywhere; }
+.toggle { width: 34px; height: 20px; border-radius: 10px; border: 0; padding: 0; background: var(--background-modifier-border-hover); position: relative; flex-shrink: 0; }
+.toggle::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--background-primary); box-shadow: 0 1px 2px rgba(0, 0, 0, .25); transition: left .15s; }
+.toggle[aria-checked="true"] { background: var(--interactive-accent); }
+.toggle[aria-checked="true"]::after { left: 16px; }
+.toggle:disabled { opacity: .5; }
+select.tg-input { padding-right: 24px; }
+@container (max-width: 640px) {
+  .set { grid-template-columns: minmax(0, 1fr); }
+  .set-nav { display: none; }
+  .set-top .tg-input { width: 120px; }
+  .para { grid-template-columns: minmax(0, 1fr) auto; }
+  .para .fld { grid-column: 1 / -1; grid-row: 2; }
+  .per { grid-template-columns: 50px minmax(0, 1fr); }
+  .per .pv { grid-column: 2; }
+}
+.set { container-type: inline-size; }
+
+/* onboarding */
+.ob { width: min(100%, 580px); padding: 22px 26px 20px; display: grid; gap: 16px; }
+.ob-top { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--text-muted); }
+.ob-top .dots { display: flex; gap: 4px; flex: 1; }
+.ob-top .dots i { width: 18px; height: 3px; border-radius: 2px; background: var(--background-modifier-border); }
+.ob-top .dots i.on { background: var(--text-muted); }
+.ob h3 { font-size: 20px; font-weight: 650; letter-spacing: -.01em; text-wrap: balance; }
+.ob .sub { color: var(--text-muted); font-size: 13.5px; margin-top: 4px; }
+.loopline { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 2px; font-size: 12.5px; }
+.loopline span { padding: 3px 9px; border-radius: 99px; border: 1px solid var(--background-modifier-border-hover); }
+.loopline span.ai { border-style: dashed; color: var(--text-muted); }
+.loopline svg { color: var(--text-faint); }
+.promises { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; font-size: 13px; }
+.promises li { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 6px; }
+.promises li svg { margin-top: 3px; color: var(--text-muted); }
+.promises b { font-weight: 650; }
+.ob-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding-top: 4px; }
+.ob .para { padding: 8px 12px; grid-template-columns: 90px minmax(0, 1fr) auto; }
+.ob .note { font-size: 12px; color: var(--text-muted); display: flex; gap: 6px; align-items: flex-start; }
+.ob .note svg { margin-top: 2px; }
+.optcard { border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m); padding: 12px 14px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 14px; }
+.optcard .nm { font-weight: 650; font-size: 13.5px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.optcard p { grid-column: 1 / -1; font-size: 12.5px; color: var(--text-muted); line-height: 1.65; }
+.done-line { display: flex; gap: 6px; align-items: center; font-size: 12.5px; color: var(--text-muted); }
+.done-line svg { color: var(--color-green); }
+.newcard { padding: 20px 22px; display: grid; gap: 12px; }
+.newcard h3 { font-size: 16px; font-weight: 650; }
+.srcchip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: var(--radius-s); background: var(--background-secondary); font-size: 12px; color: var(--text-muted); max-width: 100%; }
+.srcchip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.newcard textarea { min-height: 90px; resize: vertical; line-height: 1.6; }
+</style>
+<!--PAGE-HEAD-END-->
+</head>
+<body>
+<!--PAGE-BODY-START-->
+<div class="page">
+  <header class="intro">
+    <div class="eyebrow">TANGROW · 设计稿 · 2026-11-27</div>
+    <h1>手动闭环：今天、速记、知识、项目</h1>
+    <p>捕获 → 整理 → 提炼 → 回顾，产出以项目为单位。左边是可以点的侧栏原型，右边是这一屏对应评估报告里的哪几条问题，以及真机截下的「修改前」。整理引擎还没上线，凡是 AI 的位置都只放了「即将推出」。</p>
+  </header>
+
+  <div class="controls" role="toolbar" aria-label="原型设置">
+    <span class="ctl">主题 <span class="seg" data-ctl="theme"><button data-v="light">浅色</button><button data-v="dark">深色</button></span></span>
+    <span class="ctl">侧栏 <span class="seg" data-ctl="width"><button data-v="narrow">窄 300</button><button data-v="wide">宽 400</button></span></span>
+    <span class="ctl">界面 <span class="seg" data-ctl="lang"><button data-v="zh">中文</button><button data-v="en">English</button></span></span>
+    <span class="ctl">笔记库 <span class="seg" data-ctl="data"><button data-v="full">日常使用</button><button data-v="start">刚开始</button><button data-v="new">全新</button></span></span>
+  </div>
+
+  <nav class="jump" id="jump" aria-label="跳到某一屏"></nav>
+
+  <div class="stage">
+    <div class="win" id="win" data-w="narrow">
+      <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span><span class="tab" id="tabname">重试与幂等</span></div>
+      <div class="ribbon" aria-hidden="true">
+        <svg class="i" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>
+        <svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/></svg>
+      </div>
+      <div class="editor" aria-hidden="true">
+        <div class="crumb">20-Project / 写作课 / 重试与幂等</div>
+        <h2 id="ed-title">重试与幂等</h2>
+        <div class="prop"><span>tangrow_kind: draft</span><span>tangrow_candidates: 3</span></div>
+        <p id="ed-p1">一次支付请求超时以后，客户端会重试。如果服务端没有办法认出「这是同一次操作」，重放就会变成第二次扣款。</p>
+        <p id="ed-p2">所以重试本身不是问题，问题是操作没有稳定的身份。幂等键应当由调用方在第一次发起时生成，并随每次重试原样带上。</p>
+      </div>
+      <aside class="side" id="side" aria-label="Tangrow 侧栏原型"></aside>
+      <div class="statusbar" aria-hidden="true"><span id="sb1">2 条反向链接</span><span id="sb2">312 词</span></div>
+      <div id="ov"></div>
+      <div id="toast"></div>
+    </div>
+    <aside class="notes" id="notes" aria-live="polite"></aside>
+  </div>
+
+  <div class="doc">
+    <section id="issues">
+      <h2>七个问题：现状 → 改法 → 理由</h2>
+      <p class="lede">问题清单以 2026-11-26 的真机评估报告为准。「修改前」截图来自隔离测试库，环境见文末。</p>
+      <div class="issues" id="issue-list"></div>
+    </section>
+
+    <section id="decisions">
+      <h2>设计决定</h2>
+      <p class="lede">全部在 2026-11-27 评审中确定，原型按此绘制。每条第二行是没有采用的方案或相关影响，日后要改只影响对应的 PR。归档方式见第 18 条（PARA.md 6.3）。</p>
+      <div class="decisions" id="dec-list"></div>
+    </section>
+
+    <section id="prs">
+      <h2>拆成 PR 的顺序</h2>
+      <p class="lede">每个 PR 都能单独合并、单独截图验收。1–4 互不依赖；5 在 2 之后；6、7 在 5 之后；9 复用 8 的「笔记库结构」组件。</p>
+      <div class="prs" id="pr-list"></div>
+    </section>
+
+    <section id="rules">
+      <h2>实现约定</h2>
+      <p class="lede">原型里所有颜色、间距和圆角都只引用 Obsidian 的 CSS 变量；顶部那段取值只是让原型在 Obsidian 之外也能渲染。</p>
+      <div class="rules">
+        <div class="card"><h4>一个强调色</h4><ul><li><code>--interactive-accent</code> 只用于：当前选中的页签下划线、每屏唯一的主按钮、开关的开启态、键盘焦点。</li><li>数字、链接、日历当天、品牌图标一律用正文色或 <code>--text-muted</code>。</li></ul></div>
+        <div class="card"><h4>列表行透明</h4><ul><li>行默认无填充，悬停用 <code>--background-modifier-hover</code>。</li><li>分组靠 22px 段间距和 11px 小标题，不再给每块套边框卡片。</li><li>只有正在操作的对象（处理面板、回顾卡片）才有边框。</li></ul></div>
+        <div class="card"><h4>三级按钮</h4><ul><li>主：<code>mod-cta</code>，每屏最多一个。</li><li>次：透明底 + <code>--background-modifier-border</code> 描边。</li><li>文字：<code>--text-muted</code>，悬停变正文色。</li></ul></div>
+        <div class="card"><h4>避让状态栏</h4><ul><li>侧栏滚动容器 <code>padding-bottom: calc(var(--status-bar-scroll-padding) + var(--size-4-4))</code>。</li><li>需要在真机上确认该变量在右侧栏可用；不可用时回退到状态栏实际高度。</li></ul></div>
+        <div class="card"><h4>即将推出</h4><ul><li>统一组件：灰色图标 + 一句「AI 能做什么」+ 描边小标签「即将推出」。</li><li>不可点击，每页最多一处，设置里可关。</li></ul></div>
+        <div class="card"><h4>文案</h4><ul><li>术语以 CONTEXT.md 为准：速记、待处理 / 已处理、卡片、主题结构、回顾、稿件、写作暂存。</li><li>中文默认，英文同步；按钮写清动作（「建立 2 个缺失目录」而不是「确定」）。</li></ul></div>
+      </div>
+    </section>
+
+    <section id="method">
+      <h2>截图环境</h2>
+      <p class="method">「修改前」截图：Obsidian 1.15.1（macOS），浅色主题，窗口 1024×800，右侧栏约 300px；插件为 <code>main</code>（bb62f9d）的 <code>npm run build:owner</code>，装进隔离测试库「Tangrow QA」，库里只有通用示例内容（4 条速记、5 个任务、1 个项目、无卡片）。未截深色主题；主题结构页与报表页沿用评估报告的文字描述。截图在 <code>docs/design/core-loop-v1-before/</code>。</p>
+    </section>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  /* ───────── icons (lucide-style) ───────── */
+  const P = {
+    house: '<path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .7-1.5l7-6a2 2 0 0 1 2.6 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+    inbox: '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
+    bulb: '<path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/>',
+    pen: '<path d="M12 20h9"/><path d="M16.4 3.6a1 1 0 0 1 3 3L7.4 18.6a2 2 0 0 1-.9.5l-2.9.8a.5.5 0 0 1-.6-.6l.8-2.9a2 2 0 0 1 .5-.8z"/>',
+    more: '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
+    plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+    right: '<path d="m9 18 6-6-6-6"/>', left: '<path d="m15 18-6-6 6-6"/>', down: '<path d="m6 9 6 6 6-6"/>', up: '<path d="m18 15-6-6-6 6"/>',
+    cal: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/>',
+    check: '<path d="M20 6 9 17l-5-5"/>',
+    spark: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 3v4"/><path d="M21 5h-4"/>',
+    sprout: '<path d="M7 20h10"/><path d="M10 20c5.5-2.5.8-6.4 3-10"/><path d="M9.5 9.4c1.1.8 1.8 2.2 2.3 3.7-2 .4-3.5.4-4.8-.3-1.2-.6-2.3-1.9-3-4.2 2.8-.5 4.4 0 5.5.8z"/><path d="M14.1 6a7 7 0 0 0-1.1 4c1.9-.1 3.3-.6 4.3-1.4 1-1 1.6-2.3 1.7-4.6-2.7.1-4 1-4.9 2z"/>',
+    gear: '<path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/>',
+    flag: '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22v-7"/>',
+    repeat: '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
+    folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.8-1.2A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+    file: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8"/><path d="M16 17H8"/>',
+    tasks: '<path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/>',
+    link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
+    card: '<path d="M16 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8Z"/><path d="M15 3v4a2 2 0 0 0 2 2h4"/>',
+    hub: '<rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"/><path d="M12 12V8"/>',
+    review: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
+    timer: '<path d="M10 2h4"/><path d="M12 14l3-3"/><circle cx="12" cy="14" r="8"/>',
+    chart: '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="m19 9-5 5-4-4-3 3"/>',
+    star: '<path d="M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z"/>',
+    db: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>',
+    wrench: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9l-3.8 3.8z"/>',
+    pop: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+    max: '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>',
+    x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+    arrow: '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
+    ok: '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+    alert: '<circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/>',
+    search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+    book: '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>',
+    play: '<polygon points="7 4 19 12 7 20 7 4"/>', pause: '<rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/>',
+    globe: '<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20z"/>',
+    shield: '<path d="M20 13c0 5-3.5 7.5-7.7 9a1 1 0 0 1-.6 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.2-2.7a1.2 1.2 0 0 1 1.6 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z"/>',
+    layers: '<path d="m12 2 10 5-10 5L2 7z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/>',
+    kanban: '<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.8-1.2A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/><path d="M8 10v4"/><path d="M12 10v2"/><path d="M16 10v6"/>',
+    video: '<path d="m16 13 5.2 3.5a.5.5 0 0 0 .8-.4V7.9a.5.5 0 0 0-.8-.4L16 10.5"/><rect x="2" y="6" width="14" height="12" rx="2"/>',
+    code: '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
+    arch: '<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>'
+  };
+  const ic = (n, c = '') => `<svg class="i ${c}" viewBox="0 0 24 24" aria-hidden="true">${P[n] || ''}</svg>`;
+  const esc = (s) => String(s).replace(/[&<>"]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
+
+  /* ───────── state ───────── */
+  const S = {
+    theme: null, width: 'narrow', lang: 'zh', data: 'full',
+    tab: 'today', k: 'cards', proj: null, pview: 'projects', psort: 'type', pcol: {}, area: null, pick: null, dest: 'inbox', mcol: {}, useFor: null, used: {}, draftFor: null, draftTo: {}, np: null, npSel: null, extraLinked: {}, cardFor: {}, pdone: {}, lp: null, lsel: null, areaSet: {}, areaPick: null, ptAll: null, more: null,
+    open: null, filter: 'pending', calOpen: false, selDay: null, menu: false,
+    ov: null, setPage: 'home', ob: 1, obVault: 'existing', obCreated: false, obReview: false, obNote: '',
+    newCard: null, cardFilter: 'all', focusMin: 25, custom: false, running: false, left: 25 * 60,
+    reviewDone: 2, dirty: {}, setErr: {}, showRaw: false, noFix: false, compose: '', today: ''
+  };
+  const L = (zh, en) => (S.lang === 'en' ? en : zh);
+  const tx = (v) => (Array.isArray(v) ? L(v[0], v[1]) : v);
+  const TODAY = new Date(2026, 10, 27);
+
+  /* ───────── fixture data ───────── */
+  const FOLDERS = ['00-Inbox', '10-Life(Meta)', '10-Life(Meta)/13-Journal', '20-Project', '20-Project/写作课', '30-Area', '40-Resources', '50-Zettel', '90-Archive', '99-Tangrow'];
+  const CAPS = () => ({
+    full: [
+      { id: 1, day: 0, t: '10:12', zh: '重试必须绑定稳定的操作身份，否则重放会产生第二次扣款。', en: 'Retries must carry a stable operation identity, or a replay charges the card twice.' },
+      { id: 2, day: 0, t: '09:40', zh: 'https://example.com/idempotency 讲幂等键的设计，值得精读', en: 'https://example.com/idempotency on idempotency keys, worth a close read' },
+      { id: 3, day: 1, t: '21:05', zh: '缓存失效的问题可能和 TTL 抖动有关，明天补压测', en: 'Cache misses may come from TTL jitter, run the load test tomorrow' },
+      { id: 4, day: 1, t: '08:30', zh: '写作课第三讲：先写结论，再写论证', en: 'Writing class, lesson 3: state the conclusion, then argue it' },
+      { id: 5, day: 2, t: '22:10', zh: '周末整理书架', en: 'Sort the bookshelf this weekend', done: ['已追加到任务总览', 'Added to task overview'] },
+      { id: 6, day: 3, t: '19:44', zh: '卡片是观点，结构笔记是论证路径，两者不要混', en: 'A card is a claim; a hub is a line of argument. Keep them apart.', done: ['已转为笔记《卡片与结构笔记》', 'Converted to note “Cards and hubs”'] }
+    ],
+    start: [
+      { id: 1, day: 0, t: '10:12', zh: '重试必须绑定稳定的操作身份，否则重放会产生第二次扣款。', en: 'Retries must carry a stable operation identity, or a replay charges the card twice.' },
+      { id: 4, day: 1, t: '08:30', zh: '写作课第三讲：先写结论，再写论证', en: 'Writing class, lesson 3: state the conclusion, then argue it' }
+    ],
+    new: []
+  }[S.data]);
+  let caps = null; let cards = null;
+  function resetData() {
+    caps = CAPS().map((c) => ({ ...c, done: c.done || null, cardMade: false }));
+    cards = S.data === 'full' ? [
+      { zh: '先写结论，再写论证', en: 'State the conclusion before the argument', st: 'seed', age: ['今天', 'today'], iso: true },
+      { zh: '重试必须绑定稳定的操作身份', en: 'Retries need stable operation identities', st: 'growing', age: ['2 天前', '2 days ago'], links: 3 },
+      { zh: '幂等键应当由调用方生成', en: 'The caller should generate the idempotency key', st: 'seed', age: ['5 天前', '5 days ago'], iso: true },
+      { zh: '结构笔记是论证路径，不是目录', en: 'A hub is a line of argument, not an index', st: 'growing', age: ['2 周前', '2 weeks ago'], links: 4 },
+      { zh: '缓存失效是时间问题', en: 'Cache invalidation is a problem of time', st: 'evergreen', age: ['3 周前', '3 weeks ago'], links: 2 },
+      { zh: '好的卡片能脱离上下文被理解', en: 'A good card stands without its context', st: 'evergreen', age: ['1 个月前', '1 month ago'], links: 5 }
+    ] : [];
+    S.reviewDone = 2; S.open = null;
+  }
+  const TASKS_RAW = [
+    '整理本周读书笔记 #目标/写作 🔺 📅 2026-11-27',
+    '补一个反例 #项目/写作课 ⏫ 📅 2026-12-01 [[重试与幂等]]',
+    '预约体检 #生活 📅 2026-11-30 [[健康]]',
+    '回顾上周速记并归位 🔁 every week',
+    '补压测数据 #工作/性能 🔽 📅 2026-11-25 [[工作]]'
+  ];
+  const TASKS_EN = ['Sort this week’s reading notes', 'Add a counterexample', 'Book a health check', 'Review last week’s captures', 'Add load test numbers'];
+
+  /* Display-only parse of Tasks syntax. The note keeps its text; checking off still uses the guarded line edit. */
+  function parseTask(raw) {
+    const m = { tags: [], due: null, prio: null, recur: false };
+    let s = raw;
+    s = s.replace(/🔁\s*[^#📅⏳🛫✅➕🔺⏫🔼🔽⏬]*/u, () => { m.recur = true; return ' '; });
+    s = s.replace(/📅️?\s*(\d{4}-\d{2}-\d{2})/u, (_, d) => { m.due = d; return ' '; });
+    s = s.replace(/(?:⏳|🛫|➕|✅)️?\s*\d{4}-\d{2}-\d{2}/gu, ' ');
+    const PR = { '🔺': 'highest', '⏫': 'high', '🔼': 'medium', '🔽': 'low', '⏬': 'lowest' };
+    s = s.replace(/(🔺|⏫|🔼|🔽|⏬)️?/gu, (e) => { m.prio = PR[e.replace('️', '')]; return ' '; });
+    m.links = [];
+    s = s.replace(/\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/gu, (_, n) => { m.links.push(n.trim()); return ' '; });
+    s = s.replace(/(^|\s)#([^\s#]+)/gu, (_, sp, tag) => { m.tags.push(tag); return sp; });
+    m.text = s.replace(/\s+/g, ' ').trim();
+    return m;
+  }
+  function dueLabel(iso) {
+    const [y, mo, d] = iso.split('-').map(Number);
+    const diff = Math.round((new Date(y, mo - 1, d) - TODAY) / 86400000);
+    if (diff < 0) return { t: L(`逾期 ${-diff} 天`, `${-diff}d overdue`), c: 'late' };
+    if (diff === 0) return { t: L('今天', 'Today'), c: 'soon' };
+    if (diff === 1) return { t: L('明天', 'Tomorrow'), c: '' };
+    const dt = new Date(y, mo - 1, d);
+    if (diff < 7) return { t: dt.toLocaleDateString(S.lang === 'en' ? 'en' : 'zh-CN', { weekday: 'short' }), c: '' };
+    return { t: dt.toLocaleDateString(S.lang === 'en' ? 'en' : 'zh-CN', { month: 'short', day: 'numeric' }), c: '' };
+  }
+  function tasks() {
+    if (S.data !== 'full') return [];
+    const rank = (t) => (t.due && dueLabel(t.due).c === 'late' ? 0 : t.due && dueLabel(t.due).c === 'soon' ? 1 : t.prio === 'highest' ? 2 : t.prio === 'high' ? 3 : 4);
+    return TASKS_RAW.map((raw, i) => ({ raw, i, ...parseTask(raw), en: TASKS_EN[i] })).sort((a, b) => rank(a) - rank(b));
+  }
+  const pending = () => caps.filter((c) => !c.done);
+
+  /* ───────── shared pieces ───────── */
+  const soon = (text) => `<div class="tg-soon">${ic('spark', 's')}<span class="lbl">${text}</span><span class="tg-pill">${L('即将推出', 'Coming soon')}</span></div>`;
+  const empty = (icon, title, body, actions, extra = '') => `<div class="tg-empty"><div class="ic">${ic(icon)}</div><h5>${title}</h5><p>${body}</p>${actions ? `<div class="tg-actions">${actions}</div>` : ''}${extra}</div>`;
+  const btn = (label, act, arg = '', cls = '', icon = '') => `<button class="tg-btn ${cls}" data-act="${act}" data-arg="${esc(arg)}">${icon ? ic(icon, 's') : ''}${label}</button>`;
+  const heading = (title, right = '') => `<div class="tg-h"><h4>${title}</h4>${right}</div>`;
+  const capText = (c) => (S.lang === 'en' ? c.en : c.zh);
+
+  function composer(one) {
+    const has = (one ? S.today : S.compose).trim().length > 0;
+    return `<div class="tg-compose ${one ? 'one' : ''} ${has ? 'has' : ''}">
+      <textarea id="${one ? 'cmp-today' : 'cmp'}" data-in="${one ? 'today' : 'compose'}" rows="${one ? 1 : 3}" placeholder="${one ? L('记一条速记…', 'Capture a thought…') : L('一个想法、一个问题、一条链接…', 'An idea, a question, a link…')}" aria-label="${L('速记', 'Capture')}">${esc(one ? S.today : S.compose)}</textarea>
+      <div class="bar"><span class="dest">${L('存入 00-Inbox · ⌘↵ 保存', 'Saves to 00-Inbox · ⌘↵')}</span>
+        ${one ? '' : `<button class="tg-ib" title="${L('在独立窗口中速记', 'Capture in a window')}" data-act="toast" data-arg="${L('打开独立速记窗口（沿用现有功能）', 'Opens the capture window (existing feature)')}">${ic('pop', 's')}</button><button class="tg-ib" title="${L('沉浸速记', 'Immersive capture')}" data-act="toast" data-arg="${L('进入沉浸速记（沿用现有功能）', 'Opens immersive capture (existing feature)')}">${ic('max', 's')}</button>`}
+        <button class="tg-btn cta" data-act="save-cap" data-arg="${one ? 'today' : 'compose'}" ${has ? '' : 'disabled'}>${L('保存', 'Save')}</button></div>
+    </div>`;
+  }
+
+  /* ───────── TODAY ───────── */
+  function today() {
+    const pend = pending().length;
+    const d = TODAY.toLocaleDateString(S.lang === 'en' ? 'en' : 'zh-CN', { month: 'long', day: 'numeric' });
+    const wd = TODAY.toLocaleDateString(S.lang === 'en' ? 'en' : 'zh-CN', { weekday: 'long' });
+    const per = [['日记', 'Day'], ['周', 'Week'], ['月', 'Month'], ['季', 'Qtr'], ['年', 'Year']];
+    let h = `<div class="tg-day"><div><div class="d">${d}</div><div class="w">${wd} · ${L('第 48 周', 'Week 48')}</div></div>
+      <div class="tg-periods" role="group" aria-label="${L('周期笔记', 'Periodic notes')}">${per.map(([z, e], i) => `<button data-act="toast" data-arg="${L(`打开${i ? '本' + z : '今天的日记'}`, `Open this ${e.toLowerCase()}’s note`)}" title="${L(i ? '本' + z : '今天的日记', e)}">${L(z, e)}</button>`).join('')}</div></div>`;
+    h += composer(true);
+    const isoCards = cards.filter((c) => c.iso).length;
+    const q = cards.length ? 5 : 0;
+    const nextCard = cards[0];
+    const rows = [];
+    rows.push(loopRow(L('整理', 'Sort'), pend ? L(`${pend} 条速记待处理`, `${pend} captures to process`) : (caps.length ? L('速记都处理完了', 'All captures processed') : L('收件箱是空的', 'Inbox is empty')),
+      pend ? (pending().some((c) => c.day > 0) ? L('最早一条来自昨天', 'Oldest from yesterday') : L('都是今天记的', 'All from today')) : L('想到什么就记在上面', 'Write the next one above'), 'go', 'captures', pend ? String(pend) : ''));
+    rows.push(loopRow(L('提炼', 'Distill'), cards.length ? L(`本周新增 2 张卡片`, '2 new cards this week') : L('还没有卡片', 'No cards yet'),
+      cards.length ? L(`${isoCards} 张待连接`, `${isoCards} awaiting connections`) : (caps.length ? L('从一条速记提炼第一张', 'Distill your first from a capture') : L('先记下几条速记', 'Capture a few thoughts first')), 'go', 'cards', ''));
+    rows.push(loopRow(L('回顾', 'Review'), q ? (S.reviewDone >= q ? L('今日回顾已完成', 'Today’s review is done') : L(`今日回顾 ${S.reviewDone}/${q}`, `Today’s review ${S.reviewDone}/${q}`)) : L('回顾队列还没开始', 'No review queue yet'),
+      q ? (S.reviewDone >= q ? L('明天会重新抽取', 'A new set tomorrow') : L('下一张：' + nextCard.zh, 'Next: ' + nextCard.en)) : L('有卡片后，每天抽几张给你', 'Starts once you have cards'), 'go', 'review', ''));
+    // 产出: the project whose top task is most urgent (same ranking as the project page), plus how many others are active.
+    const ps = projectsData();
+    if (!ps.length) rows.push(loopRow(L('产出', 'Create'), L('新建第一个项目', 'Start your first project'), L('写作、vlog、代码都可以是一个项目', 'Writing, a vlog or code can each be a project'), 'go', 'projects', ''));
+    else {
+      const ranked = ps.map((p, i) => [p, i, projectTasks(p)[0]]).sort((a, b) => (a[2] ? taskRank(a[2][0]) : 9) - (b[2] ? taskRank(b[2][0]) : 9));
+      const [p, i, top] = ranked[0];
+      const meta = [typeName(p), top ? `${L('下一步：', 'next: ')}${esc(L(parseTask(top[0]).text, top[1]))}` : L('还没有任务', 'no tasks yet')];
+      if (ps.length > 1) meta.push(L(`另有 ${ps.length - 1} 个项目`, `${ps.length - 1} more project${ps.length > 2 ? 's' : ''}`));
+      rows.push(loopRow(L('产出', 'Create'), L(`推进「${p.zh}」`, `Move “${p.en}” forward`), meta.join(' · '), 'proj', String(i), ''));
+    }
+    h += `<section class="tg-sec">${heading(L('今天的闭环', 'Today’s loop'))}${rows.join('')}${soon(L('待确认的 AI 整理提案', 'AI proposals to confirm'))}</section>`;
+    h += taskSection();
+    if (S.data === 'full') h += `<section class="tg-sec">${heading(L('辅助', 'Extras'))}<button class="tg-row" data-act="go" data-arg="focus"><span class="lead">${ic('timer', 's')}</span><span class="ttl">${L('专注', 'Focus')}</span><span class="end">${L('今天 50 分钟', '50 min today')}${ic('right', 'xs')}</span></button><button class="tg-row" data-act="go" data-arg="more"><span class="lead">${ic('repeat', 's')}</span><span class="ttl">${L('习惯', 'Habits')}</span><span class="end">1/3${ic('right', 'xs')}</span></button></section>`;
+    return h;
+  }
+  function loopRow(step, title, meta, act, arg, end) {
+    return `<button class="tg-row tg-loop" data-act="${act}" data-arg="${arg}"><span class="step">${step}</span><span><span class="ttl">${esc(title)}</span><span class="meta">${esc(meta)}</span></span><span class="end">${end}${ic('right', 'xs')}</span></button>`;
+  }
+  function taskSection() {
+    const ts = tasks();
+    let h = `<section class="tg-sec">${heading(L('任务', 'Tasks'), ts.length ? `<button class="tg-link" data-act="toast" data-arg="${L('打开任务总览笔记', 'Opens the task overview note')}">${L('全部 ' + ts.length, 'All ' + ts.length)}${ic('right', 'xs')}</button>` : '')}`;
+    h += `<label class="tg-addtask">${ic('plus', 's')}<input placeholder="${L('添加任务，回车保存', 'Add a task, press Enter')}" aria-label="${L('新任务', 'New task')}" data-act-enter="add-task"></label>`;
+    if (!ts.length) {
+      h += `<p class="tg-muted" style="padding:2px 0">${L('笔记里未完成的复选框会出现在这里。', 'Open checkboxes from your notes show up here.')}</p>`;
+      return h + '</section>';
+    }
+    for (const t of ts) {
+      const due = t.due ? dueLabel(t.due) : null;
+      const meta = [];
+      if (due) meta.push(`<span class="${due.c}">${ic('cal', 'xs')}${due.t}</span>`);
+      if (t.prio === 'highest' || t.prio === 'high') meta.push(`<span class="p-${t.prio}" title="${L(t.prio === 'highest' ? '最高优先级' : '高优先级', t.prio === 'highest' ? 'Highest priority' : 'High priority')}">${ic('flag', 'xs')}${L(t.prio === 'highest' ? '最高' : '高', t.prio === 'highest' ? 'Highest' : 'High')}</span>`);
+      if (t.recur) meta.push(`<span title="every week">${ic('repeat', 'xs')}${L('每周', 'Weekly')}</span>`);
+      for (const tag of t.tags) meta.push(`<span class="tg-faint">#${esc(tag)}</span>`);
+      for (const ln of t.links) meta.push(linkChip(ln));
+      h += `<div class="tg-task" title="${esc(t.raw)}"><button class="tg-check" data-act="check" aria-label="${L('完成：', 'Complete: ')}${esc(t.text)}">${ic('check', 'xs')}</button><div><div class="ttl">${esc(S.lang === 'en' ? t.en : t.text)}</div>${meta.length ? `<div class="meta">${meta.join('')}</div>` : ''}${S.showRaw ? `<div class="tg-raw">- [ ] ${esc(t.raw)}</div>` : ''}</div></div>`;
+    }
+    return h + '</section>';
+  }
+  // A [[link]] on a task line to a project or area note shows as a chip (fixture resolves by name; real code by the note's role).
+  function linkChip(name) {
+    const pi = projectsData().findIndex((p) => p.zh === name); const ai = areasData().findIndex((a) => a.zh === name);
+    if (pi >= 0) return `<span>${ic('kanban', 'xs')}${esc(L(projectsData()[pi].zh, projectsData()[pi].en))}</span>`;
+    if (ai >= 0) return `<span>${ic('layers', 'xs')}${esc(L(areasData()[ai].zh, areasData()[ai].en))}</span>`;
+    return `<span class="tg-faint">[[${esc(name)}]]</span>`;
+  }
+  // Task row for project / area pages: same parse and meta as 今天, plus where the checkbox lives.
+  function ownedTaskRow([raw, en, src]) {
+    const t = parseTask(raw); const due = t.due ? dueLabel(t.due) : null; const meta = [];
+    if (due) meta.push(`<span class="${due.c}">${ic('cal', 'xs')}${due.t}</span>`);
+    if (t.prio === 'highest' || t.prio === 'high') meta.push(`<span class="p-${t.prio}">${ic('flag', 'xs')}${L(t.prio === 'highest' ? '最高' : '高', t.prio === 'highest' ? 'Highest' : 'High')}</span>`);
+    for (const tag of t.tags) meta.push(`<span class="tg-faint">#${esc(tag)}</span>`);
+    meta.push(`<span class="tg-faint">${tx(src)}</span>`);
+    return `<div class="tg-task" title="${esc(raw)}"><button class="tg-check" data-act="check" aria-label="${L('完成：', 'Complete: ')}${esc(t.text)}">${ic('check', 'xs')}</button><div><div class="ttl">${esc(L(t.text, en))}</div><div class="meta">${meta.join('')}</div>${S.showRaw ? `<div class="tg-raw">- [ ] ${esc(raw)}</div>` : ''}</div></div>`;
+  }
+  const taskRank = (raw) => { const t = parseTask(raw); const d = t.due ? dueLabel(t.due).c : ''; return d === 'late' ? 0 : d === 'soon' ? 1 : t.prio === 'highest' ? 2 : t.prio === 'high' ? 3 : 4; };
+  const SRC = { ov: ['任务总览', 'Task overview'] };
+  // Which open checkboxes belong to a project (no new property):
+  //   1) in notes under the project folder; 2) in notes whose tangrow_project points here; 3) task-overview lines linking [[project note]].
+  function projectTasks(p) {
+    const T = {
+      '重试与幂等': [['补一个反例 #项目/写作课 ⏫ 📅 2026-12-01 [[重试与幂等]]', 'Add a counterexample', SRC.ov], ['核对重试次数上限的出处 📅 2026-11-26', 'Check the source for the retry cap', ['关联笔记 · 幂等键的设计', 'Linked note · Designing idempotency keys']], ['请同事审读初稿 🔽', 'Ask a colleague to read the draft', ['项目目录 · 重试与幂等', 'Project folder · Retries and idempotency']]],
+      '写作课第三讲': [['录一段样片 📅 2026-11-28 [[写作课第三讲]]', 'Record a sample clip', SRC.ov], ['剪辑开头 30 秒', 'Cut the first 30 seconds', ['项目目录 · 第三讲脚本', 'Project folder · Lesson 3 script']], ['写视频简介', 'Write the video description', ['项目目录 · 拍摄清单', 'Project folder · Shot list']]],
+      'Tangrow 插件 v0.5': [['PR 1 布局修复 🔺 📅 2026-11-27 [[Tangrow 插件 v0.5]]', 'PR 1 layout fixes', SRC.ov], ['PR 2 视觉 token 与基础组件', 'PR 2 visual tokens and components', ['项目目录 · 设计笔记：核心闭环', 'Project folder · Design note: core loop']], ['PR 3 空状态', 'PR 3 empty states', ['项目目录 · 设计笔记：核心闭环', 'Project folder · Design note: core loop']], ['PR 4 去重控件', 'PR 4 duplicate controls', ['项目目录 · 设计笔记：核心闭环', 'Project folder · Design note: core loop']], ['PR 5 按闭环重排导航', 'PR 5 loop navigation', ['项目目录 · 设计笔记：核心闭环', 'Project folder · Design note: core loop']], ['写发布说明 🔽', 'Write the release notes', ['项目目录 · 发布说明', 'Project folder · Release notes']]],
+      '播客第 12 期': [['列访谈提纲 📅 2026-12-02 [[播客第 12 期]]', 'Outline the interview', SRC.ov], ['约嘉宾时间 ⏫', 'Book the guest', SRC.ov], ['租录音设备 🔽', 'Rent recording gear', ['项目目录 · 播客第 12 期', 'Project folder · Podcast episode 12']]]
+    };
+    return (T[p.zh] || []).slice().sort((a, b) => taskRank(a[0]) - taskRank(b[0]));
+  }
+
+  /* ───────── CAPTURES ───────── */
+  function captures() {
+    let h = composer(false);
+    const pend = pending().length; const doneN = caps.length - pend;
+    h += `<section class="tg-sec"><div class="tg-filter"><div class="tg-tabs" role="group" aria-label="${L('速记状态', 'Capture status')}">
+      ${[['pending', '待处理', 'To process', pend], ['done', '已处理', 'Processed', doneN], ['all', '全部', 'All', caps.length]].map(([v, z, e, n]) => `<button aria-pressed="${S.filter === v}" data-act="filter" data-arg="${v}">${L(z, e)}<span class="c">${n}</span></button>`).join('')}
+      </div><button class="tg-link" data-act="cal">${S.calOpen ? L('收起月历', 'Hide month') : L('本周', 'This week')}${ic(S.calOpen ? 'up' : 'down', 'xs')}</button></div>`;
+    h += S.calOpen ? month() : week();
+    h += '</section>';
+    let list = caps.filter((c) => (S.filter === 'all' ? true : S.filter === 'done' ? !!c.done : !c.done));
+    if (S.selDay !== null) list = list.filter((c) => c.day === S.selDay);
+    let body = '';
+    if (!caps.length) {
+      body = empty('inbox', L('还没有速记', 'No captures yet'), L('速记是先记下、稍后再决定用途的原始想法。在上面写下第一条，它会存进收件箱，等你处理。', 'A capture is a raw thought you sort later. Write the first one above; it goes to your inbox until you process it.'), '');
+    } else if (!list.length && S.filter === 'pending') {
+      body = empty('check', L('待处理的都处理完了', 'Nothing left to process'), L('新想法记在上面的输入框。处理过的速记仍保留原文，可以随时回看。', 'New thoughts go in the box above. Processed captures keep their original text.'), btn(L(`看看已处理的 ${doneN} 条`, `See ${doneN} processed`), 'filter', 'done'));
+    } else {
+      let last = -1;
+      for (const c of list) {
+        if (c.day !== last) { body += `<div class="tg-day-label">${[L('今天', 'Today'), L('昨天', 'Yesterday'), L('11月25日 周三', 'Wed, Nov 25'), L('11月24日 周二', 'Tue, Nov 24')][c.day]}</div>`; last = c.day; }
+        body += capRow(c);
+      }
+    }
+    h += `<section class="tg-sec">${caps.length ? soon(L('AI 为每条速记建议去向', 'AI suggests where each capture goes')) : ''}${body}</section>`;
+    return h;
+  }
+  function week() {
+    const days = [];
+    for (let i = 0; i < 7; i++) { const d = new Date(2026, 10, 23 + i); days.push(d); }
+    const counts = { 23: 0, 24: 1, 25: 1, 26: 2, 27: 2 };
+    return `<div class="tg-week">${days.map((d) => {
+      const n = d.getDate(); const back = 27 - n; const c = S.data === 'full' ? (counts[n] || 0) : S.data === 'start' ? ({ 26: 1, 27: 1 }[n] || 0) : 0;
+      const sel = S.selDay === back;
+      return `<button class="${n === 27 ? 'today' : ''} ${sel ? 'sel' : ''} ${n > 27 ? 'out' : ''}" data-act="day" data-arg="${back}" aria-label="${n}"><span class="wd">${L('一二三四五六日'[d.getDay() === 0 ? 6 : d.getDay() - 1], 'MTWTFSS'[d.getDay() === 0 ? 6 : d.getDay() - 1])}</span><span class="dn">${n}</span><span class="dot">${'<i></i>'.repeat(Math.min(c, 3))}</span></button>`;
+    }).join('')}</div>${S.selDay !== null ? `<div class="tg-calbar"><span class="tg-muted">${L('只看这一天', 'Showing this day')} · <button class="tg-link" data-act="day" data-arg="clear">${L('全部日期', 'All days')}</button></span><button class="tg-link" data-act="toast" data-arg="${L('打开这一天的日记', 'Opens that day’s journal')}">${ic('book', 'xs')} ${L('这天的日记', 'Journal')}</button></div>` : ''}`;
+  }
+  function month() {
+    let cells = '';
+    const start = new Date(2026, 10, 1); const offset = (start.getDay() + 6) % 7;
+    for (let i = 0; i < 35; i++) {
+      const n = i - offset + 1; const valid = n >= 1 && n <= 30;
+      const back = 27 - n; const c = S.data === 'full' ? ({ 24: 1, 25: 1, 26: 2, 27: 2, 12: 1, 18: 3, 20: 1 }[n] || 0) : 0;
+      cells += valid ? `<button class="${n === 27 ? 'today' : ''} ${S.selDay === back ? 'sel' : ''}" data-act="day" data-arg="${back >= 0 && back < 4 ? back : 'clear'}"><span class="dn">${n}</span><span class="dot">${'<i></i>'.repeat(Math.min(c, 3))}</span></button>` : '<span></span>';
+    }
+    return `<div class="tg-calbar"><button class="tg-ib" aria-label="${L('上个月', 'Previous month')}">${ic('left', 's')}</button><strong style="font-size:12.5px">${L('2026 年 11 月', 'November 2026')}</strong><button class="tg-ib" aria-label="${L('下个月', 'Next month')}">${ic('right', 's')}</button></div>
+      <div class="tg-week">${[...L('一二三四五六日', 'MTWTFSS')].map((w) => `<span class="wd" style="text-align:center;font-size:10px;color:var(--text-faint)">${w}</span>`).join('')}${cells}</div>`;
+  }
+  function capRow(c) {
+    const open = S.open === c.id;
+    let h = `<div class="tg-cap ${open ? 'open' : ''}"><span class="tm">${c.t}</span><div class="tx">${esc(capText(c))}</div>
+      <div class="ft">${c.done ? `${ic('check', 'xs')}<span>${esc(tx(c.done))}</span>` : `<span>${L('待处理', 'To process')}${c.cardMade ? L(' · 已提炼 1 张卡片', ' · 1 card distilled') : ''}</span>`}<span class="sp"></span>
+      ${c.done ? `<button class="tg-link" data-act="reopen" data-arg="${c.id}">${L('恢复待处理', 'Mark unprocessed')}</button>` : `<button class="tg-link strong" data-act="proc" data-arg="${c.id}" aria-expanded="${open}">${open ? L('收起', 'Close') : L('处理', 'Process')}</button>`}</div>`;
+    if (open && S.pick === c.id) return h + destPicker(c) + '</div>';
+    if (open && S.lp && S.lp.id === c.id) return h + linkPicker(c, S.lp.mode) + '</div>';
+    if (open) {
+      const acts = [
+        ['file', L('转为笔记', 'Convert to note'), L('放进项目、领域或资源；不选就在收件箱', 'Into a project, area or resource; inbox if none'), 'pick'],
+        ['tasks', L('追加到任务总览', 'Add to task overview'), L('可选项目或领域，选了就在任务后带上它的链接', 'Optionally pick a project or area; the task line gets its link'), 'lp-task'],
+        ['folder', L('关联项目', 'Link a project'), L('只写入这条速记的 tangrow_project', 'Only sets tangrow_project on this capture'), 'lp-proj'],
+        ['card', L('提炼为卡片', 'Distill a card') + `<span class="new">${L('新入口', 'new')}</span>`, L('来源记为这条速记，处理状态不变', 'Keeps this capture as the source; status unchanged'), 'act-card']
+      ];
+      h += `<div class="tg-proc">${acts.map(([i, t, d, a]) => `<button class="tg-row" data-act="${a}" data-arg="${c.id}"><span class="lead">${ic(i, 's')}</span><span><span class="ttl">${t}</span><span class="meta">${esc(d)}</span></span><span class="end">${ic('right', 'xs')}</span></button>`).join('')}
+        <div class="foot"><button class="tg-link" data-act="act-done" data-arg="${c.id}">${ic('check', 'xs')} ${L('仅标记已处理', 'Just mark processed')}</button><span class="tg-pill" title="${L('整理引擎推出后可用', 'Available when the organizing engine ships')}">${ic('spark', 'xs')} ${L('AI 建议 · 即将推出', 'AI · soon')}</span></div></div>`;
+    }
+    return h + '</div>';
+  }
+
+  // 转为笔记 → where should the new note live? PARA places only; the capture itself stays in the inbox.
+  // Generic inline picker: groups of [key, label, sub]; one radio choice; a confirm button.
+  function pickerShell({ title, back, groups, sel, selAct, okAct, okArg, okLabel, foot, search, empty: emptyText }) {
+    const rows = groups.filter(([, items]) => items.length).map(([gt, items]) => `<div class="tg-destg">${gt ? `<div class="gh">${gt}</div>` : ''}${items.map(([k, label, sub]) => `<button class="tg-dest" role="radio" aria-checked="${sel === k}" data-act="${selAct}" data-arg="${esc(k)}"><span class="rd"></span><span class="ttl">${label}</span>${sub ? `<span class="sub">${sub}</span>` : ''}</button>`).join('')}</div>`).join('');
+    return `<div class="tg-proc" style="margin:2px 0 6px">${title ? `<div class="tg-back" style="margin:0 0 2px -2px">${back ? `<button class="tg-ib" data-act="${back}" aria-label="${L('返回', 'Back')}">${ic('left', 's')}</button>` : ''}<h4 style="font-size:var(--font-ui-small)">${title}</h4></div>` : ''}
+      ${rows ? `${search ? `<input class="tg-input" data-in="destq" placeholder="${search}" aria-label="${search}" style="margin:2px 0 4px">` : ''}<div class="tg-destlist" role="radiogroup" aria-label="${title || ''}">${rows}</div>` : `<p class="tg-muted" style="padding:4px 8px">${emptyText}</p>`}
+      <div class="foot"><span class="tg-muted" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${foot}</span><button class="tg-btn cta" data-act="${okAct}" data-arg="${esc(okArg)}" ${sel ? '' : 'disabled'}>${okLabel}</button></div></div>`;
+  }
+  // 关联项目 (project required) and 追加到任务总览 (project / area optional) share one picker.
+  function linkPicker(c, mode) {
+    const ps = projectsData(); const as = mode === 'task' ? areasData() : [];
+    const opt = (key, label, sub) => `<button class="tg-dest" role="radio" aria-checked="${S.lsel === key}" data-act="lsel" data-arg="${esc(key)}"><span class="rd"></span><span class="ttl">${label}</span>${sub ? `<span class="sub">${sub}</span>` : ''}</button>`;
+    const grp = (title, rows) => rows.length ? `<div class="tg-destg"><div class="gh">${title}</div>${rows.join('')}</div>` : '';
+    const title = mode === 'task' ? L('追加到任务总览', 'Add to task overview') : L('关联项目', 'Link a project');
+    const list = grp(L('项目', 'Projects'), ps.map((p, i) => opt('p' + i, esc(L(p.zh, p.en)), typeName(p)))) + grp(L('领域', 'Areas'), as.map((a, i) => opt('a' + i, esc(L(a.zh, a.en)), '')))
+      + (mode === 'task' ? grp(L('不关联', 'No link'), [opt('none', L('只追加任务', 'Just add the task'), '')]) : '');
+    const sel = S.lsel && S.lsel !== 'none' ? (S.lsel[0] === 'p' ? ps[+S.lsel.slice(1)]?.zh : as[+S.lsel.slice(1)]?.zh) : null;
+    const foot = mode === 'task' ? (sel ? L(`任务行尾带上 [[${sel}]]`, `The task line gets [[${sel}]]`) : L('写入 10-Life(Meta)/12-Tasks.md', 'Goes to 10-Life(Meta)/12-Tasks.md'))
+      : L('只写入这条速记的 tangrow_project', 'Only sets tangrow_project on this capture');
+    const ready = mode === 'task' || !!sel;
+    return `<div class="tg-proc"><div class="tg-back" style="margin:0 0 2px -2px"><button class="tg-ib" data-act="lp-back" aria-label="${L('返回', 'Back')}">${ic('left', 's')}</button><h4 style="font-size:var(--font-ui-small)">${title}</h4></div>
+      ${ps.length || as.length ? `<input class="tg-input" data-in="destq" placeholder="${L('搜索项目', 'Search projects')}${mode === 'task' ? L('、领域', ' and areas') : ''}" aria-label="${L('搜索', 'Search')}" style="margin:2px 0 4px"><div class="tg-destlist" role="radiogroup" aria-label="${title}">${list}</div>`
+        : `<p class="tg-muted" style="padding:4px 8px">${L('还没有项目。先在「项目」里新建一个。', 'No projects yet. Create one under Projects first.')}</p>${mode === 'task' ? `<div class="tg-destlist" role="radiogroup">${list}</div>` : ''}`}
+      <div class="foot"><span class="tg-muted" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(foot)}</span><button class="tg-btn cta" data-act="${mode === 'task' ? 'act-task' : 'act-proj'}" data-arg="${c.id}" ${ready ? '' : 'disabled'}>${mode === 'task' ? L('追加', 'Add') : L('关联', 'Link')}</button></div></div>`;
+  }
+  function destPicker(c) {
+    const ps = projectsData(); const as = areasData(); const rs = resourcesData().filter((r) => r.path);
+    const valid = ['inbox', ...ps.slice(0, 3).map((_, i) => 'p' + i), ...as.map((_, i) => 'a' + i), ...rs.map((_, i) => 'r' + i)];
+    if (!valid.includes(S.dest)) S.dest = 'inbox';
+    const opt = (key, label, sub) => `<button class="tg-dest" role="radio" aria-checked="${S.dest === key}" data-act="dest" data-arg="${esc(key)}"><span class="rd"></span><span class="ttl">${label}</span>${sub ? `<span class="sub">${sub}</span>` : ''}</button>`;
+    const grp = (title, isNew, rows) => rows.length ? `<div class="tg-destg"><div class="gh">${title}${isNew ? `<span class="new">${L('新', 'new')}</span>` : ''}</div>${rows.join('')}</div>` : '';
+    const where = S.dest === 'inbox' ? '00-Inbox' : S.dest.startsWith('p') ? L('项目目录，并写入 tangrow_project', 'project folder, plus tangrow_project') : S.dest.startsWith('a') ? as[+S.dest.slice(1)]?.path : rs[+S.dest.slice(1)]?.path;
+    return `<div class="tg-proc"><div class="tg-back" style="margin:0 0 2px -2px"><button class="tg-ib" data-act="pick-back" aria-label="${L('返回', 'Back')}">${ic('left', 's')}</button><h4 style="font-size:var(--font-ui-small)">${L('转为笔记：放到哪里', 'Convert to note: where to?')}</h4></div>
+      <input class="tg-input" data-in="destq" placeholder="${L('搜索项目、领域、资源', 'Search projects, areas, resources')}" aria-label="${L('搜索去向', 'Search destinations')}" style="margin:2px 0 4px">
+      <div class="tg-destlist" role="radiogroup" aria-label="${L('放到哪里', 'Destination')}">
+      ${grp(L('项目', 'Projects'), false, ps.slice(0, 3).map((p, i) => opt('p' + i, esc(L(p.zh, p.en)), typeName(p))))}
+      ${grp(L('领域', 'Areas'), true, as.map((a, i) => opt('a' + i, esc(L(a.zh, a.en)), '')))}
+      ${grp(L('资源', 'Resources'), true, rs.map((r, i) => opt('r' + i, esc(L(r.zh, r.en)), '')))}
+      ${grp(L('不归位', 'Not filed yet'), false, [opt('inbox', L('留在收件箱', 'Keep in the inbox'), '')])}</div>
+      <div class="foot"><span class="tg-muted" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${L('新笔记建在 ', 'New note goes to ')}${esc(where || '')}</span>${btn(L('转为笔记', 'Convert'), 'act-note', String(c.id), 'cta')}</div></div>`;
+  }
+
+  /* ───────── KNOWLEDGE ───────── */
+  function knowledge() {
+    const q = cards.length ? 5 : 0;
+    const tabs = [['cards', '卡片', 'Cards', cards.length], ['hubs', '主题结构', 'Hubs', S.data === 'full' ? 2 : 0], ['review', '回顾', 'Review', q ? `${Math.min(S.reviewDone, q)}/${q}` : 0], ['materials', '素材', 'Materials', resourcesData().reduce((n, g) => n + g.items.length, 0)]];
+    let h = `<div class="tg-subnav" role="group" aria-label="${L('知识', 'Knowledge')}">${tabs.map(([v, z, e, n]) => `<button aria-pressed="${S.k === v}" data-act="k" data-arg="${v}">${L(z, e)}<span class="c">${n}</span></button>`).join('')}</div>`;
+    h += { cards: cardsPage, hubs: hubsPage, review: reviewPage, materials: materialsPage }[S.k]();
+    return h;
+  }
+  function firstCardEmpty() {
+    if (caps.length) {
+      const pick = caps.slice(0, 2).map((c) => `<button class="tg-row" data-act="act-card" data-arg="${c.id}"><span class="lead">${ic('inbox', 's')}</span><span class="ttl">${esc(capText(c))}</span><span class="end">${L('提炼', 'Distill')}${ic('right', 'xs')}</span></button>`).join('');
+      return empty('card', L('写下第一张卡片', 'Write your first card'), L('卡片用你自己的话写下一个观点，能脱离上下文被理解。最快的开始：从最近的一条速记提炼。', 'A card states one idea in your own words, readable on its own. The quickest start: distill a recent capture.'),
+        btn(L('新建空白卡片', 'Blank card'), 'blank-card'), `<div class="tg-pick"><span class="tg-muted">${L('从最近的速记提炼', 'Distill from a recent capture')}</span>${pick}</div>`);
+    }
+    return empty('card', L('写下第一张卡片', 'Write your first card'), L('卡片来自你记下的东西。先在「速记」里记几条想法，再回来把值得留下的写成卡片。', 'Cards grow from what you capture. Jot a few thoughts in Captures, then come back to keep the ones worth keeping.'),
+      btn(L('去记一条速记', 'Capture a thought'), 'go', 'captures', 'cta') + btn(L('新建空白卡片', 'Blank card'), 'blank-card'));
+  }
+  function cardsPage() {
+    if (!cards.length) return `<section class="tg-sec">${firstCardEmpty()}${soon(L('AI 从速记起草候选卡片', 'AI drafts candidate cards'))}</section>`;
+    const isoN = cards.filter((c) => c.iso).length;
+    let list = cards;
+    if (S.cardFilter === 'iso') list = cards.filter((c) => c.iso);
+    if (S.cardFilter === 'week') list = cards.slice(0, 2);
+    let h = `<div class="tg-toolbar"><div class="tg-chips" role="group">${[['all', '全部', 'All'], ['iso', `待连接 ${isoN}`, `Unlinked ${isoN}`], ['week', '本周', 'This week']].map(([v, z, e]) => `<button aria-pressed="${S.cardFilter === v}" data-act="cf" data-arg="${v}">${L(z, e)}</button>`).join('')}</div></div>`;
+    h += `<section class="tg-sec">${addRow(L('新建卡片', 'New card'), 'blank-card', '')}${list.map((c) => `<button class="tg-row" data-act="toast" data-arg="${L('打开卡片', 'Opens the card')}"><span class="lead"><i class="stage-dot ${c.st}"></i></span><span><span class="ttl">${esc(S.lang === 'en' ? c.en : c.zh)}</span><span class="meta">${L({ seed: '种子', growing: '成长中', evergreen: '常青' }[c.st], { seed: 'Seed', growing: 'Growing', evergreen: 'Evergreen' }[c.st])} · ${tx(c.age)}${c.iso ? ` · <span class="tg-warn">${L('待连接', 'Unlinked')}</span>` : c.links ? ` · ${L(c.links + ' 条连接', c.links + ' links')}` : ''}</span></span><span class="end"></span></button>`).join('')}
+      ${soon(L('AI 为卡片找连接', 'AI finds connections for a card'))}
+      <button class="tg-link" data-act="toast" data-arg="${L('打开卡片报表', 'Opens the card report')}">${ic('chart', 'xs')} ${L('卡片报表', 'Card report')}</button></section>`;
+    return h;
+  }
+  function hubsPage() {
+    if (S.data !== 'full') {
+      const enough = cards.length >= 3;
+      return `<section class="tg-sec">${empty('hub', L('还没有主题结构', 'No hubs yet'), L('主题结构把相关卡片串成一条论证路径，回答「关于这个问题我怎么想」。先积累几张卡片，再回来把它们组织起来。', 'A hub strings related cards into a line of argument. Collect a few cards first, then come back to organize them.'),
+        enough ? btn(L('新建主题结构', 'New hub'), 'toast', L('新建结构笔记（只新建）', 'Creates a hub note (new file only)'), 'cta') : btn(L(cards.length ? `再写 ${3 - cards.length} 张卡片` : '先去写卡片', cards.length ? `Write ${3 - cards.length} more cards` : 'Write cards first'), 'k', 'cards', 'cta'))}${soon(L('AI 建议把卡片加入哪个主题', 'AI suggests which hub a card belongs to'))}</section>`;
+    }
+    const hubs = [[L('分布式系统里的可靠性', 'Reliability in distributed systems'), 5], [L('写作方法', 'How I write'), 3]];
+    return `<section class="tg-sec">${addRow(L('新建主题结构', 'New hub'), 'toast', L('新建结构笔记（只新建）', 'Creates a hub note (new file only)'))}${hubs.map(([t, n]) => `<button class="tg-row" data-act="toast" data-arg="${L('打开主题结构', 'Opens the hub')}"><span class="lead">${ic('hub', 's')}</span><span><span class="ttl">${t}</span><span class="meta">${L(n + ' 张卡片', n + ' cards')}</span></span><span class="end">${ic('right', 'xs')}</span></button>`).join('')}</section>`;
+  }
+  function reviewPage() {
+    if (!cards.length) return `<section class="tg-sec">${empty('review', L('回顾从卡片开始', 'Review starts with cards'), L('每天从你的卡片里抽几张重新看一遍，待连接和久未回看的优先。写下第一张卡片，明天它就会出现在这里。', 'Each day a few of your cards come back for another look, unlinked and long-unseen ones first. Write your first card and it shows up here tomorrow.'),
+      caps.length ? btn(L('从速记提炼第一张卡片', 'Distill your first card'), 'act-card', String(caps[0].id), 'cta') : btn(L('去记一条速记', 'Capture a thought'), 'go', 'captures', 'cta'))}${soon(L('AI 起草今日回顾', 'AI drafts today’s review'))}</section>`;
+    const q = 5; const done = Math.min(S.reviewDone, q);
+    let h = `<div class="tg-progress"><span>${L('今日回顾', 'Today’s review')}</span><span class="bar"><i style="width:${done / q * 100}%"></i></span><span>${done}/${q}</span></div>`;
+    if (done >= q) {
+      h += `<section class="tg-sec">${empty('ok', L('今天的回顾完成了', 'Today’s review is done'), L('5 张卡片都看过了。明天会重新抽取，待连接的卡片会优先出现。', 'All 5 cards reviewed. A new set comes tomorrow, unlinked cards first.'), btn(L('看看 2 张待连接的卡片', 'See 2 unlinked cards'), 'cf-iso') + btn(L('重来一遍', 'Reset demo'), 'review-reset'))}</section>`;
+      return h + soon(L('AI 起草今日回顾，写入日记前先预览', 'AI drafts the review; you preview before it goes into your journal'));
+    }
+    const c = cards[done % cards.length];
+    const why = done % 2 === 0 ? L('待连接', 'Unlinked') : L('长期未回顾', 'Not seen in a while');
+    h += `<div class="tg-review"><div class="ey"><span>${L('下一张', 'Next')}</span>·<span>${why}</span>·<span>${tx(c.age)}</span></div><h5>${esc(S.lang === 'en' ? c.en : c.zh)}</h5><p>${L('调用方第一次发起请求时生成幂等键，之后每次重试都原样带上。服务端据此认出同一次操作，而不是靠请求内容猜。', 'The caller generates the key on the first attempt and sends it unchanged with every retry, so the server recognizes the same operation instead of guessing from the payload.')}</p>
+      <div class="tg-actions">${btn(L('标记已回顾', 'Mark reviewed'), 'reviewed', '', 'cta', 'check')}${btn(L('用于项目', 'Use in project'), 'toast', L('选一个项目，只写入这张卡片的 tangrow_project；它会出现在项目的「资料」里', 'Pick a project; only this card’s tangrow_project is set, and it shows under the project’s Reference'))}<button class="tg-link" data-act="toast" data-arg="${L('打开原卡片', 'Opens the card')}">${L('打开', 'Open')}</button></div></div>`;
+    h += `<section class="tg-sec">${heading(L('今天的队列', 'Today’s queue'))}${cards.slice(0, q).map((x, i) => `<div class="tg-row"><span class="lead">${ic(i < done ? 'check' : 'card', 's')}</span><span class="ttl" style="${i < done ? 'color:var(--text-faint)' : ''}">${esc(S.lang === 'en' ? x.en : x.zh)}</span><span class="end">${i < done ? L('已回顾', 'Reviewed') : i === done ? L('下一张', 'Next') : ''}</span></div>`).join('')}${soon(L('AI 起草今日回顾', 'AI drafts today’s review'))}</section>`;
+    return h;
+  }
+  function materialsPage() {
+    if (S.data !== 'full') return `<section class="tg-sec">${empty('book', L('还没有素材', 'No materials yet'), L('素材是剪藏、文献笔记和资源目录里可以拿来用的东西。读完一篇值得留下的，在这里提炼成卡片。', 'Materials are clippings, literature notes and resources you can use. When something is worth keeping, distill it into a card here.'), btn(L('打开资源目录', 'Open resources'), 'toast', L('在文件列表中定位 40-Resources', 'Reveals 40-Resources')))}</section>`;
+    // Grouped by resource entry (location); 素材 stays the usage view. Clips outside 40-Resources get their own group.
+    let h = `<div class="tg-groups">`;
+    for (const g of resourcesData()) {
+      const open = !S.mcol[g.k];
+      h += `<section class="tg-sec tg-group"><button class="tg-ghead" data-act="mcol" data-arg="${g.k}" aria-expanded="${open}">${ic(open ? 'down' : 'right', 'xs')}<span class="n">${L(g.zh, g.en)}</span><span class="c">${g.items.length}</span>${g.path ? '' : `<span class="c" style="margin-left:auto">${L('按剪藏识别', 'found as clips')}</span>`}</button>`;
+      if (open) h += g.items.map(([t, d, proj], i) => materialRow(g.k + i, t, d, proj)).join('');
+      h += `</section>`;
+    }
+    return h + `</div>`;
+  }
+
+  // One material row. 用于项目 only writes tangrow_project on this note; the file stays in its resource folder.
+  function materialRow(id, t, d, proj) {
+    const ps = projectsData();
+    const cur = S.used[id] !== undefined ? S.used[id] : proj;
+    const usedIn = cur !== null && cur !== undefined && ps[cur] ? ` · ${L('用于', 'used in ')}「${esc(L(ps[cur].zh, ps[cur].en))}」` : '';
+    let h = `<div class="tg-row"><span class="lead">${ic('book', 's')}</span><span><span class="ttl">${t}</span><span class="meta">${d}${usedIn}</span></span><button class="tg-link" data-act="usefor" data-arg="${id}" aria-expanded="${S.useFor === id}">${usedIn ? L('改项目', 'Change') : L('用于项目', 'Use in project')}</button></div>`;
+    if (S.useFor === id) {
+      h += `<div class="tg-proc" style="margin:2px 0 6px"><div class="tg-destlist" role="radiogroup" aria-label="${L('用于哪个项目', 'Which project')}">${ps.map((p, i) => `<button class="tg-dest" role="radio" aria-checked="${cur === i}" data-act="use" data-arg="${id}:${i}"><span class="rd"></span><span class="ttl">${esc(L(p.zh, p.en))}</span><span class="sub">${typeName(p)}</span></button>`).join('')}</div>
+        <div class="foot"><span class="tg-muted">${L('只写入这篇的 tangrow_project，文件不移动', 'Only sets tangrow_project on this note; the file stays put')}</span>${cur !== null && cur !== undefined ? `<button class="tg-link" data-act="use" data-arg="${id}:-1">${L('移除', 'Remove')}</button>` : ''}</div></div>`;
+    }
+    return h;
+  }
+
+  /* ───────── PARA: areas & resources ─────────
+     Entities follow the report rule (PARA.md 5.2): each direct subfolder or root note of 30-Area / 40-Resources is one entry.
+     Nothing here moves files; area/resource folders become optional destinations for new notes only. */
+  function areasData() {
+    if (S.data !== 'full') return [];
+    return [
+      { zh: '工作', en: 'Work', path: '30-Area/工作', notes: 38, upd: ['今天', 'today'], tasks: [['整理季度复盘提纲', 'Outline the quarterly retro', null, ['领域目录 · 季度复盘', 'Area folder · Quarterly retro']], ['补压测数据', 'Add load test numbers', ['逾期 2 天', '2d overdue'], ['任务总览', 'Task overview']]], recent: [['值班交接清单', 'On-call handover'], ['性能基线 2026Q4', 'Perf baseline 2026Q4']] },
+      { zh: '健康', en: 'Health', path: '30-Area/健康', notes: 12, upd: ['昨天', 'yesterday'], tasks: [['预约体检', 'Book a health check', ['周一', 'Mon'], ['任务总览', 'Task overview']]], recent: [['睡眠记录', 'Sleep log']] },
+      { zh: '个人品牌', en: 'Personal brand', path: '30-Area/个人品牌', notes: 20, upd: ['3 天前', '3 days ago'], tasks: [], recent: [['选题池', 'Topic pool'], ['写作原则', 'Writing principles']] },
+      { zh: '财务', en: 'Finances', path: '30-Area/财务', notes: 6, upd: ['2 周前', '2 weeks ago'], tasks: [], recent: [] }
+    ];
+  }
+  function resourcesData() {
+    if (S.data !== 'full') return [];
+    return [
+      { k: 'dist', zh: '分布式系统', en: 'Distributed systems', path: '40-Resources/分布式系统', items: [[L('幂等键的设计', 'Designing idempotency keys'), L('剪藏 · 已提炼 1 张卡片', 'Clip · 1 card distilled'), 0], [L('缓存一致性综述', 'Cache consistency survey'), L('剪藏 · 未提炼', 'Clip · not distilled'), null]] },
+      { k: 'write', zh: '写作方法', en: 'Writing craft', path: '40-Resources/写作方法', items: [[L('《卡片笔记写作法》第 4 章', 'How to Take Smart Notes, ch. 4'), L('文献笔记 · 被 1 篇稿件引用', 'Literature note · cited by 1 manuscript'), 1]] },
+      { k: 'out', zh: '资源目录之外', en: 'Outside Resources', path: '', items: [[L('播客嘉宾的访谈', 'Guest’s earlier interview'), L('剪藏 · 在 00-Inbox', 'Clip · in 00-Inbox'), 3]] }
+    ];
+  }
+  function areasView() {
+    const as = areasData();
+    if (!as.length) {
+      return `<section class="tg-sec">${empty('layers', L('还没有领域', 'No areas yet'), L('领域是你长期负责、没有终点的方面，比如工作、健康、财务。Tangrow 把领域目录下的每个子目录当作一个领域，不要求你搬动笔记。', 'An area is something you look after with no end date: work, health, money. Each subfolder of your Areas folder is one area. Nothing gets moved.'),
+        S.data === 'new' ? btn(L('建立 PARA 目录', 'Set up PARA folders'), 'ob-open', '', 'cta') : btn(L('在文件列表中打开 30-Area', 'Reveal 30-Area'), 'toast', L('在文件列表中定位领域目录', 'Reveals the Areas folder')))}</section>`;
+    }
+    let h = `<div class="tg-groups">${addRow(L('新建领域', 'New area'), 'toast', L('在 30-Area 下新建子目录和同名笔记（只新建）', 'Creates a subfolder and note in 30-Area (new files only)'))}<section class="tg-sec tg-group">`;
+    h += as.map((a, i) => {
+      const np = projectsData().filter((p) => p.area === i).length;
+      const meta = [...(np ? [L(`${np} 个项目`, `${np} project${np > 1 ? 's' : ''}`)] : []), a.tasks.length ? L(`${a.tasks.length} 个待办`, `${a.tasks.length} open`) : L('没有待办', 'Nothing open'), L(`${a.notes} 篇笔记`, `${a.notes} notes`)];
+      return `<button class="tg-row nolead" data-act="area" data-arg="${i}"><span><span class="ttl">${esc(L(a.zh, a.en))}</span><span class="meta">${meta.join(' · ')}</span></span><span class="end">${tx(a.upd)}${ic('right', 'xs')}</span></button>`;
+    }).join('');
+    return h + `</section></div>` + soon(L('AI 建议把收件箱里的内容放进哪个领域', 'AI suggests which area inbox items belong to'));
+  }
+  function areaPage(a) {
+    let h = `<div class="tg-back"><button class="tg-ib" data-act="area" data-arg="list" aria-label="${L('返回', 'Back')}">${ic('left', 's')}</button><h4>${esc(L(a.zh, a.en))}</h4></div>`;
+    h += `<div class="tg-muted" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><span>${L('领域', 'Area')}</span>·<span>${L(`${a.notes} 篇笔记`, `${a.notes} notes`)}</span>·<span>${L('更新于', 'updated ')}${tx(a.upd)}</span></div>`;
+    h += btn(L('打开领域笔记', 'Open the area note'), 'toast', L(`打开 ${a.path} 的同名笔记或 README`, `Opens the area note or README in ${a.path}`), 'cta full', 'file');
+    const ai = areasData().findIndex((x) => x.zh === a.zh);
+    const mine = projectsData().map((p, i) => [p, i]).filter(([p]) => p.area === ai);
+    h += `<section class="tg-sec">${heading(L('进行中的项目', 'Active projects'))}${mine.length ? mine.map(([p, i]) => projectRow(p, i, 'area')).join('')
+      : `<p class="tg-muted">${L('还没有项目关联到这个领域。在项目详情标题下点「关联领域」。', 'No projects in this area yet. Use “Set area” under a project’s title.')}</p>`}</section>`;
+    h += `<section class="tg-sec">${heading(L('待办', 'Open tasks'))}${a.tasks.length ? a.tasks.map(([z, e, d, src]) => `<div class="tg-task"><button class="tg-check" data-act="check" aria-label="${L('完成', 'Complete')}">${ic('check', 'xs')}</button><div><div class="ttl">${esc(L(z, e))}</div><div class="meta">${d ? `<span class="${d[0].startsWith('逾期') ? 'late' : ''}">${ic('cal', 'xs')}${tx(d)}</span>` : ''}<span class="tg-faint">${tx(src)}</span></div></div></div>`).join('')
+      : `<p class="tg-muted">${L('领域目录里的复选框，以及任务总览里链接到领域笔记的任务，会出现在这里。', 'Checkboxes in this area’s folder and task-overview lines that link the area note show up here.')}</p>`}</section>`;
+    h += `<section class="tg-sec">${heading(L('最近更新', 'Recently updated'))}${addRow(L('在这个领域新建笔记', 'New note in this area'), 'toast', L(`在 ${a.path} 新建笔记（只新建）`, `Creates a note in ${a.path} (new file only)`))}${a.recent.map(([z, e]) => `<button class="tg-row" data-act="toast" data-arg="${L('打开笔记', 'Opens the note')}"><span class="lead">${ic('file', 's')}</span><span class="ttl">${esc(L(z, e))}</span><span class="end">${ic('right', 'xs')}</span></button>`).join('')}</section>`;
+    return h;
+  }
+
+  /* ───────── PROJECTS (产出) ───────── */
+  // type = tangrow_project_type on the project note, free text chosen by the user. Tangrow ships no type list:
+  // the groups are the values that exist in the vault (trimmed, case-insensitive), most used first; empty = 未分类, last.
+  // Fixture values are [zh, en] only so the demo switches language; real values are shown exactly as written.
+  const NOTYPE = ['未分类', 'Uncategorized'];
+  const typeKey = (p) => (p.type ? tx(p.type).trim().toLowerCase() : '');
+  const typeName = (p) => (p.type ? esc(tx(p.type).trim()) : L(NOTYPE[0], NOTYPE[1]));
+  function typeList(ps) {
+    const m = new Map();
+    for (const p of ps) { const k = typeKey(p); const e = m.get(k) || { k, name: typeName(p), n: 0 }; e.n++; m.set(k, e); }
+    const named = [...m.values()].filter((e) => e.k).sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
+    return m.has('') ? [...named, m.get('')] : named;
+  }
+  // tangrow_area on the project note: optional, one link to an area note. Fixture maps title → index in areasData().
+  const AREA_OF = { '重试与幂等': 2, '写作课第三讲': 2, 'Tangrow 插件 v0.5': 0 };
+  function projectsData() {
+    return projectsRaw().map((p) => ({ ...p, area: S.areaSet[p.zh] !== undefined ? S.areaSet[p.zh] : (AREA_OF[p.zh] ?? null) }));
+  }
+  const areaOf = (p) => (p.area !== null && areasData()[p.area]) || null;
+  const areaName = (p) => { const a = areaOf(p); return a ? esc(L(a.zh, a.en)) : ''; };
+  function projectsRaw() {
+    if (S.data === 'new') return [];
+    if (S.data === 'start') return [{ zh: '写作课', en: 'Writing class', type: null, next: null, due: null, done: 0, total: 0, linked: [], cand: 0, cards: 0 }];
+    return [
+      { zh: '重试与幂等', en: 'Retries and idempotency', type: ['写作', 'writing'], next: ['补一个反例', 'Add a counterexample'], due: ['12月15日', 'Dec 15'], done: 2, total: 5, cand: 3, cards: 2,
+        linked: [['稿件', 'Manuscript', '重试与幂等', 'Retries and idempotency', '起草中 · 候选素材 3 · 正文引用 1', 'Drafting · 3 candidates · 1 citation', 'pen']] },
+      { zh: '写作课第三讲', en: 'Writing class, lesson 3', type: ['vlog', 'vlog'], next: ['录一段样片', 'Record a sample clip'], due: ['12月10日', 'Dec 10'], done: 1, total: 4, cand: 5, cards: 1,
+        linked: [['稿件', 'Manuscript', '第三讲脚本', 'Lesson 3 script', '修改中', 'Revising', 'pen'], ['笔记', 'Note', '拍摄清单', 'Shot list', '6 个镜头', '6 shots', 'file']] },
+      { zh: 'Tangrow 插件 v0.5', en: 'Tangrow plugin v0.5', type: ['代码', 'code'], next: ['PR 1 布局修复', 'PR 1 layout fixes'], due: null, done: 4, total: 10, cand: 0, cards: 3,
+        linked: [['笔记', 'Note', '设计笔记：核心闭环', 'Design note: core loop', '3 天前更新', 'Updated 3 days ago', 'file'], ['稿件', 'Manuscript', '发布说明', 'Release notes', '提纲', 'Outline', 'pen']] },
+      { zh: '播客第 12 期', en: 'Podcast episode 12', type: ['播客', 'podcast'], next: ['列访谈提纲', 'Outline the interview'], due: ['12月20日', 'Dec 20'], done: 0, total: 3, cand: 2, cards: 1,
+        linked: [['笔记', 'Note', '嘉宾背景', 'Guest background', '昨天更新', 'Updated yesterday', 'file']] },
+      { zh: '读书会讲稿', en: 'Book club talk', type: null, next: null, due: null, done: 0, total: 0, cand: 0, cards: 0, linked: [] }
+    ];
+  }
+  function draftsData() {
+    if (S.data !== 'full') return [];
+    return [['卡片与结构笔记', 'Cards and hubs', '3 天前', '3 days ago'], ['周末读书随想', 'Weekend reading notes', '1 周前', '1 week ago']].filter(([z]) => S.draftTo[z] === undefined);
+  }
+  function projects() {
+    const ps = projectsData(); const ds = draftsData();
+    if (S.proj === 'scratch') return scratchPage(ps);
+    if (typeof S.proj === 'number' && ps[S.proj]) return projectPage(ps[S.proj]);
+    if (typeof S.area === 'number' && areasData()[S.area]) return areaPage(areasData()[S.area]);
+    // Fixed views: 项目 and 领域 are the actionable PARA places; 草稿 (manuscripts with no tangrow_project) is a
+    // built-in category, never a user type, so it sits beside them instead of among the type groups.
+    if (S.pview !== 'drafts' && S.pview !== 'areas') S.pview = 'projects';
+    const views = [['projects', L('项目', 'Projects'), ps.length], ['areas', L('领域', 'Areas'), areasData().length], ['drafts', L('草稿', 'Drafts'), ds.length]];
+    const sortBtn = S.pview === 'projects' && ps.length > 1
+      ? `<select class="tg-sortsel" data-in="psort" aria-label="${L('分组方式', 'Group by')}">${[['type', L('按类型', 'By type')], ['area', L('按领域', 'By area')], ['due', L('按截止日期', 'By due date')]].map(([v, t]) => `<option value="${v}" ${S.psort === v ? 'selected' : ''}>${t}</option>`).join('')}</select>` : '';
+    let h = `<div class="tg-toolbar"><div class="tg-subnav" role="group" aria-label="${L('项目', 'Projects')}">${views.map(([v, t, n]) => `<button aria-pressed="${S.pview === v}" data-act="pview" data-arg="${v}">${t}<span class="c">${n}</span></button>`).join('')}</div>${sortBtn}</div>`;
+    return h + (S.pview === 'drafts' ? draftsView(ds, ps) : S.pview === 'areas' ? areasView() : projectsView(ps));
+  }
+  const addRow = (label, act, arg) => `<button class="tg-addrow" data-act="${act}" data-arg="${esc(arg)}">${ic('plus', 's')}<span>${label}</span></button>`;
+  function projectRow(p, i, groupedBy) {
+    const bits = [];
+    if (groupedBy !== 'type') bits.push(typeName(p));
+    if (groupedBy !== 'area' && areaOf(p)) bits.push(areaName(p));
+    const top = projectTasks(p)[0];
+    bits.push(top ? `${L('下一步：', 'Next: ')}${esc(L(parseTask(top[0]).text, top[1]))}` : L('还没有下一步', 'No next step yet'));
+    if (S.pdone[p.zh]) bits.unshift(L('已完成 · 待移入归档', 'Done · move to archive'));
+    const end = p.due ? tx(p.due) : p.total ? `${p.done}/${p.total}` : '';
+    return `<button class="tg-row nolead" data-act="proj" data-arg="${i}"><span><span class="ttl">${esc(L(p.zh, p.en))}</span><span class="meta">${bits.join(' · ')}</span></span><span class="end">${end}${ic('right', 'xs')}</span></button>`;
+  }
+  function projectsView(ps) {
+    const add = addRow(L('新建项目', 'New project'), 'toast', L('打开快速新建：项目。类型可选：从已有类型里挑，或直接输入新类型', 'Opens quick add: project. Type is optional: pick one you already use or type a new one'));
+    if (!ps.length) {
+      return `<section class="tg-sec">${empty('kanban', L('还没有项目', 'No projects yet'), L('项目是你的产出单位：一篇文章、一支 vlog、一段代码，或任何你想做完的东西。它把任务、稿件、素材和卡片收在一起，直到完成。类型由你自己起名。', 'A project is how you ship: an article, a vlog, some code, anything you mean to finish. It keeps tasks, manuscripts, materials and cards together until it is done. You name the types yourself.'),
+        btn(L('新建项目', 'New project'), 'toast', L('打开快速新建：项目', 'Opens quick add: project'), 'cta') + btn(L('先在写作暂存里写几句', 'Jot in the scratchpad'), 'proj', 'scratch'))}${soon(L('AI 生成项目简报、拆解任务', 'AI writes a project brief and breaks down tasks'))}</section>`;
+    }
+    let h = `<div class="tg-groups">${add}`;
+    const idx = ps.map((p, i) => [p, i]);
+    if (S.psort === 'area') {
+      const as = areasData();
+      const groups = as.map((a, ai) => [ai, esc(L(a.zh, a.en)), idx.filter(([p]) => p.area === ai)]).filter((g) => g[2].length);
+      const none = idx.filter(([p]) => !areaOf(p));
+      if (none.length) groups.push(['none', L('未关联领域', 'No area'), none]);
+      for (const [k, name, rows] of groups) {
+        const key = 'area:' + k; const open = !S.pcol[key];
+        h += `<section class="tg-sec tg-group"><button class="tg-ghead" data-act="pcol" data-arg="${key}" aria-expanded="${open}">${ic(open ? 'down' : 'right', 'xs')}<span class="n">${name}</span><span class="c">${rows.length}</span></button>`;
+        if (open) h += rows.map(([p, i]) => projectRow(p, i, 'area')).join('');
+        h += '</section>';
+      }
+    } else if (S.psort === 'due') {
+      // fixture dates are display strings; real code sorts by the ISO date of the next task
+      const order = (p) => (p.due ? ['12月10日', '12月15日', '12月20日'].indexOf(p.due[0]) : 99);
+      h += `<section class="tg-sec tg-group">${idx.slice().sort((a, b) => order(a[0]) - order(b[0])).map(([p, i]) => projectRow(p, i, 'none')).join('')}</section>`;
+    } else {
+      for (const g of typeList(ps)) {
+        const open = !S.pcol[g.k];
+        h += `<section class="tg-sec tg-group"><button class="tg-ghead" data-act="pcol" data-arg="${esc(g.k)}" aria-expanded="${open}">${ic(open ? 'down' : 'right', 'xs')}<span class="n">${g.name}</span><span class="c">${g.n}</span></button>`;
+        if (open) h += idx.filter(([p]) => typeKey(p) === g.k).map(([p, i]) => projectRow(p, i, 'type')).join('');
+        h += '</section>';
+      }
+    }
+    return h + '</div>' + soon(L('AI 生成项目简报、拆解任务', 'AI writes a project brief and breaks down tasks'));
+  }
+  function draftsView(ds, ps) {
+    let h = !ds.length ? '' : `<p class="tg-muted">${L('没有归属项目的稿件都在这里。归入项目后离开这里，文件不移动。', 'Manuscripts that belong to no project yet. Linking one moves it out of this list; the file stays put.')}</p>`;
+    h += `<section class="tg-sec">`;
+    h += `<button class="tg-row" data-act="proj" data-arg="scratch"><span class="lead">${ic('pen', 's')}</span><span><span class="ttl">${L('写作暂存', 'Scratchpad')}</span><span class="meta">${L('先写几句，保存后成为草稿', 'Jot first; saving makes it a draft')}</span></span><span class="end">${ic('right', 'xs')}</span></button>`;
+    h += ds.map(([z, e, az, ae]) => `<div class="tg-row"><span class="lead">${ic('file', 's')}</span><span><span class="ttl">${esc(L(z, e))}</span><span class="meta">${L(az, ae)}${L('编辑', ' edited')}</span></span><button class="tg-link" data-act="draftfor" data-arg="${esc(z)}" aria-expanded="${S.draftFor === z}" ${ps.length ? '' : 'disabled'}>${L('归入项目', 'Link')}</button></div>`
+      + (S.draftFor === z ? pickerShell({ groups: [['', ps.map((p, i) => ['p' + i, esc(L(p.zh, p.en)), typeName(p)])]], sel: S.npSel, selAct: 'npsel', okAct: 'draftok', okArg: z, okLabel: L('归入', 'Link'), foot: L('只写入这篇稿件的 tangrow_project，文件不移动', 'Only sets tangrow_project on this manuscript; the file stays put'), search: ps.length > 6 ? L('搜索项目', 'Search projects') : '' }) : '')).join('');
+    h += '</section>';
+    if (!ds.length) h += `<p class="tg-muted">${L('没有草稿。写作暂存保存时不选项目，就会出现在这里。', 'No drafts. Save the scratchpad without a project and it lands here.')}</p>`;
+    return h;
+  }
+  function projectRefs(p) {
+    // fixture: [kind, title, location]; real data = notes with tangrow_project → this project and a material or card role
+    const res = (z, e) => L(`${z} · 资源`, `${e} · Resources`);
+    const R = {
+      '重试与幂等': [['clip', L('幂等键的设计', 'Designing idempotency keys'), L('剪藏 · ', 'Clip · ') + res('分布式系统', 'Distributed systems')], ['card', L('重试必须绑定稳定的操作身份', 'Retries need stable operation identities'), L('卡片 · 50-Zettel', 'Card · 50-Zettel')], ['card', L('幂等键应当由调用方生成', 'The caller should generate the idempotency key'), L('卡片 · 50-Zettel', 'Card · 50-Zettel')]],
+      '写作课第三讲': [['lit', L('《卡片笔记写作法》第 4 章', 'How to Take Smart Notes, ch. 4'), L('文献笔记 · ', 'Literature note · ') + res('写作方法', 'Writing craft')], ['card', L('先写结论，再写论证', 'State the conclusion before the argument'), L('卡片 · 50-Zettel', 'Card · 50-Zettel')]],
+      'Tangrow 插件 v0.5': [['card', L('结构笔记是论证路径，不是目录', 'A hub is a line of argument, not an index'), L('卡片 · 50-Zettel', 'Card · 50-Zettel')]],
+      '播客第 12 期': [['clip', L('播客嘉宾的访谈', 'Guest’s earlier interview'), L('剪藏 · 收件箱', 'Clip · Inbox')]]
+    };
+    const base = (R[p.zh] || []).slice();
+    // materials marked 用于项目 in this session show up here too
+    const ps = projectsData(); const me = ps.findIndex((x) => x.zh === p.zh);
+    for (const g of resourcesData()) g.items.forEach(([t, , proj], i) => {
+      const id = g.k + i; const cur = S.used[id] !== undefined ? S.used[id] : proj;
+      const already = base.some((r) => r[1] === t);
+      if (cur === me && !already) base.push(['clip', t, L('素材 · ', 'Material · ') + (g.path ? res(g.zh, g.en) : L('收件箱', 'Inbox'))]);
+      if (cur !== me && already && S.used[id] !== undefined) base.splice(base.findIndex((r) => r[1] === t), 1);
+    });
+    cards.forEach((c) => { if (S.cardFor[c.zh] === me && !base.some((r) => r[1] === L(c.zh, c.en))) base.push(['card', L(c.zh, c.en), L('卡片 · 50-Zettel', 'Card · 50-Zettel')]); });
+    return base;
+  }
+  // 稿件与笔记 = fixture + notes / drafts linked during this demo
+  function linkedOf(p) {
+    const extra = (S.extraLinked[p.zh] || []).map(([z, e, kind]) => kind === 'draft' ? ['稿件', 'Manuscript', z, e, '刚归入', 'Just linked', 'pen'] : ['笔记', 'Note', z, e, '刚关联', 'Just linked', 'file']);
+    return [...p.linked, ...extra];
+  }
+  // Notes that could be linked: anything without another project; fixture spans areas, inbox and drafts.
+  function notePicker(p) {
+    const taken = new Set(linkedOf(p).map((d) => d[2]));
+    const C = [[L('领域', 'Areas'), [['值班交接清单', 'On-call handover', '30-Area/工作'], ['选题池', 'Topic pool', '30-Area/个人品牌']]], [L('收件箱', 'Inbox'), [['会议记录 11-26', 'Meeting notes 11-26', '00-Inbox']]], [L('草稿', 'Drafts'), draftsData().map(([z, e]) => [z, e, L('草稿', 'Draft')])]];
+    const groups = C.map(([g, items]) => [g, items.filter(([z]) => !taken.has(z)).map(([z, e, where]) => ['n:' + z, esc(L(z, e)), where])]);
+    return pickerShell({ title: L('关联笔记', 'Link a note'), back: 'np-close', groups, sel: S.npSel, selAct: 'npsel', okAct: 'noteok', okArg: p.zh, okLabel: L('关联', 'Link'), foot: L('只写入那篇笔记的 tangrow_project，文件不移动', 'Only sets tangrow_project on that note; the file stays put'), search: L('搜索笔记', 'Search notes'), empty: L('没有可关联的笔记。', 'Nothing left to link.') });
+  }
+  // Materials and cards not yet in this project's 资料
+  function refPicker(p, refs) {
+    const have = new Set(refs.map((r) => r[1]));
+    const ps = projectsData(); const mats = [];
+    resourcesData().forEach((g) => g.items.forEach(([t, , proj], i) => {
+      if (have.has(t)) return;
+      const id = g.k + i; const cur = S.used[id] !== undefined ? S.used[id] : proj; const other = cur !== null && cur !== undefined ? ps[cur] : null;
+      // tangrow_project holds one project: say so when picking it would move it from another one
+      mats.push(['m:' + id, t, other ? L(`现属「${other.zh}」`, `now in “${other.en}”`) : g.path ? L(g.zh, g.en) : L('收件箱', 'Inbox')]);
+    }));
+    const cs = cards.filter((c) => !have.has(L(c.zh, c.en))).map((c) => ['c:' + c.zh, esc(L(c.zh, c.en)), '50-Zettel']);
+    return pickerShell({ title: L('添加资料', 'Add reference'), back: 'np-close', groups: [[L('素材', 'Materials'), mats], [L('卡片', 'Cards'), cs]], sel: S.npSel, selAct: 'npsel', okAct: 'refok', okArg: p.zh, okLabel: L('添加', 'Add'), foot: L('只写入它的 tangrow_project，文件不移动', 'Only sets its tangrow_project; the file stays put'), search: L('搜索素材和卡片', 'Search materials and cards'), empty: L('素材和卡片都已经在这里了。', 'All materials and cards are already here.') });
+  }
+  function projectPage(p) {
+    let h = `<div class="tg-back"><button class="tg-ib" data-act="proj" data-arg="list" aria-label="${L('返回', 'Back')}">${ic('left', 's')}</button><h4>${esc(L(p.zh, p.en))}</h4></div>`;
+    h += `<div class="tg-muted" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button class="tg-link" data-act="toast" data-arg="${L('改类型：从已有类型里挑或输入新类型；只改这个项目笔记的 tangrow_project_type', 'Change type: pick an existing one or type a new one; only this project note’s tangrow_project_type changes')}" title="${L('改类型', 'Change type')}">${typeName(p)}${ic('down', 'xs')}</button>·<button class="tg-link" data-act="areapick" aria-expanded="${S.areaPick === p.zh}" title="${L('所属领域', 'Area')}" ${areaOf(p) ? '' : 'style="color:var(--text-faint)"'}>${ic('layers', 'xs')}${areaOf(p) ? areaName(p) : L('关联领域', 'Set area')}${ic('down', 'xs')}</button>·<span>${L('进行中', 'Active')}</span>${p.due ? `·<span>${L('截止 ', 'Due ')}${tx(p.due)}</span>` : ''}</div>`;
+    if (S.areaPick === p.zh) {
+      const as = areasData();
+      h += `<div class="tg-proc" style="margin:0"><div class="tg-destlist" role="radiogroup" aria-label="${L('所属领域', 'Area')}">${as.map((a, ai) => `<button class="tg-dest" role="radio" aria-checked="${p.area === ai}" data-act="setarea" data-arg="${ai}"><span class="rd"></span><span class="ttl">${esc(L(a.zh, a.en))}</span></button>`).join('')}${as.length ? '' : `<p class="tg-muted" style="padding:4px 8px">${L('还没有领域。领域目录下的子目录会出现在这里。', 'No areas yet. Subfolders of your Areas folder show up here.')}</p>`}</div>
+        <div class="foot"><span class="tg-muted">${L('只写入项目笔记的 tangrow_area', 'Only sets tangrow_area on the project note')}</span>${areaOf(p) ? `<button class="tg-link" data-act="setarea" data-arg="-1">${L('取消关联', 'Clear')}</button>` : ''}</div></div>`;
+    }
+    // task progress lives in the 任务 section header, not a second 「任务」 label up here
+    // The primary action depends on what the project holds, never on its type name.
+    const last = linkedOf(p)[0];
+    h += last ? btn(L(`继续：${last[2]}`, `Continue: ${last[3]}`), 'toast', L('打开最近编辑的关联笔记', 'Opens the most recently edited linked note'), 'cta full', last[6])
+      : btn(L('打开项目笔记', 'Open the project note'), 'toast', L('打开项目笔记', 'Opens the project note'), 'cta full', 'file');
+    h += `<section class="tg-sec">${heading(L('稿件与笔记', 'Manuscripts and notes'), `<button class="tg-link" data-act="np" data-arg="note" aria-expanded="${S.np === 'note'}">${ic('plus', 'xs')} ${L('关联', 'Link')}</button>`)}${S.np === 'note' ? notePicker(p) : ''}
+      ${linkedOf(p).length ? linkedOf(p).map((d) => `<button class="tg-row" data-act="toast" data-arg="${L('打开笔记', 'Opens the note')}"><span class="lead">${ic(d[6], 's')}</span><span><span class="ttl">${esc(L(d[2], d[3]))}</span><span class="meta">${L(d[0], d[1])} · ${esc(L(d[4], d[5]))}</span></span><span class="end">${ic('right', 'xs')}</span></button>`).join('')
+        : `<p class="tg-muted">${L('新建一篇稿件，或在任意笔记上设置所属项目，它就会出现在这里。', 'Start a manuscript, or set this project on any note, and it shows up here.')}</p>`}</section>`;
+    const ts = projectTasks(p); const LIMIT = 5; const all = S.ptAll === p.zh;
+    h += `<section class="tg-sec">${heading(L('任务', 'Tasks'), p.total ? `<span class="tg-progress" style="min-width:110px"><span class="bar"><i style="width:${p.done / p.total * 100}%"></i></span><span>${L(`已完成 ${p.done}/${p.total}`, `${p.done}/${p.total} done`)}</span></span>` : '')}
+      <label class="tg-addtask">${ic('plus', 's')}<input placeholder="${L('添加任务，回车写入任务总览', 'Add a task; Enter adds it to the task overview')}" aria-label="${L('新任务', 'New task')}" data-act-enter="add-ptask" data-proj="${esc(p.zh)}"></label>
+      ${ts.length ? (all ? ts : ts.slice(0, LIMIT)).map(ownedTaskRow).join('') : `<p class="tg-muted">${L('项目目录里、关联到这个项目的笔记里的复选框，以及任务总览里链接到项目笔记的任务，都会出现在这里。', 'Checkboxes in the project folder, in notes linked to this project, and task-overview lines that link the project note all show up here.')}</p>`}
+      ${ts.length > LIMIT ? `<button class="tg-link" data-act="ptall" data-arg="${esc(p.zh)}">${all ? L('收起', 'Show less') : L(`再显示 ${ts.length - LIMIT} 条`, `Show ${ts.length - LIMIT} more`)}</button>` : ''}</section>`;
+    // 资料 = materials and cards whose tangrow_project points here, wherever they live; the location is shown, never changed.
+    const refs = projectRefs(p);
+    const hasDraft = p.linked.some((d) => d[0] === '稿件');
+    h += `<section class="tg-sec">${heading(L('资料', 'Reference'), `<button class="tg-link" data-act="np" data-arg="ref" aria-expanded="${S.np === 'ref'}">${ic('plus', 'xs')} ${L('添加', 'Add')}</button>`)}${S.np === 'ref' ? refPicker(p, refs) : ''}
+      ${refs.length ? refs.map(([kind, t, where]) => `<button class="tg-row" data-act="toast" data-arg="${L('打开笔记', 'Opens the note')}"><span class="lead">${ic(kind === 'card' ? 'card' : 'book', 's')}</span><span><span class="ttl">${esc(t)}</span><span class="meta">${where}</span></span><span class="end">${ic('right', 'xs')}</span></button>`).join('')
+        : `<p class="tg-muted">${L('在「知识 → 素材」里对任意资料点「用于项目」，或在卡片上设置所属项目，它就会出现在这里。文件留在原来的目录。', 'Use “Use in project” on any material in Knowledge, or set this project on a card, and it shows up here. Files stay where they are.')}</p>`}
+      ${hasDraft && p.cand ? `<button class="tg-row" data-act="toast" data-arg="${L('列出这个项目各篇稿件收集的候选素材', 'Lists candidates collected by this project’s manuscripts')}"><span class="lead">${ic('pen', 's')}</span><span class="ttl">${L('稿件的候选素材', 'Manuscript candidates')}</span><span class="end">${p.cand}${ic('right', 'xs')}</span></button>` : ''}
+      ${soon(L('AI 生成项目简报、拆解任务', 'AI writes a project brief and breaks down tasks'))}</section>`;
+    // Archive, stage one (PARA.md 6.3): mark done → hint + reveal the folder. Tangrow never moves it.
+    const done = S.pdone[p.zh];
+    h += `<section class="tg-sec">${heading(L('收尾', 'Wrap up'))}${done
+      ? `<div class="tg-note"><div class="t">${ic('ok', 's')}${L('已标记完成', 'Marked as done')}</div><p>${L('它会留在项目列表，直到你把项目目录移进 90-Archive。移动由你在文件列表里完成，Tangrow 不移动文件；移走后它从项目页和任务统计中消失，链接仍然有效。', 'It stays in the project list until you move its folder into 90-Archive. You do the move in the file list; Tangrow never moves files. Once moved, it leaves the project page and task counts, and links keep working.')}</p>
+          <div class="tg-actions">${btn(L('在文件列表中定位', 'Reveal in file list'), 'toast', L(`在文件列表中定位 20-Project/${p.zh}，拖到 90-Archive 即可`, `Reveals 20-Project/${p.en}; drag it into 90-Archive`), '', 'folder')}<button class="tg-link" data-act="pdone" data-arg="${esc(p.zh)}">${L('撤销完成', 'Undo')}</button></div></div>`
+      : `<button class="tg-row" data-act="pdone" data-arg="${esc(p.zh)}"><span class="lead">${ic('ok', 's')}</span><span><span class="ttl">${L('标记完成', 'Mark as done')}</span><span class="meta">${L('只改项目笔记的状态；之后提示你把目录移入归档', 'Only changes the status; then shows how to move the folder to the archive')}</span></span><span class="end">${ic('right', 'xs')}</span></button>`}</section>`;
+    return h;
+  }
+  function scratchPage(ps) {
+    return `<div class="tg-back"><button class="tg-ib" data-act="proj" data-arg="list" aria-label="${L('返回', 'Back')}">${ic('left', 's')}</button><h4>${L('写作暂存', 'Scratchpad')}</h4></div>
+      <section class="tg-sec"><input class="tg-input" placeholder="${L('标题（可选）', 'Title (optional)')}" aria-label="${L('标题', 'Title')}"><div class="tg-compose"><textarea rows="8" placeholder="${L('先写下几句，之后保存成稿件。', 'Write a few lines; save as a manuscript later.')}" aria-label="${L('写作暂存', 'Scratchpad')}" style="min-height:160px"></textarea></div>
+      <label class="tg-muted" style="display:grid;gap:4px">${L('归入项目（可选）', 'Project (optional)')}<select class="tg-input"><option>${L('暂不归入，存为草稿', 'None, keep as a draft')}</option>${ps.map((p) => `<option>${esc(L(p.zh, p.en))}</option>`).join('')}</select></label>
+      <div class="tg-actions" style="justify-content:space-between"><span class="tg-muted">${L('暂存在插件数据里', 'Kept in plugin data')}</span>${btn(L('保存为稿件', 'Save as manuscript'), 'toast', L('已保存为稿件', 'Saved as a manuscript'), 'cta')}</div></section>`;
+  }
+
+  /* ───────── MORE ───────── */
+  function more() {
+    if (S.more === 'focus') return focusPage();
+    const g = (t, rows) => `<section class="tg-sec">${heading(t)}${rows.map(([i, n, r, a, arg]) => `<button class="tg-row" data-act="${a}" data-arg="${esc(arg)}"><span class="lead">${ic(i, 's')}</span><span class="ttl">${n}</span><span class="end">${r}${ic('right', 'xs')}</span></button>`).join('')}</section>`;
+    return g(L('辅助模块', 'Extras'), [['timer', L('专注', 'Focus'), L('25 分钟', '25 min'), 'focus', ''], ['repeat', L('习惯', 'Habits'), '1/3', 'toast', L('沿用现有习惯页', 'Existing habits page')]])
+      + g(L('查看', 'Browse'), [['star', L('收藏与最近打开', 'Pins and recent'), '', 'toast', L('沿用现有收藏页，去掉顶部重复的「打开报表」', 'Existing pins page, minus the repeated report button')], ['chart', L('报表', 'Reports'), '', 'toast', L('打开报表视图', 'Opens the report view')], ['db', L('数据库视图', 'Bases'), S.data === 'new' ? L('未创建', 'Not set up') : '', 'toast', S.data === 'new' ? L('创建缺失的 Bases（只新建）', 'Creates missing Bases (new files only)') : L('打开数据库视图列表', 'Lists your Bases')]])
+      + g(L('工具', 'Tools'), [['wrench', L('当前文件工具', 'File tools'), '', 'toast', L('沿用现有工具，改为分组列表；命令面板中同样可用', 'Existing tools as a grouped list; also in the command palette')], ['spark', L('AI 工作流（Claudian）', 'AI workflows (Claudian)'), '', 'toast', L('沿用现有 Claudian 工作流页', 'Existing Claudian workflows page')]])
+      + g(L('设置', 'Settings'), [['gear', L('Tangrow 设置', 'Tangrow settings'), '', 'settings', '']]);
+  }
+  function focusPage() {
+    const mm = String(Math.floor(S.left / 60)).padStart(2, '0'); const ss = String(S.left % 60).padStart(2, '0');
+    let h = `<div class="tg-back"><button class="tg-ib" data-act="more-back" aria-label="${L('返回', 'Back')}">${ic('left', 's')}</button><h4>${L('专注', 'Focus')}</h4></div>`;
+    h += `<section class="tg-sec" style="gap:10px"><div class="tg-muted">${S.running ? L('专注中', 'Focusing') : L('一次专注一件事', 'One thing at a time')}</div><div class="tg-clock" role="timer">${mm}:${ss}</div>
+      <button class="tg-row" data-act="toast" data-arg="${L('关联的笔记：当前打开的文件', 'Linked note: the active file')}"><span class="lead">${ic('file', 's')}</span><span class="ttl">${L('重试与幂等', 'Retries and idempotency')}</span><span class="end">${L('关联', 'Linked')}</span></button>`;
+    if (!S.running) {
+      h += `<div class="tg-durs" role="group" aria-label="${L('时长', 'Length')}">${[15, 25, 45].map((m) => `<button aria-pressed="${!S.custom && S.focusMin === m}" data-act="dur" data-arg="${m}">${m}${L(' 分', 'm')}</button>`).join('')}${S.custom ? `<input type="number" min="1" max="240" value="${S.focusMin}" data-in="focus" aria-label="${L('自定义分钟', 'Custom minutes')}">` : `<button aria-pressed="false" data-act="dur" data-arg="custom">${L('自定义', 'Custom')}</button>`}</div>
+        ${btn(L(`开始 ${S.focusMin} 分钟`, `Start ${S.focusMin} min`), 'focus-start', '', 'cta full', 'play')}
+        <span class="tg-muted">${L('默认时长在设置里改；完成后在补充目录留一条记录。', 'Change the default in settings. Finished sessions leave a record.')}</span>`;
+    } else {
+      h += `<div class="tg-actions">${btn(L('完成并记录', 'Finish & record'), 'focus-stop', 'save', 'cta', 'check')}${btn(L('暂停', 'Pause'), 'toast', L('已暂停', 'Paused'), '', 'pause')}<button class="tg-link" data-act="focus-stop" data-arg="discard">${L('放弃', 'Discard')}</button></div>`;
+    }
+    h += `</section><section class="tg-sec">${heading(L('记录', 'History'))}<button class="tg-row" data-act="toast" data-arg="${L('打开专注记录数据库', 'Opens focus history')}"><span class="lead">${ic('db', 's')}</span><span class="ttl">${L('累计 1,240 分钟', '1,240 minutes total')}</span><span class="end">${ic('right', 'xs')}</span></button></section>`;
+    return h;
+  }
+
+  /* ───────── SIDEBAR SHELL ───────── */
+  function sidebar() {
+    const pend = pending().length;
+    const tabs = [['today', 'house', '今天', 'Today'], ['captures', 'inbox', '速记', 'Captures'], ['knowledge', 'bulb', '知识', 'Knowledge'], ['projects', 'kanban', '项目', 'Projects'], ['more', 'more', '更多', 'More']];
+    const pane = { today, captures, knowledge, projects, more }[S.tab]();
+    return `<div class="tg ${S.noFix ? 'no-fix' : ''}">
+      <div class="tg-head"><div class="tg-brand">${ic('sprout', 's')}Tangrow</div>
+        <button class="tg-ib" data-act="menu" aria-haspopup="menu" aria-expanded="${S.menu}" title="${L('新建', 'New')}">${ic('plus')}</button>
+        <button class="tg-ib" data-act="settings" title="${L('Tangrow 设置', 'Tangrow settings')}">${ic('gear')}</button></div>
+      ${S.menu ? `<div class="tg-pop" role="menu">${[['inbox', '速记', 'Capture', 'C'], ['file', '笔记', 'Note', 'N'], ['tasks', '任务', 'Task', 'T'], ['folder', '项目', 'Project', 'P'], ['card', '卡片', 'Card', 'K']].map(([i, z, e, k]) => `<button role="menuitem" data-act="${k === 'K' ? 'blank-card' : 'toast'}" data-arg="${L('打开快速新建：' + z, 'Opens quick add: ' + e)}">${ic(i, 's')}${L(z, e)}<kbd>${k}</kbd></button>`).join('')}</div>` : ''}
+      <nav class="tg-nav" role="tablist" aria-label="Tangrow">${tabs.map(([id, i, z, e]) => `<button role="tab" aria-selected="${S.tab === id}" data-act="tab" data-arg="${id}">${ic(i)}<span>${L(z, e)}</span>${id === 'captures' && pend ? `<span class="badge">${pend}</span>` : ''}</button>`).join('')}</nav>
+      <div class="tg-pane" id="pane" role="tabpanel">${pane}</div></div>`;
+  }
+
+  /* ───────── SETTINGS ───────── */
+  const ROLES = [
+    ['inbox', '收件箱', 'Inbox', '先捕获、稍后整理的位置', 'Where captures wait', '00-Inbox'],
+    ['project', '项目', 'Projects', '有目标和完成边界的行动', 'Actions with a goal and an end', '20-Project'],
+    ['area', '领域', 'Areas', '长期负责、没有终点的方面', 'Ongoing responsibilities', '30-Area'],
+    ['resource', '资源', 'Resources', '按主题长期保留的资料', 'Reference kept by topic', '40-Resources'],
+    ['archive', '归档', 'Archive', '不再活跃的内容', 'Inactive items', '90-Archive']
+  ];
+  const ROLES2 = [
+    ['card', '卡片', 'Cards', '卡片笔记的位置', 'Where cards live', '50-Zettel'],
+    ['tasks', '任务总览', 'Task overview', '已有的 Tasks 笔记', 'Existing Tasks note', '10-Life(Meta)/12-Tasks.md'],
+    ['support', '补充目录', 'Companion folder', '数据库视图与专注、习惯记录', 'Bases, focus and habit records', '99-Tangrow']
+  ];
+  const vals = {};
+  [...ROLES, ...ROLES2].forEach((r) => { vals[r[0]] = r[5]; });
+  function settings() {
+    const pages = {
+      home: [L('Tangrow', 'Tangrow'), setHome],
+      vault: [L('笔记库结构', 'Vault structure'), setVault],
+      periodic: [L('周期笔记', 'Periodic notes'), setPeriodic],
+      ai: ['AI', setAI],
+      modules: [L('侧栏模块', 'Sidebar modules'), setModules]
+    };
+    const [title, fn] = pages[S.setPage];
+    const dirtyN = Object.keys(S.dirty).length;
+    const needSave = ['vault', 'periodic'].includes(S.setPage);
+    return `<div class="modal set" role="dialog" aria-label="${L('设置', 'Settings')}">
+      <div class="set-nav" aria-hidden="true"><div class="g">${L('选项', 'Options')}</div>${[L('关于', 'About'), L('编辑器', 'Editor'), L('文件与链接', 'Files & links'), L('外观', 'Appearance')].map((x) => `<div class="it">${x}</div>`).join('')}<div class="g">${L('第三方插件', 'Community plugins')}</div><div class="it on">Tangrow</div><div class="it">Tasks</div></div>
+      <div class="set-main"><div class="set-top"><h3>${S.setPage !== 'home' ? `<button class="tg-ib" data-act="set" data-arg="home" aria-label="${L('返回', 'Back')}">${ic('left', 's')}</button>` : ''}${title}</h3><input class="tg-input" placeholder="${L('搜索设置', 'Search settings')}" aria-label="${L('搜索设置', 'Search settings')}"></div>
+      <div class="set-body">${fn()}</div>
+      ${needSave && dirtyN ? `<div class="savebar"><span class="sp">${L(`${dirtyN} 项未保存的更改`, `${dirtyN} unsaved change${dirtyN > 1 ? 's' : ''}`)}</span>${btn(L('放弃', 'Discard'), 'set-discard')}${btn(L('保存更改', 'Save changes'), 'set-save', '', 'cta')}</div>` : ''}
+      </div><button class="tg-ib x" data-act="close" aria-label="${L('关闭', 'Close')}">${ic('x')}</button></div>`;
+  }
+  const item = (name, desc, right, act, arg = '') => `<button class="set-item" data-act="${act}" data-arg="${arg}"><span><span class="nm">${name}</span><br><span class="ds">${desc}</span></span><span class="rt">${right}${ic('right', 's')}</span></button>`;
+  function setHome() {
+    const ready = S.data === 'new' ? '3/5' : '5/5';
+    return `<div class="set-grp"><h5>${L('开始', 'Start here')}</h5><div class="set-list">
+        ${item(L('首次使用引导', 'Welcome guide'), L('重新走一遍：笔记库结构、每日回顾、第一条速记', 'Run again: vault structure, daily review, first capture'), L('重新运行', 'Run'), 'ob-open')}
+        ${item(L('激活与更新', 'Activation and updates'), L('兑换码、试用、设备与版本', 'Code, trial, devices, version'), `<span class="dotst"></span>${L('已激活', 'Active')}`, 'toast', L('沿用首版设置中心设计', 'Unchanged from the settings center design'))}
+      </div></div>
+      <div class="set-grp"><h5>${L('工作台', 'Workbench')}</h5><div class="set-list">
+        ${item(L('笔记库结构', 'Vault structure'), L('PARA 目录、卡片目录、任务总览；不会移动文件', 'PARA folders, cards, task note. Nothing is moved.'), L(`PARA ${ready}`, `PARA ${ready}`), 'set', 'vault')}
+        ${item(L('周期笔记', 'Periodic notes'), L('日记目录、五种周期的路径格式与模板', 'Journal folder, formats and templates'), L('日 · 周 · 月 · 季 · 年', 'D · W · M · Q · Y'), 'set', 'periodic')}
+        ${item(L('侧栏模块', 'Sidebar modules'), L('知识功能、专注、习惯；默认加宽笔记', 'Knowledge, focus, habits; wide notes'), L('专注 开 · 习惯 开', 'Focus on · Habits on'), 'set', 'modules')}
+        ${item('AI', L('整理引擎（即将推出）与即时建议', 'Organizing engine (soon) and instant suggestions'), L('即时建议 关', 'Suggestions off'), 'set', 'ai')}
+      </div></div>
+      <div class="set-grp"><h5>${L('数据与帮助', 'Data and help')}</h5><div class="set-list">
+        ${item(L('报表', 'Reports'), L('编辑活跃统计、每日目标、排除目录', 'Activity, daily goal, exclusions'), '', 'toast', L('沿用现有分区', 'Existing section'))}
+        ${item(L('系统维护', 'Maintenance'), L('数据库视图、补充目录迁移、代理指南', 'Bases, companion folder, agent guide'), '', 'toast', L('沿用现有分区', 'Existing section'))}
+        ${item(L('使用教程与购买', 'Guide and purchase'), L('使用说明、购买渠道、换机说明', 'Guide, channels, changing devices'), '', 'toast', L('沿用现有分区', 'Existing section'))}
+      </div></div>`;
+  }
+  function paraRow(r, inOb) {
+    const [key, z, e, dz, de] = r;
+    const v = vals[key];
+    const isFile = key === 'tasks';
+    const exists = isFile ? true : FOLDERS.includes(v);
+    const err = S.setErr[key];
+    return `<div class="para"><span class="role">${L(z, e)}<small>${L(dz, de)}</small></span>
+      <span class="fld">${ic(isFile ? 'file' : 'folder', 's')}<input class="tg-input ${err ? 'bad' : ''}" list="folders" value="${esc(v)}" data-in="para" data-key="${key}" aria-label="${L(z, e)}"></span>
+      <span class="st ${exists ? 'ok' : 'miss'}">${exists ? `${ic('check', 'xs')}${L('已存在', 'Found')}` : `${ic('alert', 'xs')}${L('不存在', 'Missing')}`}</span>
+      ${err ? `<span class="err">${err}</span>` : ''}</div>`;
+  }
+  function setVault() {
+    return `<p class="tg-muted" style="font-size:12.5px">${L('Tangrow 按 PARA 理解你的笔记库。这里只记录各类内容在哪个目录，不会移动、重命名或删除任何文件。', 'Tangrow reads your vault through PARA. These settings only record where things live; nothing is moved, renamed or deleted.')}</p>
+      <div class="set-grp"><h5>PARA</h5><div class="set-list">${ROLES.map((r) => paraRow(r)).join('')}</div></div>
+      <div class="set-grp"><h5>${L('Tangrow 用到的位置', 'Used by Tangrow')}</h5><div class="set-list">${ROLES2.map((r) => paraRow(r)).join('')}</div></div>
+      <datalist id="folders">${FOLDERS.map((f) => `<option value="${esc(f)}">`).join('')}</datalist>`;
+  }
+  function setPeriodic() {
+    const rows = [['日', 'Day', 'YYYY/[Daily]/YYYY-MM-DD', '2026/Daily/2026-11-27'], ['周', 'Week', 'GGGG/[Weekly]/GGGG-[W]WW', '2026/Weekly/2026-W48'], ['月', 'Month', 'YYYY/[Monthly]/YYYY-MM', '2026/Monthly/2026-11'], ['季', 'Quarter', 'YYYY/[Quarterly]/YYYY-[Q]Q', '2026/Quarterly/2026-Q4'], ['年', 'Year', 'YYYY/[Yearly]/YYYY', '2026/Yearly/2026']];
+    return `<div class="set-grp"><h5>${L('日记目录', 'Journal folder')}</h5><div class="set-list"><div class="para" style="grid-template-columns:minmax(0,1fr) 96px"><span class="fld">${ic('folder', 's')}<input class="tg-input" list="folders" value="10-Life(Meta)/13-Journal" data-in="dirty" data-key="journal" aria-label="${L('日记目录', 'Journal folder')}"></span><span class="st ok">${ic('check', 'xs')}${L('已存在', 'Found')}</span></div></div></div>
+      <div class="set-grp"><h5>${L('路径格式', 'Path formats')}</h5><div class="set-list">${rows.map(([z, e, f, p]) => `<div class="per"><strong style="font-size:12.5px">${L(z, e)}</strong><input class="tg-input" style="font-family:var(--font-monospace);font-size:12px" value="${f}" data-in="dirty" data-key="fmt-${e}" aria-label="${L(z, e)}"><span class="pv">→ ${p}.md</span></div>`).join('')}</div></div>
+      <div class="set-grp"><h5>${L('模板（可选）', 'Templates (optional)')}</h5><div class="set-list">${rows.map(([z, e]) => `<div class="per"><strong style="font-size:12.5px">${L(z, e)}</strong><span class="fld">${ic('file', 's')}<input class="tg-input" placeholder="${L('不使用模板', 'No template')}" data-in="dirty" data-key="tpl-${e}" aria-label="${L(z + '模板', e + ' template')}"></span><span class="pv">${L('支持 {{date}} {{title}} 等变量', 'Supports {{date}}, {{title}}…')}</span></div>`).join('')}</div></div>
+      <datalist id="folders">${FOLDERS.map((f) => `<option value="${esc(f)}">`).join('')}</datalist>`;
+  }
+  function setAI() {
+    const tgl = (on, act, dis = false) => `<button class="toggle" role="switch" aria-checked="${on}" data-act="${act}" ${dis ? 'disabled' : ''}></button>`;
+    return `<div class="set-grp"><h5 style="display:flex;gap:8px;align-items:center">${L('整理引擎', 'Organizing engine')}<span class="tg-pill">${L('即将推出', 'Coming soon')}</span></h5><div class="set-list">
+        <div class="set-item"><span><span class="nm">${L('每日回顾预先准备', 'Prepare the daily review')}</span><br><span class="ds">${L('每天第一次打开 Obsidian 时生成今日回顾提案，只生成、不写入。整理引擎推出后生效。', 'Builds a daily review proposal when you first open Obsidian each day. Drafts only, never writes. Takes effect when the engine ships.')}</span></span><span class="ctrl">${tgl(S.obReview, 'ob-review')}</span></div>
+        <div class="set-item"><span><span class="nm">${L('「即将推出」提示', '“Coming soon” hints')}</span><br><span class="ds">${L('在速记、卡片、回顾页显示一行灰色提示，说明 AI 之后能帮你做什么。', 'Shows a grey line on captures, cards and review about what AI will help with.')}</span></span><span class="ctrl">${tgl(true, 'toast')}</span></div>
+      </div></div>
+      <div class="set-grp"><h5>${L('即时建议', 'Instant suggestions')}</h5><div class="set-list">
+        <div class="set-item"><span><span class="nm">${L('启用即时建议', 'Enable instant suggestions')}</span><br><span class="ds">${L('快速新建和速记处理时，点 AI 按钮才把正在整理的文字发送到 Claude API。默认关闭。', 'Sends only the text you are sorting to the Claude API, and only when you press the AI button. Off by default.')}</span></span><span class="ctrl">${tgl(false, 'toast')}</span></div>
+        <div class="set-item"><span><span class="nm">${L('模型', 'Model')}</span><br><span class="ds">${L('选「自定义」可以填任意模型 ID。', 'Choose Custom to enter any model ID.')}</span></span><span class="ctrl"><select class="tg-input" aria-label="${L('模型', 'Model')}"><option>claude-opus-5-5 ${L('（默认）', '(default)')}</option><option>claude-sonnet-5-5</option><option>claude-haiku-5-5</option><option>${L('自定义…', 'Custom…')}</option></select></span></div>
+        <div class="set-item"><span><span class="nm">Anthropic API ${L('密钥', 'key')}</span><br><span class="ds">${L('优先存进系统密钥串。', 'Stored in the system keychain when available.')}</span></span><span class="ctrl"><input class="tg-input" type="password" placeholder="sk-ant-…" style="width:140px" aria-label="API key">${btn(L('保存', 'Save'), 'toast', L('密钥单独保存', 'The key saves on its own'))}</span></div>
+      </div></div>
+      <div class="set-grp"><h5>${L('AI 工作流（Claudian）', 'AI workflows (Claudian)')}</h5><div class="set-list"><div class="set-item"><span><span class="nm">${L('Claudian 状态', 'Claudian status')}</span><br><span class="ds">${L('整理收件箱、周回顾等多步工作流由 Claudian 执行，入口在侧栏「更多」。', 'Multi-step workflows run in Claudian; find them under More in the sidebar.')}</span></span><span class="rt">${L('未检测到', 'Not found')}</span></div></div></div>`;
+  }
+  function setModules() {
+    const tgl = (on) => `<button class="toggle" role="switch" aria-checked="${on}" data-act="tgl"></button>`;
+    const row = (n, d, c) => `<div class="set-item"><span><span class="nm">${n}</span><br><span class="ds">${d}</span></span><span class="ctrl">${c}</span></div>`;
+    return `<p class="tg-muted" style="font-size:12.5px">${L('开关立即生效。', 'Switches apply immediately.')}</p>
+      <div class="set-grp"><h5>${L('闭环', 'Loop')}</h5><div class="set-list">${row(L('知识功能', 'Knowledge'), L('卡片、主题结构、回顾与卡片报表', 'Cards, hubs, review and card reports'), tgl(true))}</div></div>
+      <div class="set-grp"><h5>${L('辅助模块', 'Extras')}</h5><div class="set-list">${row(L('专注', 'Focus'), L('在「更多」和今天页显示专注', 'Show focus in More and on Today'), tgl(true))}${row(L('默认专注时长', 'Default focus length'), L('1–240 分钟', '1–240 minutes'), '<input class="tg-input" type="number" value="25" min="1" max="240" style="width:72px" aria-label="minutes">')}${row(L('习惯', 'Habits'), L('在「更多」和今天页显示习惯', 'Show habits in More and on Today'), tgl(true))}</div></div>
+      <div class="set-grp"><h5>${L('视图', 'Views')}</h5><div class="set-list">${row(L('默认加宽笔记', 'Widen notes by default'), L('清除逐页的加宽设置', 'Clears per-note width'), tgl(false))}</div></div>`;
+  }
+
+  /* ───────── ONBOARDING ───────── */
+  const DETECT = {
+    existing: { inbox: '-1. 捕获', project: '1. 项目', area: '2. 领域', resource: '3. 资源', archive: '4. 存档', card: null },
+    empty: { inbox: null, project: null, area: null, resource: null, archive: null, card: null }
+  };
+  const SUGGEST = {
+    existing: { card: '6. 卡片' },
+    empty: { inbox: '00-Inbox', project: '20-Project', area: '30-Area', resource: '40-Resources', archive: '90-Archive', card: '50-Zettel' }
+  };
+  function onboarding() {
+    const n = 4; const st = S.ob;
+    let body = '';
+    if (st === 1) {
+      body = `<div><h3>${L('欢迎使用 Tangrow', 'Welcome to Tangrow')}</h3><p class="sub">${L('把随手记下的东西，变成你的观点和产出。', 'Turn what you jot down into your own ideas and work.')}</p></div>
+        <div class="loopline">${[['捕获', 'Capture'], ['整理', 'Sort'], ['提炼', 'Distill'], ['连接', 'Connect'], ['回顾', 'Review'], ['产出', 'Create']].map(([z, e], i) => `${i ? ic('right', 'xs') : ''}<span>${L(z, e)}</span>`).join('')}</div>
+        <ul class="promises">
+          <li>${ic('shield', 's')}<span><b>${L('零迁移，不锁定。', 'No migration, no lock-in.')}</b> ${L('沿用你现有的目录。Tangrow 只新增，不移动、不重命名、不删除已有笔记；所有内容都是 Markdown 和属性。', 'Your folders stay as they are. Tangrow only adds; it never moves, renames or deletes notes. Everything is Markdown and properties.')}</span></li>
+          <li>${ic('spark', 's')}<span><b>${L('AI 整理即将推出。', 'AI organizing is coming.')}</b> ${L('归位、提炼、连接、回顾由 AI 起草，每一次写入都先给你看清单。现在先用手动的闭环。', 'AI will draft filing, cards, links and reviews, and show a checklist before every write. For now the loop is manual.')}</span></li>
+        </ul>
+        <div class="set-list"><div class="set-item"><span><span class="nm">${L('界面语言', 'Language')}</span></span><span class="ctrl"><span class="seg" data-ctl="lang"><button data-v="zh" aria-pressed="${S.lang === 'zh'}">中文</button><button data-v="en" aria-pressed="${S.lang === 'en'}">English</button></span></span></div></div>`;
+    } else if (st === 2) {
+      const det = DETECT[S.obVault]; const sug = SUGGEST[S.obVault];
+      const rows = [...ROLES.slice(0, 5), ROLES2[0]];
+      const missing = rows.filter((r) => !det[r[0]]);
+      body = `<div><h3>${L('你的笔记库结构', 'Your vault structure')}</h3><p class="sub">${S.obVault === 'existing' ? L('在库里找到了这些目录，已按 PARA 对上号。不对的可以改。', 'We matched these folders to PARA. Change any that are wrong.') : L('这是一个新库。Tangrow 可以为你建立一套标准的 PARA 目录。', 'This vault is new. Tangrow can set up a standard PARA structure.')}</p></div>
+        <div class="tg-muted" style="display:flex;gap:6px;align-items:center">${L('演示：', 'Demo:')}<span class="seg" data-ctl="obVault"><button data-v="existing" aria-pressed="${S.obVault === 'existing'}">${L('已有目录的库', 'Existing vault')}</button><button data-v="empty" aria-pressed="${S.obVault === 'empty'}">${L('空库', 'Empty vault')}</button></span></div>
+        <div class="set-list">${rows.map(([k, z, e]) => {
+          const found = det[k]; const made = S.obCreated && !found;
+          return `<div class="para"><span class="role">${L(z, e)}</span><span class="fld">${ic('folder', 's')}<select class="tg-input" aria-label="${L(z, e)}" style="padding-left:28px;font-family:var(--font-monospace);font-size:12px"><option>${esc(found || sug[k])}</option><option>${L('选择其他目录…', 'Choose another…')}</option></select></span>
+            <span class="st ${found || made ? 'ok' : 'miss'}" style="${found || made ? '' : 'color:var(--text-muted)'}">${found ? ic('check', 'xs') + L('已找到', 'Found') : made ? ic('check', 'xs') + L('已建立', 'Created') : ic('plus', 'xs') + L('将新建', 'Will create')}</span></div>`;
+        }).join('')}</div>
+        <label class="note" style="cursor:pointer"><input type="checkbox" checked style="margin:2px 0 0"> <span>${L('同时创建数据库视图（Bases）：只新建缺失的文件，已有的不覆盖。', 'Also create Bases: only missing files, nothing overwritten.')}</span></label>
+        <p class="note">${ic('shield', 's')}<span>${L('只创建缺失的目录。已有笔记全部留在原处，不移动、不改名。之后可以在 设置 → 笔记库结构 修改。', 'Only missing folders are created. Existing notes stay where they are. You can change this later in Settings → Vault structure.')}</span></p>
+        ${S.obCreated ? `<div class="done-line">${ic('ok', 's')}${L(`已建立 ${missing.length} 个目录：${missing.map((r) => sug[r[0]]).join('、')}`, `Created ${missing.length}: ${missing.map((r) => sug[r[0]]).join(', ')}`)}</div>` : ''}`;
+      S._missing = missing.length;
+    } else if (st === 3) {
+      body = `<div><h3>${L('每日回顾', 'Daily review')}</h3><p class="sub">${L('回顾是闭环里最容易被跳过的一步。', 'Review is the step most people skip.')}</p></div>
+        <div class="optcard"><span class="nm">${L('每天第一次打开 Obsidian 时，预先准备今日回顾', 'Prepare today’s review when I first open Obsidian')}<span class="tg-pill">${L('即将推出', 'Coming soon')}</span></span><button class="toggle" role="switch" aria-checked="${S.obReview}" data-act="ob-review" aria-label="${L('预先准备每日回顾', 'Prepare daily review')}"></button>
+          <p>${L('整理引擎会读取当天的日记、新速记、到期任务和卡片回顾队列，起草一份回顾和几条建议。只生成提案，不写入任何笔记；需要你自己的 API 密钥，会消耗少量 token。', 'The engine reads today’s journal, new captures, due tasks and the card review queue, then drafts a review and a few suggestions. It only proposes and never writes; it needs your own API key and uses a few tokens.')}</p>
+          <p>${L('整理引擎还没有推出。现在开启只会记下你的选择，推出后才生效。', 'The engine has not shipped yet. Turning this on only records your choice until it does.')}</p></div>
+        <p class="note">${ic('gear', 's')}<span>${L('默认关闭。随时可以在 设置 → AI 修改。手动的卡片回顾不受影响，在「知识 → 回顾」里。', 'Off by default. Change it any time in Settings → AI. Manual card review is unaffected and lives in Knowledge → Review.')}</span></p>`;
+    } else {
+      const saved = S.obNote === '__saved__';
+      body = `<div><h3>${L('记下第一条速记', 'Capture your first thought')}</h3><p class="sub">${L('不用想清楚它是什么。先记下，之后在「速记」里决定用途。', 'No need to decide what it is. Capture it now, sort it later.')}</p></div>
+        ${saved ? `<div class="done-line">${ic('ok', 's')}${L('已存入 00-Inbox。下一步：在「速记」里处理它，或提炼成你的第一张卡片。', 'Saved to 00-Inbox. Next: process it in Captures, or distill your first card.')}</div>` : `<div class="tg-compose"><textarea id="ob-note" data-in="obNote" rows="4" placeholder="${L('此刻在想什么？一个想法、一个问题、一条链接都行。', 'What’s on your mind? An idea, a question, a link.')}">${esc(S.obNote)}</textarea></div>`}
+        <p class="note">${ic('inbox', 's')}<span>${L('以后在侧栏顶部、独立小窗、命令面板或编辑器右键都能随手记。', 'Later you can capture from the sidebar, a separate window, the command palette or the editor menu.')}</span></p>`;
+    }
+    const primary = st === 1 ? btn(L('开始设置', 'Get started'), 'ob-next', '', 'cta')
+      : st === 2 ? (S.obCreated || !S._missing ? btn(L('下一步', 'Next'), 'ob-next', '', 'cta') : btn(L(`建立 ${S._missing} 个缺失目录`, `Create ${S._missing} missing folder${S._missing > 1 ? 's' : ''}`), 'ob-create', '', 'cta', 'folder'))
+      : st === 3 ? btn(L('下一步', 'Next'), 'ob-next', '', 'cta')
+      : S.obNote === '__saved__' ? btn(L('完成，去处理它', 'Done, go process it'), 'ob-finish', 'cap', 'cta') : btn(L('保存', 'Save'), 'ob-save', '', 'cta');
+    const secondary = st === 1 ? `<button class="tg-link" data-act="close">${L('跳过引导', 'Skip the guide')}</button>`
+      : st === 2 && !S.obCreated && S._missing ? `<button class="tg-link" data-act="ob-next">${L('先不建立', 'Not now')}</button>`
+      : st === 4 && S.obNote !== '__saved__' ? `<button class="tg-link" data-act="ob-finish">${L('以后再说，完成', 'Later, finish')}</button>` : `<button class="tg-link" data-act="ob-back">${L('上一步', 'Back')}</button>`;
+    return `<div class="modal ob" role="dialog" aria-label="${L('首次使用引导', 'Welcome guide')}"><div class="ob-top"><span class="dots">${Array.from({ length: n }, (_, i) => `<i class="${i < st ? 'on' : ''}"></i>`).join('')}</span><span>${st} / ${n}</span></div>${body}<div class="ob-foot">${secondary}${primary}</div></div>`;
+  }
+
+  /* ───────── NEW CARD modal (manual distill) ───────── */
+  function newCard() {
+    const c = caps.find((x) => x.id === S.newCard);
+    return `<div class="modal newcard" role="dialog" aria-label="${L('新建卡片', 'New card')}"><h3>${L('新建卡片', 'New card')}</h3>
+      ${c ? `<span class="srcchip">${ic('inbox', 'xs')}<span>${L('来源：速记 · ', 'Source: capture · ')}${esc(capText(c))}</span></span>` : ''}
+      <input class="tg-input" id="nc-title" value="${c ? esc(S.lang === 'en' ? 'Retries need stable operation identities' : '重试必须绑定稳定的操作身份') : ''}" placeholder="${L('一句话说清一个观点', 'One idea in one sentence')}" aria-label="${L('标题', 'Title')}">
+      <textarea class="tg-input" aria-label="${L('正文', 'Body')}" placeholder="${L('用你自己的话展开：前提、解释、反例。', 'In your own words: premise, explanation, counterexample.')}">${c ? esc(capText(c)) : ''}</textarea>
+      <p class="tg-muted">${L('保存到 50-Zettel，带 tangrow_kind: card；速记的处理状态不变。', 'Saved to 50-Zettel with tangrow_kind: card. The capture stays as it was.')}</p>
+      <div class="tg-actions" style="justify-content:flex-end"><button class="tg-link" data-act="close">${L('取消', 'Cancel')}</button>${btn(L('保存卡片', 'Save card'), 'nc-save', '', 'cta')}</div>
+      <button class="tg-ib x" data-act="close" aria-label="${L('关闭', 'Close')}">${ic('x')}</button></div>`;
+  }
+
+  /* ───────── notes panel per screen ───────── */
+  const NOTES = {
+    today: { t: '今天', items: [[1, '状态栏不再盖住最后一行：滚动容器底部留出 <code>--status-bar-scroll-padding</code>。试试下面的「关掉避让」对比。'], [1, '「卡片近况」不再是带空白的卡片，并入「今天的闭环」。'], ['IA', '原来的 3 个数字块换成按闭环排列的四行：整理 → 提炼 → 回顾 → 产出，每行都直接带到下一步。「产出」一行指向下一步最紧急的项目（和项目页同一套排序），点击直接进项目详情。'], ['IA', '顶部一行速记输入，聚焦后展开；周期笔记入口收在日期右侧。'], [2, '「新建」从紫色主按钮降为图标按钮；数据库横幅移入首次引导。'], [3, '任务行：🔺、📅 解析为旗标和日期；标签显示完整路径（<code>#目标/写作</code>）；悬停看原文。'], [3, '任务行里的 <code>[[项目笔记]]</code> 或 <code>[[领域笔记]]</code> 链接显示成带图标的项目 / 领域名，一眼看出这条任务属于谁。']], shots: ['01-today-top.jpg', '02-today-bottom-tasks.jpg'], extra: 'today' },
+    captures: { t: '速记与处理', items: [[1, '输入框回到第一屏；月历收成一行「本周」，点「本周」才展开整月。'], [1, '选中某一天后才出现「这天的日记」，周期笔记子页因此可以取消（见拍板 2）。'], [2, '时间线行透明，处理面板是这一页唯一有边框的东西。'], ['新', '处理面板加一个「提炼为卡片」：复用现有的新建卡片和来源字段，不改变处理状态。'], [4, '待处理清空时给出完成反馈和「看看已处理的」。'], ['新', '「追加到任务总览」和「关联项目」先选目标（可搜索）：前者可选项目、领域或不关联，选了就在任务行尾带上链接，任务随即出现在对应页面；后者必须选一个项目，只写入速记的 <code>tangrow_project</code>。'], ['新', '「转为笔记」先问放到哪里：项目、领域、资源或留在收件箱，可搜索。领域和资源是新增的落点（PARA.md 4.2 目前只允许项目和收件箱），见拍板 14。原速记照旧留在收件箱，不移动。'], ['AI', '「AI 建议去向」只占一行灰色提示。']], shots: ['03-capture-calendar-first.jpg'] },
+    cards: { t: '知识 · 卡片', items: [[4, '空状态按数据给出下一步：有速记 → 直接列出两条可提炼的；什么都没有 → 去记一条速记。切到上面「刚开始」「全新」试试。'], [2, '子导航改成纯文字，带数量；去掉胶囊块。'], [2, '每屏一个主按钮：「新建卡片」。卡片报表降为文字链接。'], ['AI', '「AI 找连接」占一行，即将推出。']], shots: ['04-cards-empty.jpg'] },
+    hubs: { t: '知识 · 主题结构', items: [[4, '空状态解释主题结构是什么；卡片少于 3 张时，主操作是回去写卡片，而不是建一个空主题。'], ['新', '「新建主题结构」只新建一篇结构笔记，需要一个小的新入口（拍板 10 之外的增量）。']], shots: [] },
+    review: { t: '知识 · 回顾', items: [[4, '没有卡片时，回顾页指向「从速记提炼第一张卡片」。'], ['IA', '回顾卡片的「用于项目」和素材页同一个说法：只写入卡片的 <code>tangrow_project</code>，卡片随即出现在项目的「资料」里。'], [4, '回顾完 5 张后给完成反馈，指向待连接的卡片。点几次「标记已回顾」试试。'], [2, '当前这张卡片是唯一带边框的对象；进度条用中性色。']], shots: ['05-review-empty.jpg'] },
+    materials: { t: '知识 · 素材与资源', items: [['IA', '素材按资源条目分组：组名是 <code>40-Resources</code> 下的子目录（和报表的资源条目同一口径，PARA.md 5.2）。资源回答放在哪里，素材回答能拿来用什么，所以页签仍叫素材。'], ['IA', '资源目录之外按剪藏识别到的材料单独一组，不要求先搬进资源目录。'], ['新', '每行「用于项目」：选一个项目，只在这篇笔记上写入 <code>tangrow_project</code>，文件不移动；之后它出现在那个项目的「资料」里。试试把「缓存一致性综述」用于「Tangrow 插件 v0.5」，再去看项目详情。'], [4, '空状态说明素材从哪来，指向资源目录。'], ['IA', '素材放在知识的最后一个子页：它是提炼的输入，不是闭环的一环。']], shots: [] },
+    areas: { t: '项目 · 领域', items: [['IA', 'PARA 里能行动的两类放在一起：「项目」页签下是「项目 · 领域 · 草稿」三个固定视图。领域就是 <code>30-Area</code> 下的每个子目录或根级笔记，和报表领域页同一口径。'], ['IA', '每行显示关联的项目数、待办数（领域目录里未完成的复选框）、笔记数和最近更新；按最近更新排序。不显示完成度，因为领域没有终点。'], [2, '「+ 新建领域」只新建子目录和同名笔记，与项目、卡片的新建行同一写法。'], [4, '没有领域时说明领域是什么；全新笔记库直接指向首次引导里的「建立 PARA 目录」。'], ['AI', '「AI 建议放进哪个领域」即将推出。']], shots: [] },
+    area: { t: '领域详情', items: [['IA', '一个领域一页：打开领域笔记 → 待办 → 最近更新。主按钮打开目录下的同名笔记或 <code>README</code>。'], ['新', '「在这个领域新建笔记」只新建文件。'], ['IA', '「待办」同样按归属规则：领域目录里的复选框，加上任务总览里链接到领域笔记的行，每行标出来源。'], ['IA', '「进行中的项目」列出 <code>tangrow_area</code> 指向这个领域的项目，点进去是项目详情，返回回到领域。领域 → 项目 → 资料可以一路点下去（拍板 15）。']], shots: [] },
+    projects: { t: '项目（产出）', items: [['IA', '产出以项目为单位：第四个页签从「写作」改为「项目」。'], ['新', '草稿的「归入项目」就地选项目，确认后这篇离开草稿、出现在那个项目的「稿件与笔记」里，文件不动。'], ['IA', '顶部三个固定视图：「项目」「领域」「草稿」。草稿是内置分类（没有 <code>tangrow_project</code> 的稿件），不和用户自定义的类型混在一起；写作暂存也放在草稿里，因为它保存后就成为草稿。'], ['IA', '项目按类型分组，组名就是笔记库里 <code>tangrow_project_type</code> 的实际取值，由你自己起名（这里的写作、vlog、代码、播客都只是示例）；按使用次数排序，未分类在最后；每组可折叠。'], ['IA', '右上角切换「按类型 / 按领域 / 按截止日期」；按领域分组时没关联的项目归「未关联领域」放最后，每行说明里显示没被分组的那个维度。分组代替筛选：几十个项目以内，一眼看全比来回点筛选快，类型再多也不会把工具栏挤成两行。'], [2, '去掉工具栏里的紫色「新建」：改为列表顶部一行浅色「+ 新建项目」，和今天页「添加任务」、知识页「新建卡片」同一种写法。紫色只留给每屏唯一的主操作。'], [4, '没有项目时说明项目是什么，主操作「新建项目」；草稿为空时提示写作暂存的去处。切到「刚开始」「全新」看这两种空状态。'], ['AI', '「AI 项目简报、拆解任务」即将推出。']], shots: [] },
+    project: { t: '项目详情', items: [['IA', '「任务」列出这个项目所有未完成的任务（拍板 17）：项目目录里的复选框、<code>tangrow_project</code> 指向它的笔记里的复选框、任务总览里链接到项目笔记的行。每行最后一项灰字标出它在哪。排序同今天页（逾期 → 今天 → 优先级），最多 5 条，其余「再显示 N 条」。'], ['新', '顶部「添加任务」回车后追加到任务总览，行尾自动带上 <code>[[项目笔记]]</code>，所以它立刻算进这个项目。完成进度放在「任务」标题右侧，不再单独一行。'], ['IA', '标题下是「类型 ▾ · 领域 ▾ · 进行中 · 截止」。领域就地选择，只写入项目笔记的 <code>tangrow_area</code>（一个链接，可选，可取消）。'], ['IA', '项目和资源在<b>单篇笔记</b>上关联：素材或卡片写上 <code>tangrow_project</code>，就出现在项目的「资料」里，每行标出它在哪（如「分布式系统 · 资源」「50-Zettel」）。文件留在资源目录，不搬家，也不关联整个资源条目（拍板 16）。'], ['IA', '「稿件与笔记」放项目自己产出的东西，「资料」放拿来用的东西，两者都靠 <code>tangrow_project</code>，按内容角色分开。写作项目另有一行「稿件的候选素材」。'], ['新', '「+ 关联」和「+ 添加」就地打开可搜索的选择列表（和速记处理同一个组件）：前者从领域、收件箱、草稿里挑笔记，后者从素材和卡片里挑；已属于别的项目的素材标「现属「X」」，因为 <code>tangrow_project</code> 只有一个值。确认后只写这一篇的属性。'], ['IA', '页底「标记完成」只改状态，然后提示把项目目录移进 <code>90-Archive</code>，给出「在文件列表中定位」和「撤销完成」。在报表里把项目状态改成「已归档」后，项目页显示同样的提示。移动由你完成，Tangrow 不移动文件（PARA.md 6.3，方案一）。完成但没移走的项目在列表里标「已完成 · 待移入归档」。'], ['IA', '「一键归档」（确认后由 Tangrow 移动、可撤回）是方案二的方向，这页不再加「即将推出」占位：每页最多一行（拍板 4），这里已经留给 AI 项目简报。'], ['IA', '一个项目一页：稿件与笔记 → 任务 → 资料 → 收尾。都是 <code>tangrow_project</code> 指向这个项目的笔记，不另设「产出物」。'], ['IA', '主按钮看项目里有什么，不看类型名：有关联笔记时是「继续：最近编辑的那篇」，没有时是「打开项目笔记」。这样任何自定义类型都能用。'], ['IA', '标题下的类型可点：从已有类型里挑，或输入新类型；只改这个项目笔记的 <code>tangrow_project_type</code>。'], [2, '进度条用中性色，主按钮每屏一个。']], shots: [] },
+    more: { t: '更多', items: [[5, '改成列表，报表只是其中一行，不再在每个子页顶部重复。'], ['IA', '专注、习惯归为「辅助模块」，可在设置里关闭；AI 工作流（Claudian）与文件工具收进「工具」。'], [2, '数据库视图未创建时只在这里显示一行「未创建」。']], shots: [] },
+    focus: { t: '更多 · 专注', items: [[5, '五个控件减为一排时长 + 一个开始按钮。默认时长预先选中，「自定义」就地变成输入框。'], [5, '开始后只剩：完成并记录、暂停、放弃。']], shots: ['06-focus-duplicate-controls.jpg'] },
+    settings: { t: '设置中心', items: [[6, '入口页从居中的灰色大按钮改为分组列表，右侧显示当前状态摘要。'], [6, '「笔记库结构」把 PARA 和 Tangrow 用到的位置放在一张表里，带目录建议和「已存在 / 不存在」。'], [6, '改动累积到底部「保存更改」，整体校验、失败就地提示。试试把「领域」改成一个不存在的目录再保存。'], [6, '周期笔记 5 行表格，实时预览路径；模型改下拉。'], ['AI', 'AI 分区里先放整理引擎（即将推出）和每日回顾预先准备。']], shots: ['07-settings-entry.jpg', '08-settings-folders-apply.jpg'] },
+    onboarding: { t: '首次使用引导', items: [[7, '4 步，任一步可跳过，设置里可以重新运行。'], [7, '第 2 步识别现有目录并映射到 PARA；只新建缺失的目录，不移动已有内容。可同时创建数据库视图。切换「已有目录的库 / 空库」看两种情况。'], [7, '第 3 步询问每日回顾预先准备，默认关闭，标注即将推出（AI-ENGINE 第 13 节第 5 条）。'], [7, '第 4 步记下第一条速记，完成后落到「速记」页，闭环从这里开始。']], shots: [], none: '现状没有引导。首次打开只在每个页签顶部出现「添加数据库视图」横幅（见截图 01）。' }
+  };
+  function screenKey() {
+    if (S.ov === 'settings') return 'settings';
+    if (S.ov === 'onboarding') return 'onboarding';
+    if (S.tab === 'knowledge') return { cards: 'cards', hubs: 'hubs', review: 'review', materials: 'materials' }[S.k];
+    if (S.tab === 'more') return S.more === 'focus' ? 'focus' : 'more';
+    if (S.tab === 'projects') return typeof S.proj === 'number' ? 'project' : typeof S.area === 'number' ? 'area' : S.pview === 'areas' ? 'areas' : 'projects';
+    return S.tab;
+  }
+  function notes() {
+    const n = NOTES[screenKey()];
+    let h = `<div class="card"><h3>${n.t}：改了什么</h3><ul>${n.items.map(([k, t]) => `<li><span class="iss ${typeof k === 'number' ? '' : 'new'}">${typeof k === 'number' ? '#' + k : k}</span><span>${t}</span></li>`).join('')}</ul>
+      ${n.extra === 'today' ? `<div class="tg-actions" style="margin-top:10px"><label class="ctl"><input type="checkbox" data-in="noFix" ${S.noFix ? 'checked' : ''}> 关掉状态栏避让</label><label class="ctl"><input type="checkbox" data-in="showRaw" ${S.showRaw ? 'checked' : ''}> 显示任务原文</label></div>` : ''}</div>`;
+    if (n.shots.length || n.none) h += `<div class="card before-shot"><h3>修改前（真机）</h3>${n.shots.map((s) => `<a href="core-loop-v1-before/${s}" target="_blank" rel="noopener"><img src="core-loop-v1-before/${s}" alt="修改前截图 ${s}" loading="lazy"></a><span class="cap">${s}</span>`).join('')}${n.none ? `<p class="cap">${n.none}</p>` : ''}</div>`;
+    h += `<div class="card"><h3>编号说明</h3><p class="cap">#1–#7 对应评估报告的七个问题；IA 为导航按闭环重排（含以项目为单位的产出）；「新」为需要新增的小入口；AI 为「即将推出」占位。</p></div>`;
+    return h;
+  }
+
+  /* ───────── review document (static content) ───────── */
+  const ISSUES = [
+    ['布局', ['状态栏浮在右侧栏底部，滚到底时最后一个任务被盖住（截图 02 右下角）。', '速记页月历约占半屏，输入框起点落在首屏底部（截图 03）。', '今天页「卡片近况」卡片顶部有约 30px 空白（截图 01）。'],
+      ['侧栏滚动容器底部留出 <code>var(--status-bar-scroll-padding)</code> + 16px，跟编辑区避让状态栏的方式一致。', '速记页输入框放最上面；月历收成一行「本周」日期条，点「本周」才展开整月。', '「卡片近况」不再是独立卡片，并入今天页「今天的闭环」，空白随之消失。'],
+      '捕获要零摩擦，输入框必须在首屏。用宿主变量避让，主题或移动端改状态栏高度时自动跟随。', ['01-today-top.jpg', '02-today-bottom-tasks.jpg', '03-capture-calendar-first.jpg']],
+    ['视觉噪音', ['任务行、按钮、导航、设置入口都是灰色填充块。', '品牌图标、「新建」、主按钮、选中页签、统计数字、日历当天都是紫色；一屏常有三个紫色主按钮。', '每个页签顶部都有紫色的「添加数据库视图」横幅。'],
+      ['列表行透明，悬停才用 <code>--background-modifier-hover</code>；分组靠留白和小标题，只有正在操作的对象有边框。', '按钮分三级：每屏最多一个 <code>mod-cta</code>，其余描边或文字按钮；强调色只留给当前选中和那一个主操作。', '「添加数据库视图」移入首次引导；跳过后只在「更多 → 数据库视图」显示一行「未创建」。'],
+      'Obsidian 默认强调色就是紫色，用得越少越像宿主的一部分，注意力留给内容。', ['01-today-top.jpg']],
+    ['任务行', ['直接显示整行 Markdown：<code>整理本周读书笔记 #目标/写作 🔺 📅 2026-11-27</code>。'],
+      ['只在显示层解析 Tasks 语法：标题去掉标签和符号；第二行显示「今天 / 明天 / 周一 / 逾期 2 天 / 11月30日」、最高和高优先级的旗标、重复图标、完整的标签（如 <code>#目标/写作</code>，多个标签全部显示）。', '排序：逾期 → 今天 → 最高 → 高 → 其他。悬停显示原文。', '笔记原文不动；勾选仍走「核对原文后只改复选框」的现有逻辑。'],
+      '侧栏是读的地方，语法是写的地方。解析是纯函数，可以单测覆盖 Tasks 的六种符号。', ['02-today-bottom-tasks.jpg']],
+    ['空状态', ['卡片、主题结构、回顾只有一句「当前视图暂无笔记」「暂无可回顾的卡片」。'],
+      ['统一空状态组件：图标 + 它是什么 + 一个指向下一环的主操作 + 次要操作。', '按数据给不同的下一步：有速记没卡片 → 直接列出最近两条可提炼的速记；什么都没有 → 先记一条速记；卡片不足 3 张时主题页引导先写卡片；回顾完成时给完成反馈。', 'AI 能做的部分只放一行灰色「即将推出」。'],
+      'POSITIONING 第 5 节第 4 条。新库第一天就能走通 捕获 → 提炼 → 回顾。', ['04-cards-empty.jpg', '05-review-empty.jpg']],
+    ['重复控件', ['专注页用五个控件决定一个时长：预设按钮、分钟输入、默认时长提示、「使用默认时长」、开始。', '「更多」五个子页顶部都有「打开报表」。'],
+      ['专注只剩一排时长（15 / 25 / 45 / 自定义，默认值预选）和一个「开始 N 分钟」。', '「更多」改成分组列表，报表只是其中一行。'],
+      '一个决定一个控件。', ['06-focus-duplicate-controls.jpg']],
+    ['设置页', ['入口页是一列居中文字的灰色大按钮。', '目录与笔记里 7 个字段各带一个「应用」；周期笔记模板重复 5 次；模型 ID 手填。'],
+      ['入口改成分组列表，右侧显示状态摘要（「PARA 5/5」「即时建议 关」）。', '新增「笔记库结构」：PARA 与 Tangrow 用到的位置放进一张表，输入带目录建议，实时显示「已存在 / 不存在」。', '同一分区的改动累积到底部「保存更改」，保存时整体校验、失败就地提示并整体回滚。', '周期笔记改为 5 行表格并实时预览路径；模型改为下拉（含自定义）；开关仍立即生效，API 密钥仍单独保存。'],
+      '保留 DESIGN.md「校验完整候选配置、失败回滚」的语义，把 7 个「应用」减为 1 个「保存更改」。需同步修改 DESIGN.md「首版设置中心」的保存语义。', ['07-settings-entry.jpg', '08-settings-folders-apply.jpg']],
+    ['首次使用引导', ['没有引导。装好后只在页签顶部出现「添加数据库视图」横幅。'],
+      ['首次启用时弹出 4 步引导，任一步可跳过，设置里可重新运行：', '① 欢迎：闭环、两条承诺、界面语言。② 笔记库结构：识别现有目录映射到 PARA，缺失的一键建立（只新建目录，不移动已有内容），可同时创建数据库视图。③ 每日回顾预先准备：默认关闭，标「即将推出」。④ 记下第一条速记，完成后落到「速记」页。'],
+      '首次使用是讲清 PARA 和闭环的最好时机；「不移动你的笔记」要在动手之前说清楚。', []]
+  ];
+  const DECISIONS = [
+    ['主导航', '<b>今天 / 速记 / 知识 / 项目 / 更多。</b>产出以项目为单位（写作、vlog、代码都是项目，用类型区分），已写入 CONTEXT.md 与 POSITIONING.md。AI 不再单独占页签，动作嵌进各环节。', '影响 <code>workbench-navigation.ts</code> 的旧分区映射（<code>studio</code>、<code>write/manuscripts</code> 改指「项目」页）和 ZETTELKASTEN 4.1。', '已定'],
+    ['周期笔记子页', '<b>取消独立子页。</b>今天页日期旁放 日 / 周 / 月 / 季 / 年 入口；历史日期从速记日期条「这天的日记」打开。', '未采用：在「速记」页保留一个周期笔记子页。', '已定'],
+    ['Claudian 工作流放哪', '<b>收进「更多 → 工具 → AI 工作流」</b>，各环节只放整理引擎的「即将推出」占位。', '未采用：在速记页放「用 Claudian 整理收件箱」现有入口。两个 AI 入口并存，容易分不清哪个是 Tangrow 自己的。', '已定'],
+    ['「即将推出」占位', '<b>每页最多一行、灰色、不可点，设置里可关。</b>', '未采用：E1 上线前完全不显示，对外截图更干净，但闭环里看不出 AI 的位置。', '已定'],
+    ['引导的承载方式', '<b>Obsidian 弹窗。</b>窄侧栏放不下目录对照表，弹窗在手机上自动全屏。', '未采用：侧栏内分步卡片，不打断，但第 2 步要横向滚动。', '已定'],
+    ['引导第 3 步什么时候出现', '<b>现在就问，默认关闭，标「即将推出」，只记下选择。</b>符合 AI-ENGINE 13.5。', '未采用：E1 发布时才显示这一步，已完成引导的用户在今天页问一次。', '已定'],
+    ['任务行的标签', '<b>显示完整标签</b>，如 <code>#目标/写作</code>；一行有多个标签时全部显示，放不下就换行。', '悬停仍显示整行原文。', '已定'],
+    ['设置的保存方式', '<b>每个分区底部一条「保存更改」。</b>', '未采用：失焦即校验并保存，更快，但半填的路径会频繁报错。两种都要改 DESIGN.md「首版设置中心」的约定。', '已定'],
+    ['今天页顶部的速记输入', '<b>放一行，聚焦后展开。</b>捕获是闭环入口，打开侧栏就能记。', '未采用：只在「速记」页输入，今天页保持纯概览。', '已定'],
+    ['文件工具的去留', '<b>留在「更多 → 工具」，改成分组列表</b>；同样的动作在命令面板可用。', '未采用：移出侧栏，只留命令和编辑器右键。', '已定'],
+    ['项目类型', '<b>不另设「产出物」，就叫项目。</b>项目笔记用 <code>tangrow_project_type</code> 区分类型，值由用户自己起名（写作、vlog、代码只是示例），未填为未分类；其他笔记照旧用 <code>tangrow_project</code> 关联项目。', '类型列表怎么来见拍板 13。', '已定'],
+    ['没有项目的稿件', '<b>单独一个分类「草稿」。</b>即 <code>tangrow_kind: draft</code>、既不在项目目录内也没有 <code>tangrow_project</code> 的稿件（与 CONTEXT.md「稿件」一致），不加新属性；归入项目后离开该分类。草稿是内置分类，在项目页顶部和「项目」「领域」并列为三个固定视图，不混进用户自定义的类型里。', '写作暂存放在草稿视图里，保存时可以选项目，不选就成为草稿。', '已定'],
+    ['类型列表从哪来', '<b>不内置、不另存，直接取笔记库里出现过的值。</b>去首尾空格、不分大小写合并，按使用次数排序，项目列表按类型分组（可折叠），也可切成按截止日期平铺；新建或改类型时从已有值里挑，也能直接输入新值。界面行为（主按钮、图标）不跟类型名挂钩，所以任何名字都能用。改名就是改项目笔记的属性，Tangrow 不批量改写。', '未采用：设置里维护一张类型表（名称、顺序、图标），筛选条按表显示。好处是能排序和配图标；代价是多一份要同步的配置，笔记里出现表外的值时还得另行处理。', '已定'],
+    ['领域和资源作为「转为笔记」的落点', '<b>允许。</b>「转为笔记」的去向从「项目或收件箱」扩成「项目、领域、资源或收件箱」，只在所选目录<b>新建</b>笔记，原速记不动。这让 PARA 在整理这一步真正可用，也和整理引擎 8.3 的去向一致。需要改 PARA.md 4.2 的约定和 <code>capture-processing.ts</code>。', '未采用：手动处理维持现状，领域和资源只留给整理引擎（E1 之后）。', '已定'],
+    ['项目与领域的关联', '<b>加 <code>tangrow_area</code>。</b>项目笔记上的可选属性，值是一个指向领域笔记的链接，一个项目只关联一个领域，只在用户明确操作时写入。项目详情标题下与类型并列，可点开修改；领域详情列出「进行中的项目」；项目列表可「按领域」分组；新建项目时可顺手选领域。', '未采用：不加（领域页看不到为它推进的项目）；从正文链接推断（随手一提也会算进去）；按目录推断（项目和领域目录没有层级关系）。一个项目服务两个领域时只能选一个，多半说明项目该拆开。', '已定'],
+    ['项目与资源的关联', '<b>按单篇笔记关联。</b>素材、卡片写上 <code>tangrow_project</code> 就进入项目详情的「资料」，显示所在位置；素材页每行可「用于项目」。不关联整个资源条目，也不加新属性：资源按定义是暂不服务于具体项目的长期资料。', '未采用：把整个资源子目录挂到项目上。粒度太粗，项目只用其中一两篇时会带进一堆无关内容。', '已定'],
+    ['任务属于哪个项目', '<b>三条规则，不加新属性。</b>未完成的复选框属于某个项目，当它①在项目目录下的笔记里；②在 <code>tangrow_project</code> 指向该项目的笔记里；③在任务总览中且这一行链接到项目笔记（<code>[[重试与幂等]]</code>）。领域同理：领域目录里的复选框加上链接到领域笔记的任务行。项目详情的「添加任务」和速记「追加到任务总览」选了项目时，都自动写上这个链接。', '未采用：给任务行加专用标记或标签（如 <code>#project/xxx</code>），改名时要批量改写任务；只认项目目录（任务总览里的任务永远进不了项目）。', '已定'],
+    ['完成的项目怎么归档', '<b>现在用方案一：只提示，由你手动移动。</b>「标记完成」只改状态，然后提示把项目目录移进归档目录，并提供定位入口；Tangrow 不移动文件，「只新增，不移动」的承诺不变。<b>长期朝方案二迭代</b>：经确认后由 Tangrow 移动、可撤回，引入前另行评审操作凭据、失败恢复和对外文案。已写入 PARA.md 6.3 和 CONTEXT.md「归档」。', '未采用（暂缓）：现在就做「归档项目」动作。', '已定']
+  ];
+  const PRS = [
+    ['布局修复与任务行显示', '问题 1、3，拍板 7。状态栏避让；去掉卡片近况空白；速记页输入框置顶、月历收成周条；新增 <code>task-display.ts</code> 纯函数和单测，标签完整显示；速记动作文案「转为正式笔记」改为「转为笔记」（CONTEXT.md 避用「正式笔记」），README 的功能说明同步改。不动导航。', '无依赖 · autoreview P2'],
+    ['视觉 token 与基础组件', '问题 2，拍板 4。<code>styles.css</code>：透明列表行、三级按钮、空状态组件、「即将推出」标签（每页最多一行、灰色、不可点）、纯文字子导航。用 tangrow-ui-audit 跑浅色、深色、窄侧栏。', '无依赖 · P2'],
+    ['空状态与「从速记提炼卡片」', '问题 4。三类空状态按数据分支；处理面板和卡片空状态里的「提炼为卡片」复用 <code>createCard(source)</code>。', '建议在 2 之后 · P2'],
+    ['去重控件', '问题 5，拍板 10。专注时长控件；「更多」列表化，报表单入口；文件工具留在「更多 → 工具」改成分组列表。', '无依赖 · P2'],
+    ['按闭环重排导航', '拍板 1–3、9。今天页「今天的闭环」与速记输入；AI 页签并入更多；数据库横幅移走；旧分区映射与命令 ID 保持可达；更新 DESIGN.md 与 ZETTELKASTEN 4.1。「项目」页先用现有的项目目录、任务和稿件数据做列表与详情；项目任务按拍板 17 的三条规则归属（只读汇总，<code>task-display.ts</code> 顺带解析行内链接），「添加任务」复用现有的任务总览追加。', '在 2 之后 · P2'],
+    ['PARA 落点：领域、资源', '拍板 14–16、18。项目笔记新增可选属性 <code>tangrow_area</code>（项目详情就地选择、领域详情列出项目、项目列表按领域分组）；「项目」页签加「领域」视图与领域详情（复用报表的领域识别 <code>collectReportEntities</code>）；素材按资源条目分组（<code>collectReportResources</code>），每行「用于项目」（拍板 16，只写 <code>tangrow_project</code>）；项目详情「资料」按角色列出关联的素材和卡片并标出位置；「标记完成」后提示手动移入归档（拍板 18，方案一）；「转为笔记」去向选择器加领域、资源（只新建）；项目页底「标记完成」只改状态。更新 PARA.md 4.2、ZETTELKASTEN 5.2，并在 ZETTELKASTEN 6.2 属性表补上 <code>tangrow_area</code>。', '在 5 之后 · P3（写入路径变化）'],
+    ['项目类型与草稿分类', '拍板 11–13。项目笔记的 <code>tangrow_project_type</code> 读写（快速新建项目可选类型，候选取自笔记库已有值，可输入新值；详情页「改类型」只改这一个属性）；项目页「项目 / 领域 / 草稿」三个固定视图，项目按实际出现的类型值分组（拍板 13）；「草稿」分类与「归入项目」（只写入稿件的 <code>tangrow_project</code>）；写作暂存保存时可选项目；在 ZETTELKASTEN 6.2 属性表、PARA.md、REPORTING.md 补上类型字段。', '在 5 之后 · P3（新属性）'],
+    ['设置中心', '问题 6，拍板 4（开关）、8。分组入口、笔记库结构表（文件夹建议）、分区保存栏、周期笔记表、模型下拉；「即将推出」占位的开关；同步修改 DESIGN.md。', '无依赖 · P3（持久化）'],
+    ['首次使用引导', '问题 7，拍板 5、6。识别并映射目录、只新建缺失目录、可选 Bases、每日回顾偏好（引擎上线前只存不用）、第一条速记；更新 POSITIONING 第 4 节。', '复用 8 的笔记库结构组件 · P3']
+  ];
+  function renderDoc() {
+    document.getElementById('issue-list').innerHTML = ISSUES.map(([t, now, fix, why, shots], i) => `<article class="issue"><div><span class="t"><span class="iss">#${i + 1}</span>${t}</span>${shots.length ? `<span class="cap">${shots.map((s) => `<a href="core-loop-v1-before/${s}" target="_blank" rel="noopener">${s.replace('.jpg', '')}</a>`).join('<br>')}</span>` : '<span class="cap">无截图：现状为缺失</span>'}</div><div><span class="k">现状</span>${now.join('<br>')}</div><div><span class="k">改法</span>${fix.join('<br>')}</div><div><span class="k">理由</span>${why}</div></article>`).join('');
+    document.getElementById('dec-list').innerHTML = DECISIONS.map(([t, rec, alt, done], i) => `<article class="dec"><span class="n">${i + 1}</span><h4>${t}${done ? ' <span class="tg-pill" style="vertical-align:2px">已定</span>' : ''}</h4><p class="rec">${rec}</p><p class="alt">${alt}</p></article>`).join('');
+    document.getElementById('pr-list').innerHTML = PRS.map(([t, d, dep], i) => `<article class="pr"><span class="n">PR ${i + 1}</span><div><h4>${t}</h4><p>${d}</p></div><span class="dep">${dep}</span></article>`).join('');
+  }
+
+  /* ───────── render ───────── */
+  const JUMPS = [['今天', { tab: 'today' }], ['速记与处理', { tab: 'captures', open: 1, pick: null }], ['转为笔记：放到哪里', { tab: 'captures', open: 1, pick: 1, dest: 'a0' }], ['卡片', { tab: 'knowledge', k: 'cards' }], ['主题结构', { tab: 'knowledge', k: 'hubs' }], ['回顾', { tab: 'knowledge', k: 'review' }], ['素材与资源', { tab: 'knowledge', k: 'materials' }], ['项目', { tab: 'projects', proj: null, area: null, pview: 'projects' }], ['项目详情', { tab: 'projects', proj: 0, area: null }], ['领域', { tab: 'projects', proj: null, area: null, pview: 'areas' }], ['领域详情', { tab: 'projects', proj: null, area: 0, pview: 'areas' }], ['更多', { tab: 'more', more: null }], ['专注', { tab: 'more', more: 'focus' }], ['设置中心', { ov: 'settings', setPage: 'home' }], ['笔记库结构', { ov: 'settings', setPage: 'vault' }], ['首次使用引导', { ov: 'onboarding', ob: 1 }]];
+  function render() {
+    const root = document.documentElement;
+    if (S.theme) root.setAttribute('data-theme', S.theme); else root.removeAttribute('data-theme');
+    root.lang = S.lang === 'en' ? 'en' : 'zh-CN';
+    document.querySelectorAll('.controls .seg').forEach((seg) => {
+      const k = seg.dataset.ctl; const cur = k === 'theme' ? (S.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) : S[k];
+      seg.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === cur)));
+    });
+    const key = screenKey();
+    document.getElementById('jump').innerHTML = JUMPS.map(([t, p], i) => {
+      const k = p.ov === 'settings' ? (p.setPage === 'vault' ? 'vault' : 'settings') : p.ov === 'onboarding' ? 'onboarding' : p.tab === 'knowledge' ? p.k : p.tab === 'more' ? (p.more ? 'focus' : 'more') : p.tab === 'projects' ? (typeof p.proj === 'number' ? 'project' : typeof p.area === 'number' ? 'area' : p.pview === 'areas' ? 'areas' : 'projects') : p.tab;
+      const cur = key === 'settings' ? (S.setPage === 'vault' ? 'vault' : 'settings') : key;
+      return `<button data-jump="${i}" aria-pressed="${k === cur}">${t}</button>`;
+    }).join('');
+    const win = document.getElementById('win'); win.dataset.w = S.width;
+    const scroll = document.getElementById('pane')?.scrollTop || 0; const prevKey = render.lastKey;
+    document.getElementById('side').innerHTML = sidebar();
+    if (prevKey === key) { const p = document.getElementById('pane'); if (p) p.scrollTop = scroll; }
+    render.lastKey = key;
+    document.getElementById('ov').innerHTML = S.ov ? `<div class="ov" data-act="ov-bg">${S.ov === 'settings' ? settings() : S.ov === 'onboarding' ? onboarding() : newCard()}</div>` : '';
+    document.getElementById('notes').innerHTML = notes();
+    document.getElementById('tabname').textContent = L('重试与幂等', 'Retries and idempotency');
+    document.getElementById('ed-title').textContent = L('重试与幂等', 'Retries and idempotency');
+    document.getElementById('ed-p1').textContent = L('一次支付请求超时以后，客户端会重试。如果服务端没有办法认出「这是同一次操作」，重放就会变成第二次扣款。', 'When a payment request times out, the client retries. If the server cannot tell it is the same operation, the replay becomes a second charge.');
+    document.getElementById('ed-p2').textContent = L('所以重试本身不是问题，问题是操作没有稳定的身份。幂等键应当由调用方在第一次发起时生成，并随每次重试原样带上。', 'So retrying is not the problem; the operation lacks a stable identity. The caller should create the key on the first attempt and send it unchanged with each retry.');
+    document.getElementById('sb1').textContent = L('2 条反向链接', '2 backlinks');
+    document.getElementById('sb2').textContent = L('312 词', '312 words');
+  }
+  let toastTimer = 0;
+  function toast(msg) {
+    const el = document.getElementById('toast');
+    el.innerHTML = `<div class="toast" role="status">${esc(msg)}</div>`;
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { el.innerHTML = ''; }, 2400);
+  }
+  let timer = 0;
+  function stopTimer() { clearInterval(timer); timer = 0; }
+
+  /* ───────── events ───────── */
+  document.addEventListener('click', (e) => {
+    const seg = e.target.closest('.seg button');
+    if (seg) {
+      const k = seg.parentElement.dataset.ctl; const v = seg.dataset.v;
+      if (k === 'data') { S.data = v; resetData(); S.selDay = null; S.filter = 'pending'; S.obNote = ''; }
+      else if (k === 'obVault') { S.obVault = v; S.obCreated = false; }
+      else S[k] = v;
+      render(); return;
+    }
+    const j = e.target.closest('[data-jump]');
+    if (j) { stopTimer(); S.running = false; S.menu = false; const p = JUMPS[+j.dataset.jump][1]; S.ov = null; S.more = null; Object.assign(S, p); if (p.ov === 'onboarding') { S.obCreated = false; S.obNote = ''; } render(); return; }
+    const a = e.target.closest('[data-act]');
+    if (!a) { if (S.menu && !e.target.closest('.tg-pop')) { S.menu = false; render(); } return; }
+    const act = a.dataset.act; const arg = a.dataset.arg;
+    if (act === 'ov-bg') { if (e.target === a && S.ov !== 'onboarding') { S.ov = null; render(); } return; }
+    if (act !== 'menu') S.menu = false;
+    const capOf = (id) => caps.find((c) => c.id === +id);
+    switch (act) {
+      case 'tab': S.tab = arg; S.more = null; S.open = null; S.proj = null; S.area = null; S.pick = null; S.useFor = null; break;
+      case 'menu': S.menu = !S.menu; break;
+      case 'go': if (arg === 'cards' || arg === 'review') { S.tab = 'knowledge'; S.k = arg; } else if (arg === 'focus') { S.tab = 'more'; S.more = 'focus'; } else { S.tab = arg; S.more = null; } break;
+      case 'k': S.k = arg; S.tab = 'knowledge'; break;
+      case 'pview': S.pview = arg; S.area = null; S.draftFor = null; break;
+      case 'area': S.tab = 'projects'; S.proj = null; S.pview = 'areas'; S.area = arg === 'list' ? null : +arg; break;
+      case 'mcol': S.mcol[arg] = !S.mcol[arg]; break;
+      case 'pdone': S.pdone[arg] = !S.pdone[arg]; if (S.pdone[arg]) toast(L('已把项目笔记的 tangrow_status 改为已完成', 'Set tangrow_status to done on the project note')); break;
+      case 'draftfor': S.draftFor = S.draftFor === arg ? null : arg; S.npSel = null; break;
+      case 'npsel': S.npSel = arg; break;
+      case 'draftok': { const pi = +String(S.npSel).slice(1); const pp = projectsData()[pi]; const d = draftsData().find(([z]) => z === arg); if (!pp || !d) break;
+        S.draftTo[arg] = pi; (S.extraLinked[pp.zh] ||= []).push([d[0], d[1], 'draft']); S.draftFor = null; S.npSel = null;
+        toast(L(`《${arg}》已归入「${pp.zh}」，离开草稿；文件没有移动`, `“${d[1]}” now belongs to “${pp.en}” and left Drafts; the file did not move`)); break; }
+      case 'np': S.np = S.np === arg ? null : arg; S.npSel = null; break;
+      case 'np-close': S.np = null; S.npSel = null; break;
+      case 'noteok': { const z = String(S.npSel).slice(2); const all = [['值班交接清单', 'On-call handover'], ['选题池', 'Topic pool'], ['会议记录 11-26', 'Meeting notes 11-26'], ...draftsData().map(([a, b]) => [a, b, 'draft'])]; const hit = all.find(([a]) => a === z); if (!hit) break;
+        if (hit[2] === 'draft') S.draftTo[z] = projectsData().findIndex((x) => x.zh === arg);
+        (S.extraLinked[arg] ||= []).push(hit); S.np = null; S.npSel = null; toast(L(`已关联《${z}》，只写入了它的 tangrow_project`, `Linked “${hit[1]}”; only its tangrow_project was set`)); break; }
+      case 'refok': { const k = String(S.npSel); const me = projectsData().findIndex((x) => x.zh === arg);
+        if (k.startsWith('m:')) S.used[k.slice(2)] = me; else if (k.startsWith('c:')) S.cardFor[k.slice(2)] = me;
+        S.np = null; S.npSel = null; toast(L('已添加到资料，只写入了 tangrow_project', 'Added to Reference; only tangrow_project was set')); break; }
+      case 'ptall': S.ptAll = S.ptAll === arg ? null : arg; break;
+      case 'areapick': { const cur = projectsData()[S.proj]; S.areaPick = S.areaPick === cur?.zh ? null : cur?.zh ?? null; break; }
+      case 'setarea': { const cur = projectsData()[S.proj]; if (cur) { const n = +arg; S.areaSet[cur.zh] = n < 0 ? null : n; S.areaPick = null;
+        toast(n < 0 ? L('已取消领域关联', 'Area cleared') : L(`已关联领域「${areasData()[n].zh}」，只写入了 tangrow_area`, `Linked to area “${areasData()[n].en}”; only tangrow_area was set`)); } break; }
+      case 'usefor': S.useFor = S.useFor === arg ? null : arg; break;
+      case 'use': { const [id, i] = arg.split(':'); const n = +i; S.used[id] = n < 0 ? null : n; S.useFor = null;
+        toast(n < 0 ? L('已移除项目关联，文件未移动', 'Project link removed; file not moved') : L(`已用于「${L(projectsData()[n].zh, projectsData()[n].en)}」，只写入了 tangrow_project`, `Now used in “${projectsData()[n].en}”; only tangrow_project was set`)); break; }
+      case 'pcol': S.pcol[arg] = !S.pcol[arg]; break;
+      case 'proj': S.areaPick = null; S.np = null; S.npSel = null; S.tab = 'projects'; S.proj = arg === 'list' ? null : arg === 'scratch' ? 'scratch' : +arg; break;
+      case 'cf': S.cardFilter = arg; break;
+      case 'cf-iso': S.k = 'cards'; S.cardFilter = 'iso'; break;
+      case 'filter': S.filter = arg; S.open = null; break;
+      case 'cal': S.calOpen = !S.calOpen; break;
+      case 'day': S.selDay = arg === 'clear' || S.selDay === +arg ? null : +arg; if (S.selDay !== null) S.filter = 'all'; break;
+      case 'proc': S.open = S.open === +arg ? null : +arg; S.pick = null; S.lp = null; break;
+      case 'pick': S.pick = +arg; S.dest = 'inbox'; break;
+      case 'pick-back': S.pick = null; break;
+      case 'dest': S.dest = arg; break;
+      case 'act-note': capOf(arg).done = ['已转为笔记', 'Converted to note']; S.open = null; S.pick = null; toast(L('已转为笔记，速记标记为已处理', 'Converted to a note; capture marked processed')); break;
+      case 'act-task': { const nm = S.lsel && S.lsel !== 'none' ? (S.lsel[0] === 'p' ? projectsData()[+S.lsel.slice(1)] : areasData()[+S.lsel.slice(1)]) : null;
+        capOf(arg).done = nm ? [`已追加到任务总览 · [[${nm.zh}]]`, `Added to task overview · [[${nm.en}]]`] : ['已追加到任务总览', 'Added to task overview']; S.open = null; S.lp = null;
+        toast(nm ? L(`已追加到任务总览，带上 [[${nm.zh}]]，任务会出现在它的页面里`, `Added with a link to [[${nm.en}]]; it now shows on that page`) : L('已追加到任务总览', 'Added to the task overview')); break; }
+      case 'act-proj': { const pp = projectsData()[+String(S.lsel).slice(1)]; if (!pp) break; capOf(arg).done = [`已关联项目：${pp.zh}`, `Linked to project: ${pp.en}`]; S.open = null; S.lp = null; toast(L(`已关联项目「${pp.zh}」，只写入了 tangrow_project`, `Linked to “${pp.en}”; only tangrow_project was set`)); break; }
+      case 'lp-task': S.lp = { id: +arg, mode: 'task' }; S.lsel = 'none'; break;
+      case 'lp-proj': S.lp = { id: +arg, mode: 'proj' }; S.lsel = null; break;
+      case 'lp-back': S.lp = null; break;
+      case 'lsel': S.lsel = arg; break;
+      case 'act-done': capOf(arg).done = ['已处理', 'Processed']; S.open = null; toast(L('已标记为已处理，原文保留', 'Marked processed; original kept')); break;
+      case 'act-card': S.newCard = +arg; S.ov = 'card'; break;
+      case 'blank-card': S.newCard = null; S.ov = 'card'; break;
+      case 'nc-save': {
+        const title = document.getElementById('nc-title')?.value.trim() || L('未命名卡片', 'Untitled card');
+        cards.unshift({ zh: title, en: title, st: 'seed', age: ['刚刚', 'just now'], iso: true });
+        const c = capOf(S.newCard); if (c) c.cardMade = true;
+        S.ov = null; S.open = null; toast(L('卡片已保存。明天它会出现在回顾队列里。', 'Card saved. It joins tomorrow’s review queue.'));
+        if (S.tab === 'knowledge' && S.k !== 'cards') S.k = 'cards';
+        break;
+      }
+      case 'reopen': capOf(arg).done = null; toast(L('已恢复为待处理，已有结果保留', 'Back to unprocessed; results kept')); break;
+      case 'save-cap': {
+        const key = arg; const text = S[key].trim(); if (!text) return;
+        caps.unshift({ id: Date.now(), day: 0, t: '10:30', zh: text, en: text, done: null });
+        S[key] = ''; toast(L('已存入 00-Inbox', 'Saved to 00-Inbox')); break;
+      }
+      case 'check': { const row = a.closest('.tg-task'); row.classList.add('done'); toast(L('已在原笔记中勾选（只改复选框）', 'Checked in the note (checkbox only)')); return; }
+      case 'reviewed': S.reviewDone += 1; break;
+      case 'review-reset': S.reviewDone = 0; break;
+      case 'focus': S.tab = 'more'; S.more = 'focus'; break;
+      case 'more-back': S.more = null; stopTimer(); S.running = false; break;
+      case 'dur': if (arg === 'custom') { S.custom = true; } else { S.custom = false; S.focusMin = +arg; } S.left = S.focusMin * 60; break;
+      case 'focus-start': S.running = true; S.left = S.focusMin * 60; stopTimer(); timer = setInterval(() => { S.left = Math.max(0, S.left - 1); const el = document.querySelector('.tg-clock'); if (el) el.textContent = `${String(Math.floor(S.left / 60)).padStart(2, '0')}:${String(S.left % 60).padStart(2, '0')}`; }, 1000); break;
+      case 'focus-stop': stopTimer(); S.running = false; S.left = S.focusMin * 60; toast(arg === 'save' ? L('已记录这次专注', 'Session recorded') : L('已放弃，不留记录', 'Discarded, nothing recorded')); break;
+      case 'settings': S.ov = 'settings'; S.setPage = 'home'; break;
+      case 'set': S.setPage = arg; S.dirty = {}; S.setErr = {}; break;
+      case 'set-discard': S.dirty = {}; S.setErr = {}; [...ROLES, ...ROLES2].forEach((r) => { vals[r[0]] = r[5]; }); break;
+      case 'set-save': {
+        S.setErr = {};
+        for (const k of Object.keys(S.dirty)) { if (k === 'tasks' || !ROLES.concat(ROLES2).some((r) => r[0] === k)) continue; if (!FOLDERS.includes(vals[k])) S.setErr[k] = L(`找不到「${vals[k]}」。请选已有目录；要新建目录，请先在文件列表里建好。`, `“${vals[k]}” doesn’t exist. Pick an existing folder, or create it in the file list first.`); }
+        if (Object.keys(S.setErr).length) toast(L('有 1 处需要修改，其余更改也未保存', 'Fix the highlighted field; nothing was saved'));
+        else { S.dirty = {}; [...ROLES, ...ROLES2].forEach((r) => { r[5] = vals[r[0]]; }); toast(L('已保存', 'Saved')); }
+        break;
+      }
+      case 'tgl': a.setAttribute('aria-checked', String(a.getAttribute('aria-checked') !== 'true')); toast(L('已保存', 'Saved')); return;
+      case 'ob-open': S.ov = 'onboarding'; S.ob = 1; S.obCreated = false; S.obNote = ''; break;
+      case 'ob-next': S.ob = Math.min(4, S.ob + 1); break;
+      case 'ob-back': S.ob = Math.max(1, S.ob - 1); break;
+      case 'ob-create': S.obCreated = true; break;
+      case 'ob-review': S.obReview = !S.obReview; break;
+      case 'ob-save': { const t = (S.obNote || '').trim(); if (!t) { toast(L('先写点什么，或点「以后再说」', 'Write something first, or choose Later')); return; } caps.unshift({ id: 99, day: 0, t: '10:30', zh: t, en: t, done: null }); S.obNote = '__saved__'; break; }
+      case 'ob-finish': S.ov = null; S.tab = 'captures'; S.filter = 'pending'; if (arg === 'cap') S.open = 99; break;
+      case 'close': S.ov = null; break;
+      case 'toast': toast(arg); return;
+      default: return;
+    }
+    render();
+  });
+  document.addEventListener('input', (e) => {
+    const t = e.target; const k = t.dataset.in; if (!k) return;
+    if (k === 'today' || k === 'compose') {
+      S[k] = t.value; const box = t.closest('.tg-compose'); box.classList.toggle('has', !!t.value.trim());
+      const b = box.querySelector('[data-act="save-cap"]'); if (b) b.disabled = !t.value.trim();
+    } else if (k === 'obNote') S.obNote = t.value;
+    else if (k === 'destq') { const q = t.value.trim().toLowerCase(); document.querySelectorAll('.tg-destg').forEach((g) => { let any = false; g.querySelectorAll('.tg-dest').forEach((d) => { const hit = !q || d.textContent.toLowerCase().includes(q); d.hidden = !hit; any ||= hit; }); g.hidden = !any; }); }
+    else if (k === 'para') { vals[t.dataset.key] = t.value; S.dirty[t.dataset.key] = 1; delete S.setErr[t.dataset.key]; refreshSaveBar(t); }
+    else if (k === 'dirty') { S.dirty[t.dataset.key] = 1; refreshSaveBar(t); }
+    else if (k === 'focus') { const v = Math.max(1, Math.min(240, +t.value || 1)); S.focusMin = v; S.left = v * 60; const b = document.querySelector('[data-act="focus-start"]'); if (b) b.lastChild.textContent = L(`开始 ${v} 分钟`, `Start ${v} min`); }
+  });
+  function refreshSaveBar(input) {
+    const pos = input.selectionStart; const key = input.dataset.key;
+    render();
+    const again = document.querySelector(`[data-key="${CSS.escape(key)}"]`);
+    if (again) { again.focus(); try { again.setSelectionRange(pos, pos); } catch (_) { /* number inputs */ } }
+  }
+  document.addEventListener('change', (e) => {
+    const k = e.target.dataset.in;
+    if (k === 'noFix' || k === 'showRaw') { S[k] = e.target.checked; render(); }
+    if (k === 'para') { render(); }
+    if (k === 'psort') { S.psort = e.target.value; render(); }
+  });
+  document.addEventListener('keydown', (e) => {
+    const t = e.target;
+    if ((t.dataset.in === 'today' || t.dataset.in === 'compose') && e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); document.querySelector(`[data-act="save-cap"][data-arg="${t.dataset.in}"]`)?.click(); }
+    if (t.dataset.actEnter === 'add-task' && e.key === 'Enter' && t.value.trim()) { toast(L('已追加到任务总览', 'Added to the task overview')); t.value = ''; }
+    if (t.dataset.actEnter === 'add-ptask' && e.key === 'Enter' && t.value.trim()) { toast(L(`已追加到任务总览：- [ ] ${t.value.trim()} [[${t.dataset.proj}]]`, `Added to the task overview with a link to [[${t.dataset.proj}]]`)); t.value = ''; }
+    if (e.key === 'Escape' && (S.ov || S.menu)) { if (S.ov !== 'onboarding') S.ov = null; S.menu = false; render(); }
+  });
+
+  resetData();
+  renderDoc();
+  render();
+})();
+</script>
+<!--PAGE-BODY-END-->
+</body>
+</html>

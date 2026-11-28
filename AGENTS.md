@@ -16,6 +16,8 @@ Read the relevant contracts before modifying a subsystem:
 - Reporting metrics & semantics: `docs/REPORTING.md`
 - Native IME & multi-window acceptance: `docs/NATIVE-IME-ACCEPTANCE.md`
 - Provenance & GPLv3 licensing: `docs/PROVENANCE.md`, `docs/LICENSING.md`
+- Design prototypes & review notes: `docs/design/` (static HTML mockups, not
+  host proof; see `.agents/skills/tangrow-pr-evidence/SKILL.md`)
 
 ## Build, Typecheck & Test
 

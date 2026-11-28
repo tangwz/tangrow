@@ -1,0 +1,720 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tangrow · 卡片笔记法设计稿 v1</title>
+<style>
+.theme, html[data-theme="light"] .theme {
+  --bg: #f6f5f8; --surface: #ffffff; --surface-2: #f0eef4; --surface-3: #e6e3ec;
+  --text: #1d1b22; --muted: #6b6775; --faint: #9a96a3; --border: #dedae5;
+  --accent: #7c5cff; --accent-soft: #ece6ff; --accent-text: #5b3ee0;
+  --danger: #d6455d; --danger-soft: #fde8ec; --ok: #1f9d6b; --ok-soft: #e1f5ec;
+  --warn: #b7791f; --warn-soft: #fbf0dc; --hl: #fff2b8; --code: #8a3ffc;
+  --shadow: 0 10px 30px rgba(20,10,40,.14);
+}
+html[data-theme="dark"] .theme {
+  --bg: #161519; --surface: #1f1e23; --surface-2: #26252b; --surface-3: #303036;
+  --text: #e9e7ee; --muted: #a29fab; --faint: #75727d; --border: #34333a;
+  --accent: #8b6dff; --accent-soft: #2e2747; --accent-text: #b6a3ff;
+  --danger: #ff6b81; --danger-soft: #3a1f26; --ok: #4fd1a0; --ok-soft: #173329;
+  --warn: #f0b552; --warn-soft: #382c17; --hl: #4a3f12; --code: #c4a5ff;
+  --shadow: 0 10px 30px rgba(0,0,0,.45);
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+.theme { background: var(--bg); color: var(--text); font: 14px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Segoe UI", sans-serif; min-height: 100vh; }
+main { max-width: 1240px; margin: 0 auto; padding: 36px 20px 90px; }
+h1 { font-size: 28px; margin: 0 0 6px; letter-spacing: -.01em; }
+h2 { font-size: 20px; margin: 60px 0 6px; padding-top: 26px; border-top: 1px solid var(--border); }
+h3 { font-size: 15px; margin: 26px 0 10px; }
+p { margin: 0 0 10px; }
+code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; color: var(--code); }
+.lede { color: var(--muted); max-width: 820px; }
+.muted { color: var(--muted); } .faint { color: var(--faint); } .small { font-size: 12px; }
+.topbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: space-between; }
+.toggle { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 8px; padding: 6px 12px; font: inherit; font-size: 12px; cursor: pointer; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 12px; }
+.legend span::before { content: ""; display: inline-block; width: 14px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+.legend .l-old::before { background: var(--surface-3); }
+.legend .l-ext::before { border: 2px dashed var(--warn); }
+.legend .l-new::before { border: 2px solid var(--ok); }
+.tag { display: inline-block; font-size: 10.5px; padding: 0 7px; border-radius: 99px; background: var(--surface-3); color: var(--muted); vertical-align: 1px; margin-left: 5px; line-height: 17px; font-weight: 500; }
+.tag.new { background: var(--ok-soft); color: var(--ok); }
+.tag.ext { background: var(--warn-soft); color: var(--warn); }
+.tag.acc { background: var(--accent-soft); color: var(--accent-text); }
+.tag.bad { background: var(--danger-soft); color: var(--danger); }
+.x-new { outline: 2px solid var(--ok); outline-offset: 2px; border-radius: 8px; }
+.x-ext { outline: 2px dashed var(--warn); outline-offset: 2px; border-radius: 8px; }
+.grid { display: grid; gap: 22px; align-items: start; }
+.g3 { grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); }
+.g2 { grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); }
+.col-title { font-weight: 600; margin-bottom: 8px; font-size: 13.5px; }
+.notes { margin: 12px 0 0; padding-left: 18px; color: var(--muted); font-size: 12.5px; }
+.notes li { margin-bottom: 4px; }
+.notes b { color: var(--text); font-weight: 600; }
+
+/* ---------- flow ---------- */
+.flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 18px; position: relative; }
+@media (max-width: 900px) { .flow { grid-template-columns: 1fr 1fr; } }
+.stage { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; position: relative; }
+.stage .n { font-size: 11px; color: var(--faint); font-weight: 600; letter-spacing: .05em; }
+.stage .t { font-size: 15px; font-weight: 700; margin: 2px 0 6px; display: flex; align-items: center; gap: 6px; }
+.stage .d { font-size: 12px; color: var(--muted); }
+.stage ul { margin: 8px 0 0; padding-left: 16px; font-size: 12px; }
+.stage li { margin-bottom: 3px; }
+.stage:not(:last-child)::after { content: "→"; position: absolute; right: -13px; top: 40%; color: var(--faint); font-size: 16px; }
+.state { display: inline-block; font-size: 10.5px; border-radius: 99px; padding: 0 7px; line-height: 17px; }
+.state.have { background: var(--surface-3); color: var(--muted); }
+.state.part { background: var(--warn-soft); color: var(--warn); }
+.state.miss { background: var(--ok-soft); color: var(--ok); }
+
+/* ---------- sidebar mock ---------- */
+.sb { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; font-size: 12.5px; max-width: 370px; }
+.sb-head { display: flex; align-items: center; gap: 8px; }
+.brand { font-weight: 700; font-size: 16px; display: flex; align-items: center; gap: 6px; }
+.brand i { color: var(--accent); font-style: normal; }
+.sp { flex: 1; }
+.badge { font-size: 10px; border: 1px solid var(--border); padding: 1px 7px; border-radius: 99px; color: var(--muted); }
+.iconbtn { width: 26px; height: 26px; border-radius: 7px; background: var(--surface-2); display: grid; place-items: center; font-size: 14px; color: var(--muted); }
+.ctx { color: var(--muted); margin: 6px 0 10px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.quick { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; margin-bottom: 8px; }
+.quick div { background: var(--surface-2); border-radius: 8px; text-align: center; padding: 6px 0 4px; font-size: 11px; color: var(--muted); }
+.quick div b { display: block; color: var(--accent); font-size: 14px; font-weight: 400; line-height: 1.2; }
+.nav { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px; background: var(--surface-2); border-radius: 9px; padding: 3px; margin-bottom: 12px; }
+.nav div { text-align: center; padding: 4px 0 2px; border-radius: 7px; font-size: 10.5px; color: var(--muted); }
+.nav div b { display: block; font-size: 13px; font-weight: 400; line-height: 1.25; }
+.nav div.on { background: var(--surface); color: var(--accent-text); box-shadow: 0 1px 2px rgba(0,0,0,.14); }
+.cardhead { background: var(--surface-2); border-radius: 10px; padding: 10px 11px; margin-bottom: 10px; }
+.cardhead .title { font-weight: 650; font-size: 13.5px; line-height: 1.4; margin: 3px 0 7px; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 11px; color: var(--muted); }
+.mono { font: 11px ui-monospace, Menlo, monospace; }
+.idchip { font: 10.5px ui-monospace, Menlo, monospace; background: var(--surface-3); color: var(--muted); border-radius: 5px; padding: 0 6px; line-height: 18px; }
+.seg { display: inline-flex; background: var(--surface-3); border-radius: 7px; padding: 2px; font-size: 10.5px; }
+.seg span { padding: 1px 7px; border-radius: 5px; color: var(--muted); }
+.seg span.on { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.okline { color: var(--ok); } .warnline { color: var(--warn); } .badline { color: var(--danger); }
+.acts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin-top: 9px; }
+.acts div { background: var(--surface); border: 1px solid var(--border); border-radius: 7px; padding: 4px 0; text-align: center; font-size: 11px; }
+.acts div b { display: block; font-weight: 400; font-size: 13px; color: var(--accent-text); line-height: 1.2; }
+.sec { font-weight: 600; font-size: 12px; margin: 13px 0 5px; display: flex; justify-content: space-between; align-items: baseline; }
+.sec span { font-weight: 400; color: var(--muted); font-size: 11px; }
+.item { padding: 5px 7px; border-radius: 7px; display: flex; gap: 7px; align-items: flex-start; }
+.item:hover { background: var(--surface-2); }
+.item .ic { color: var(--faint); flex: none; width: 14px; text-align: center; }
+.item .body { flex: 1; min-width: 0; }
+.item .name { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.item .why { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.item .why q { quotes: "“" "”"; }
+.item .why mark { background: var(--hl); color: inherit; border-radius: 2px; padding: 0 1px; }
+.rel { display: inline-block; font-size: 10px; border-radius: 4px; padding: 0 5px; line-height: 16px; margin-right: 4px; background: var(--accent-soft); color: var(--accent-text); }
+.rel.con { background: var(--danger-soft); color: var(--danger); }
+.rel.ex { background: var(--ok-soft); color: var(--ok); }
+.minibtn { font-size: 10.5px; border: 1px solid var(--border); border-radius: 6px; padding: 0 7px; line-height: 19px; color: var(--accent-text); background: var(--surface); flex: none; white-space: nowrap; }
+.minibtn.pri { background: var(--accent); color: #fff; border-color: var(--accent); }
+.tree { margin-left: 4px; border-left: 1px solid var(--border); padding-left: 8px; }
+.tree .item.cur { background: var(--accent-soft); }
+.tree .item.cur .name { color: var(--accent-text); font-weight: 600; }
+.callout { border-radius: 8px; padding: 7px 9px; font-size: 11.5px; display: flex; gap: 8px; align-items: center; }
+.callout.warn { background: var(--warn-soft); color: var(--warn); }
+.callout.info { background: var(--surface-2); color: var(--muted); }
+.callout.ok { background: var(--ok-soft); color: var(--ok); }
+.ghost { border: 1px dashed var(--border); border-radius: 8px; padding: 7px; text-align: center; color: var(--muted); font-size: 11.5px; margin-top: 6px; }
+.health { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 4px 0 6px; }
+.health div { background: var(--surface-2); border-radius: 8px; padding: 6px 7px; font-size: 10.5px; color: var(--muted); }
+.health b { display: block; font-size: 16px; color: var(--text); font-weight: 600; line-height: 1.3; }
+.health .w b { color: var(--warn); }
+.review { border: 1px solid var(--border); border-radius: 9px; padding: 8px 9px; margin-bottom: 6px; }
+.review .name { font-weight: 600; font-size: 12.5px; }
+.review .why { font-size: 11px; color: var(--muted); margin: 2px 0 6px; }
+.review .row { display: flex; gap: 5px; }
+.bar { height: 5px; border-radius: 3px; background: var(--surface-3); overflow: hidden; margin: 6px 0 2px; }
+.bar i { display: block; height: 100%; background: var(--accent); }
+
+/* ---------- modal ---------- */
+.modal { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); padding: 18px; font-size: 13px; }
+.modal-h { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.modal-h b { font-size: 15px; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip { font-size: 11.5px; padding: 3px 10px; border-radius: 99px; background: var(--surface-2); color: var(--text); border: 1px solid transparent; }
+.chip.on { background: var(--accent-soft); color: var(--accent-text); border-color: var(--accent); }
+.chip kbd { font: 10px ui-monospace, monospace; color: var(--faint); margin-left: 4px; }
+.field { border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; background: var(--surface); }
+.field.focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.label { font-size: 11.5px; color: var(--muted); margin: 10px 0 4px; display: flex; justify-content: space-between; }
+.ph { color: var(--faint); }
+.split { display: grid; grid-template-columns: 1fr 1.25fr; gap: 16px; }
+@media (max-width: 860px) { .split { grid-template-columns: 1fr; } }
+.source { background: var(--surface-2); border-radius: 10px; padding: 12px; font-size: 12.5px; line-height: 1.75; }
+.seg1 { background: color-mix(in srgb, var(--accent) 22%, transparent); border-radius: 3px; padding: 1px 0; }
+.seg2 { background: color-mix(in srgb, var(--ok) 22%, transparent); border-radius: 3px; padding: 1px 0; }
+.num { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; font-size: 10px; color: #fff; background: var(--accent); vertical-align: 1px; margin-right: 3px; }
+.num.g { background: var(--ok); }
+.draft { border: 1px solid var(--border); border-radius: 10px; padding: 10px; margin-bottom: 9px; background: var(--surface); }
+.draft.sel { border-color: var(--accent); }
+.draft .row { display: flex; gap: 6px; align-items: center; }
+.footer { display: flex; align-items: center; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+.btn { border-radius: 8px; padding: 6px 12px; background: var(--surface-2); font-size: 12.5px; }
+.btn.pri { background: var(--accent); color: #fff; font-weight: 600; }
+.check::before { content: "☑"; color: var(--accent); margin-right: 4px; }
+.uncheck::before { content: "☐"; color: var(--faint); margin-right: 4px; }
+.meter { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--muted); }
+.meter .bar { flex: 1; margin: 0; }
+.radios { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-bottom: 14px; }
+@media (max-width: 860px) { .radios { grid-template-columns: 1fr 1fr; } }
+.radio { border: 1px solid var(--border); border-radius: 9px; padding: 8px 10px; font-size: 12px; }
+.radio b { display: block; font-size: 12.5px; }
+.radio span { color: var(--muted); font-size: 11px; }
+.radio.on { border-color: var(--accent); background: var(--accent-soft); }
+.result { padding: 7px 9px; border-radius: 8px; display: flex; gap: 8px; align-items: flex-start; }
+.result.on { background: var(--accent-soft); }
+.result .name { font-weight: 600; }
+.result .snip { color: var(--muted); font-size: 11.5px; }
+
+/* ---------- editor ---------- */
+.editor { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; font-size: 13px; }
+.tabs-ed { display: flex; gap: 2px; background: var(--surface-2); padding: 6px 8px 0; }
+.tabs-ed div { padding: 5px 12px; border-radius: 8px 8px 0 0; font-size: 12px; color: var(--muted); }
+.tabs-ed div.on { background: var(--surface); color: var(--text); }
+.ed-body { padding: 16px 20px 20px; line-height: 1.8; position: relative; }
+.ed-body h4 { font-size: 18px; margin: 0 0 8px; }
+.sel { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+.link { color: var(--accent-text); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.menu { position: absolute; right: 26px; top: 120px; width: 200px; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; box-shadow: var(--shadow); padding: 4px; font-size: 12px; }
+.menu div { padding: 5px 8px; border-radius: 6px; display: flex; justify-content: space-between; }
+.menu div.on { background: var(--accent-soft); color: var(--accent-text); }
+.menu hr { border: 0; border-top: 1px solid var(--border); margin: 3px 0; }
+pre.md { margin: 0; background: var(--surface-2); border-radius: 10px; padding: 14px; font: 12px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-x: auto; color: var(--text); }
+pre.md .k { color: var(--accent-text); } pre.md .c { color: var(--faint); } pre.md .h { color: var(--warn); font-weight: 700; } pre.md .l { color: var(--ok); }
+
+/* ---------- report ---------- */
+.rp { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; font-size: 13px; }
+.rtabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 14px; background: var(--surface-2); padding: 4px; border-radius: 10px; }
+.rtabs div { padding: 5px 11px; border-radius: 7px; color: var(--muted); font-size: 12.5px; }
+.rtabs div.on { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.kpi { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; }
+.kpi b { display: block; font-size: 22px; font-weight: 600; letter-spacing: -.3px; }
+.kpi span { color: var(--muted); font-size: 11.5px; }
+.kpi em { font-style: normal; font-size: 11px; color: var(--ok); margin-left: 6px; }
+.kpi em.w { color: var(--warn); }
+.panel { border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-top: 12px; }
+.panel-h { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; gap: 10px; flex-wrap: wrap; }
+.panel-h b { font-size: 14px; }
+.stack { display: flex; height: 14px; border-radius: 7px; overflow: hidden; margin: 6px 0; }
+.stack i { display: block; height: 100%; }
+.lg { display: flex; gap: 14px; font-size: 11.5px; color: var(--muted); flex-wrap: wrap; }
+.lg span::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; background: var(--c); }
+table.t { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+table.t th, table.t td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+table.t th { color: var(--muted); font-weight: 500; font-size: 11.5px; }
+table.t td.wrap { white-space: normal; }
+.tw { overflow-x: auto; }
+
+/* ---------- settings ---------- */
+.set { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 4px 18px; font-size: 13px; }
+.set-row { display: flex; gap: 16px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.set-row:last-child { border-bottom: 0; }
+.set-row .l { flex: 1; }
+.set-row .l b { display: block; font-weight: 600; font-size: 13px; }
+.set-row .l span { color: var(--muted); font-size: 12px; }
+.input { border: 1px solid var(--border); border-radius: 7px; padding: 4px 10px; min-width: 190px; font-size: 12.5px; background: var(--surface-2); }
+.sw { width: 34px; height: 19px; border-radius: 99px; background: var(--accent); position: relative; flex: none; }
+.sw::after { content: ""; position: absolute; right: 2px; top: 2px; width: 15px; height: 15px; background: #fff; border-radius: 50%; }
+.sw.off { background: var(--surface-3); } .sw.off::after { right: auto; left: 2px; }
+.set-h { font-weight: 700; font-size: 14px; padding: 14px 0 4px; border-bottom: 1px solid var(--border); }
+
+/* ---------- questions ---------- */
+.q { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-top: 10px; }
+.q > b { display: block; margin-bottom: 4px; }
+.opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 8px; margin-top: 8px; }
+.opt { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; }
+.opt.rec { border-color: var(--accent); background: var(--accent-soft); }
+.opt b { display: block; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="theme">
+<main>
+  <div class="topbar">
+    <div>
+      <h1>Tangrow · 卡片笔记法（Zettelkasten）设计稿 v1</h1>
+      <p class="lede">在不迁移现有目录、不改写旧笔记的前提下，给 Tangrow 补上卡片笔记法缺的几块：<b>永久卡片</b>、<b>带理由的链接</b>、<b>卡片序列</b>、<b>结构笔记</b>和<b>回顾</b>。所有新功能沿用 <code>tangrow_</code> 属性、显式动作和幂等写入。</p>
+    </div>
+    <button class="toggle" onclick="document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'">切换明暗</button>
+  </div>
+  <div class="legend"><span class="l-old">现有能力</span><span class="l-ext">扩展现有模块</span><span class="l-new">新增</span></div>
+
+  <!-- ===================== 0. FLOW ===================== -->
+  <h2>〇、卡片流转：从速记到卡片盒</h2>
+  <p class="lede">卡片笔记法有四类笔记。Tangrow 已经有第一类（速记 + 处理状态），后三类只有零散的基础。</p>
+  <div class="flow">
+    <div class="stage">
+      <div class="n">STAGE 1</div>
+      <div class="t">闪念 <span class="state have">已有</span></div>
+      <div class="d">速记、快速新建、独立小窗、沉浸速记。处理状态存在 <code>tangrow_processed_at</code>。</div>
+      <ul><li>新增处理动作「提炼为卡片」</li><li>支持一条速记拆成多张卡片</li></ul>
+    </div>
+    <div class="stage">
+      <div class="n">STAGE 2</div>
+      <div class="t">文献笔记 <span class="state part">部分</span></div>
+      <div class="d">现在只有「剪藏」报表与 Sources 数据库，靠 <code>source</code> 属性识别。</div>
+      <ul><li>新增 <code>tangrow_kind: literature</code></li><li>显示「已提炼 N 张卡片」</li></ul>
+    </div>
+    <div class="stage">
+      <div class="n">STAGE 3</div>
+      <div class="t">永久卡片 <span class="state miss">缺失</span></div>
+      <div class="d">现在「笔记」只是把正文复制进 Inbox：没有 ID、没有固定位置，也不提示原子性和连接。</div>
+      <ul><li>卡片 ID、成熟度、序列（父卡片）</li><li>链接时写下理由</li><li>原子性提示与拆分</li></ul>
+    </div>
+    <div class="stage">
+      <div class="n">STAGE 4</div>
+      <div class="t">结构笔记 <span class="state miss">缺失</span></div>
+      <div class="d">没有 MOC / 索引入口。孤岛只在报表里算，侧栏看不到。</div>
+      <ul><li>结构笔记 <code>tangrow_kind: hub</code></li><li>列出未纳入结构笔记的卡片</li><li>每日回顾队列</li></ul>
+    </div>
+  </div>
+
+  <!-- ===================== 1. SIDEBAR ===================== -->
+  <h2>一、侧栏新增「卡片」工作区 <span class="tag new">新增</span></h2>
+  <p class="lede">工作区的内容跟着当前打开的文件变：打开卡片时显示它的连接，没打开卡片时显示卡片盒概况，打开文献笔记或普通笔记时给出转换入口。侧栏标签已经有 7 个，所以同时加一个设置项「显示的工作区」，用户可以隐藏专注、习惯等不用的标签。</p>
+
+  <div class="grid g3" style="margin-top:18px">
+    <!-- A: active card -->
+    <div>
+      <div class="col-title">A · 当前是卡片：连接视图</div>
+      <div class="sb">
+        <div class="sb-head"><div class="brand"><i>✿</i>Tangrow</div><div class="sp"></div><span class="badge">本地</span><div class="iconbtn">＋</div></div>
+        <div class="ctx">▤ 只用自己的话复述，才算真正理解</div>
+        <div class="quick">
+          <div><b>⌁</b>速记</div><div><b>✎</b>笔记</div><div><b>☑</b>任务</div><div><b>▣</b>项目</div><div class="x-new"><b>◰</b>卡片</div>
+        </div>
+        <div class="nav">
+          <div><b>⌂</b>主页</div><div><b>⌁</b>速记</div><div class="on x-new"><b>◰</b>卡片</div><div><b>⚲</b>收藏</div><div><b>✎</b>写作</div><div><b>✦</b>AI</div><div><b>⋯</b>更多</div>
+        </div>
+
+        <div class="cardhead">
+          <div class="meta"><span class="idchip">202611161428</span><span>· 创建 2 天</span><span class="sp"></span><span class="seg"><span>种子</span><span class="on">生长</span><span>常青</span></span></div>
+          <div class="title">只用自己的话复述，才算真正理解</div>
+          <div class="meta"><span class="okline">● 186 字 · 原子</span><span>· 来源</span><span class="link">《卡片笔记写作法》</span></div>
+          <div class="acts">
+            <div><b>↳</b>续写</div><div><b>⑂</b>分支</div><div><b>⇄</b>链接到…</div><div><b>✂</b>提取</div>
+          </div>
+        </div>
+
+        <div class="sec">出链 <span>3 · 均已写理由</span></div>
+        <div class="item"><span class="ic">→</span><div class="body"><div class="name">外部化思考能减轻工作记忆负担</div><div class="why"><span class="rel">支撑</span>解释复述为什么有效</div></div></div>
+        <div class="item"><span class="ic">→</span><div class="body"><div class="name">摘抄不等于学习</div><div class="why"><span class="rel con">反驳</span>摘抄是复述的反面</div></div></div>
+        <div class="item"><span class="ic">→</span><div class="body"><div class="name">费曼技巧</div><div class="why"><span class="rel ex">举例</span>同一原则的具体方法</div></div></div>
+
+        <div class="sec">反链 <span>2</span></div>
+        <div class="item"><span class="ic">←</span><div class="body"><div class="name">写作是思考的媒介</div><div class="why"><q>…卡片要<mark>用自己的话复述</mark>，否则只是搬运…</q></div></div></div>
+        <div class="item"><span class="ic">←</span><div class="body"><div class="name">2026-W46 周记</div><div class="why"><q>本周最有用的一条：<mark>复述</mark>…</q></div></div></div>
+
+        <div class="sec">序列 <span>父卡片 / 后续卡片</span></div>
+        <div class="tree">
+          <div class="item"><span class="ic">↑</span><div class="body"><div class="name">写作是思考的媒介</div></div></div>
+          <div class="item cur"><span class="ic">●</span><div class="body"><div class="name">只用自己的话复述，才算真正理解</div></div></div>
+          <div class="item" style="margin-left:12px"><span class="ic">↳</span><div class="body"><div class="name">复述时先合上原文</div></div></div>
+        </div>
+
+        <div class="sec">结构笔记 <span>0</span></div>
+        <div class="callout warn">⚠ 还没有被任何结构笔记收录<span class="sp"></span><span class="minibtn">加入…</span></div>
+
+        <div class="sec">可能相关 <span>本地计算 · 不联网</span></div>
+        <div class="item"><span class="ic">◇</span><div class="body"><div class="name">间隔重复比集中复习更有效</div><div class="why">共同标签 #学习 · 都链接到「费曼技巧」</div></div><span class="minibtn">链接</span></div>
+        <div class="item"><span class="ic">◇</span><div class="body"><div class="name">输出倒逼输入</div><div class="why">标题词重合：复述、理解</div></div><span class="minibtn">链接</span></div>
+        <div class="ghost">✦ 用 Claudian 深度查找（读正文）</div>
+      </div>
+      <ul class="notes">
+        <li><b>出链理由</b>从卡片的「## 关联」小节解析：<code>- [[卡片]] — 理由</code>。缺理由的链接标为「待补理由」。</li>
+        <li><b>反链上下文</b>来自 <code>metadataCache</code> 记录的链接位置，截取所在行，不渲染全文。</li>
+        <li><b>序列</b>只读子卡片上的 <code>tangrow_parent</code>，不往父卡片里写内容。</li>
+        <li><b>可能相关</b>用标签、共同链接（共被引）和标题分词打分，完全在本地计算。想读正文深度查找，交给已有的 Claudian「关联笔记」工作流。</li>
+      </ul>
+    </div>
+
+    <!-- B: overview / review -->
+    <div>
+      <div class="col-title">B · 未打开卡片：今日回顾与卡片盒概况</div>
+      <div class="sb">
+        <div class="sb-head"><div class="brand"><i>✿</i>Tangrow</div><div class="sp"></div><span class="badge">本地</span><div class="iconbtn">＋</div></div>
+        <div class="ctx">◎ 2026-W46 周记</div>
+        <div class="nav">
+          <div><b>⌂</b>主页</div><div><b>⌁</b>速记</div><div class="on"><b>◰</b>卡片</div><div><b>⚲</b>收藏</div><div><b>✎</b>写作</div><div><b>✦</b>AI</div><div><b>⋯</b>更多</div>
+        </div>
+
+        <div class="sec" style="margin-top:2px">卡片盒 <span>312 张卡片 · 18 篇结构笔记</span></div>
+        <div class="health">
+          <div class="w"><b>27</b>孤立</div><div class="w"><b>14</b>久未成长</div><div><b>9</b>待写</div><div><b>41</b>待补理由</div>
+        </div>
+        <div class="bar"><i style="width:68%"></i></div>
+        <div class="small faint">已纳入结构笔记 68%（212 / 312）</div>
+
+        <div class="sec">今日回顾 <span>3 张 · 每天固定</span></div>
+        <div class="review">
+          <div class="meta"><span class="idchip">202609031130</span><span class="tag bad" style="margin:0">孤立</span><span class="sp"></span><span>73 天前</span></div>
+          <div class="name">注意力是写作的瓶颈，不是时间</div>
+          <div class="why">没有出链也没有反链。可以给它找一张能连上的卡片。</div>
+          <div class="row"><span class="minibtn pri">打开</span><span class="minibtn">链接到…</span><span class="minibtn">已回顾</span><span class="sp"></span><span class="minibtn" style="color:var(--muted)">跳过</span></div>
+        </div>
+        <div class="review">
+          <div class="meta"><span class="idchip">202610121905</span><span class="tag ext" style="margin:0">种子 · 35 天</span><span class="sp"></span></div>
+          <div class="name">好问题比好答案更可复用</div>
+          <div class="why">还是种子阶段，35 天没有改动。</div>
+          <div class="row"><span class="minibtn pri">打开</span><span class="minibtn">升为生长</span><span class="minibtn">已回顾</span></div>
+        </div>
+        <div class="review">
+          <div class="meta"><span class="idchip">202605200815</span><span class="tag acc" style="margin:0">随机</span></div>
+          <div class="name">系统比目标更持久</div>
+          <div class="row" style="margin-top:6px"><span class="minibtn pri">打开</span><span class="minibtn">已回顾</span></div>
+        </div>
+
+        <div class="sec">待写卡片 <span>未解析的链接 · 9</span></div>
+        <div class="item"><span class="ic">○</span><div class="body"><div class="name">桥接笔记</div><div class="why">被 3 张卡片引用</div></div><span class="minibtn">创建</span></div>
+        <div class="item"><span class="ic">○</span><div class="body"><div class="name">认知负荷理论</div><div class="why">被 2 张卡片引用</div></div><span class="minibtn">创建</span></div>
+
+        <div class="sec">孤立卡片 <span>27 · 查看全部 ›</span></div>
+        <div class="item"><span class="ic">◌</span><div class="body"><div class="name">清单让决策外包给过去的自己</div></div><span class="minibtn">链接到…</span></div>
+        <div class="item"><span class="ic">◌</span><div class="body"><div class="name">默认选项决定大多数行为</div></div><span class="minibtn">链接到…</span></div>
+      </div>
+      <ul class="notes">
+        <li><b>今日回顾</b>按「孤立 → 种子超过 N 天 → 随机」的顺序取卡片，用日期做随机种子，同一天反复打开看到的是同一组。「已回顾」写入 <code>tangrow_reviewed_at</code>。</li>
+        <li><b>待写卡片</b>来自 <code>metadataCache.unresolvedLinks</code>：链接已经写了、卡片还没建。点「创建」用卡片模板新建，链接自动生效。</li>
+        <li><b>孤立</b>复用报表里的 <code>findOrphanNotes</code>，范围限定为卡片。</li>
+      </ul>
+    </div>
+
+    <!-- C: non-card / literature -->
+    <div>
+      <div class="col-title">C · 文献笔记 / 普通笔记：转换入口</div>
+      <div class="sb">
+        <div class="sb-head"><div class="brand"><i>✿</i>Tangrow</div><div class="sp"></div><span class="badge">本地</span><div class="iconbtn">＋</div></div>
+        <div class="ctx">▤ 读书笔记 ·《卡片笔记写作法》</div>
+        <div class="nav">
+          <div><b>⌂</b>主页</div><div><b>⌁</b>速记</div><div class="on"><b>◰</b>卡片</div><div><b>⚲</b>收藏</div><div><b>✎</b>写作</div><div><b>✦</b>AI</div><div><b>⋯</b>更多</div>
+        </div>
+        <div class="cardhead">
+          <div class="meta"><span class="tag acc" style="margin:0">文献笔记</span><span class="sp"></span><span>来源：申克·阿伦斯</span></div>
+          <div class="title">读书笔记 ·《卡片笔记写作法》</div>
+          <div class="meta">2,430 字 · 12 处摘录</div>
+        </div>
+        <div class="sec">已提炼的卡片 <span>3</span></div>
+        <div class="item"><span class="ic">◰</span><div class="body"><div class="name">只用自己的话复述，才算真正理解</div></div></div>
+        <div class="item"><span class="ic">◰</span><div class="body"><div class="name">写作是思考的媒介</div></div></div>
+        <div class="item"><span class="ic">◰</span><div class="body"><div class="name">卡片之间的链接比分类更重要</div></div></div>
+        <div class="sec">继续提炼</div>
+        <div class="callout info">在正文中选中一段 → 右键「提取为卡片」，或者：</div>
+        <div class="acts" style="grid-template-columns:1fr 1fr;margin-top:6px">
+          <div><b>◰</b>新建卡片（来源=本篇）</div><div><b>✦</b>AI 提炼候选卡片</div>
+        </div>
+
+        <div style="height:16px"></div>
+        <div class="col-title" style="font-size:12px;margin:0 0 6px">若是没有标记类型的普通笔记：</div>
+        <div class="callout info" style="display:block">
+          这篇笔记还没有卡片类型。只在你点击时写入属性，不移动文件。
+          <div class="row" style="display:flex;gap:5px;margin-top:7px;flex-wrap:wrap"><span class="minibtn pri">标记为卡片</span><span class="minibtn">标记为文献笔记</span><span class="minibtn">标记为结构笔记</span></div>
+        </div>
+      </div>
+      <ul class="notes">
+        <li><b>「已提炼」</b>的列表就是 <code>tangrow_source</code> 指向本篇的卡片，也就是反链的一个子集。</li>
+        <li><b>标记类型</b>只改当前笔记的属性（<code>tangrow_kind</code>、<code>tangrow_id</code>），符合 DESIGN.md「属性修改集中在用户明确触发的动作中」。</li>
+        <li><b>AI 提炼</b>是新增的 Claudian 工作流 <code>distill</code>：先列出候选卡片，等你确认再写入。</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ===================== 2. CAPTURE PROCESSING ===================== -->
+  <h2>二、速记处理：新增「提炼为卡片」 <span class="tag ext">扩展</span></h2>
+  <p class="lede">现有的处理弹窗（<code>capture-processing-modal.ts</code>）有 4 个动作，这里加第 5 个。一条速记常常包含不止一个想法，所以这个动作可以一次拆出多张卡片，每张写成一个完整观点，并在保存前就链好。</p>
+  <div class="modal x-ext" style="margin-top:16px">
+    <div class="modal-h"><b>处理速记</b><span class="muted small">2026-11-16 09:12 · 00-Inbox/速记 2026-11-16 0912.md</span></div>
+    <div class="radios">
+      <div class="radio"><b>转为正式笔记</b><span>复制到 Inbox</span></div>
+      <div class="radio on x-new"><b>提炼为卡片</b><span>拆成 1–N 张卡片</span></div>
+      <div class="radio"><b>追加到任务总览</b><span>一行任务</span></div>
+      <div class="radio"><b>关联项目</b><span>不移动</span></div>
+      <div class="radio"><b>标记已处理</b><span>保留原文</span></div>
+    </div>
+    <div class="split">
+      <div>
+        <div class="label">原速记 <span>选中文字 → 分给某张卡片</span></div>
+        <div class="source">
+          <span class="seg1"><span class="num">1</span>读阿伦斯那本书时意识到：摘抄的时候我其实没在思考，只有合上书用自己的话写下来，才发现哪里没懂。</span>
+          顺便想到，
+          <span class="seg2"><span class="num g">2</span>卡片之间的链接比放在哪个文件夹重要得多，文件夹只能放一个地方，链接可以有很多条。</span>
+          明天把 Inbox 清一下。
+        </div>
+        <div class="small faint" style="margin-top:8px">没分配的文字（如「明天把 Inbox 清一下」）保留在原速记里，可以另外转成任务。</div>
+      </div>
+      <div>
+        <div class="label">卡片草稿 <span>2 张 · 目标目录 50-Zettel</span></div>
+        <div class="draft sel">
+          <div class="row"><span class="num">1</span><div class="field focus" style="flex:1">只用自己的话复述，才算真正理解</div></div>
+          <div class="meter" style="margin:7px 0 6px"><span class="okline">● 原子</span><div class="bar"><i style="width:28%;background:var(--ok)"></i></div><span>62 / 500 字</span></div>
+          <div class="chips">
+            <span class="chip">↑ 父卡片：写作是思考的媒介 ✕</span>
+            <span class="chip"><span class="rel">支撑</span>外部化思考… ✕</span>
+            <span class="chip" style="color:var(--accent-text)">＋ 链接</span>
+          </div>
+        </div>
+        <div class="draft">
+          <div class="row"><span class="num g">2</span><div class="field" style="flex:1">卡片之间的链接比分类更重要</div></div>
+          <div class="chips" style="margin-top:7px">
+            <span class="chip"><span class="rel">延伸</span>卡片 1（同批） ✕</span>
+            <span class="chip" style="color:var(--accent-text)">＋ 链接</span>
+          </div>
+        </div>
+        <div class="ghost">＋ 再拆一张</div>
+      </div>
+    </div>
+    <div class="footer">
+      <span class="check small">来源写入速记链接</span>
+      <span class="check small">原速记标记为已处理</span>
+      <span class="uncheck small">同时把剩余文字转为任务</span>
+      <span class="sp"></span>
+      <span class="btn">✦ AI 建议拆分</span><span class="btn">取消</span><span class="btn pri">保存 2 张卡片</span>
+    </div>
+  </div>
+  <ul class="notes">
+    <li><b>幂等：</b>把 <code>CaptureJob</code> 从单个 <code>target</code> 扩展成 <code>targets[]</code>，每张卡片有自己的 <code>tangrow_capture_action_id</code>。中途失败可以「继续处理」，已经建好的卡片不会重复创建（沿用 <code>savedResult</code> 的核对逻辑）。</li>
+    <li><b>链接：</b>正文搬家仍然经过 <code>rebaseMarkdownLinks</code>。「同批」卡片之间的链接在全部卡片建好之后才写入。</li>
+    <li><b>标题：</b>提示写成观点句（陈述句），而不是主题词。「AI 建议拆分」复用现有的即时建议通道，只预填，不保存。</li>
+  </ul>
+
+  <!-- ===================== 3. QUICK ADD + LINK MODAL ===================== -->
+  <h2>三、快速新建「卡片」与「链接到…」弹窗</h2>
+  <div class="grid g2" style="margin-top:16px">
+    <div>
+      <div class="col-title">快速新建 · 第 5 种类型 <span class="tag ext">扩展 quick-add.ts</span></div>
+      <div class="modal">
+        <div class="chips" style="margin-bottom:12px">
+          <span class="chip">速记<kbd>⌘1</kbd></span><span class="chip">笔记<kbd>⌘2</kbd></span><span class="chip">任务<kbd>⌘3</kbd></span><span class="chip">项目<kbd>⌘4</kbd></span><span class="chip on x-new">卡片<kbd>⌘5</kbd></span>
+        </div>
+        <div class="field focus" style="min-height:118px;line-height:1.7">
+          <b>好问题比好答案更可复用</b><br>
+          答案只适用于提问时的情境，问题能带到新的情境里重新回答。写卡片时，留下当时在回答什么问题<span style="border-left:2px solid var(--accent);margin-left:1px"></span>
+        </div>
+        <div class="small faint" style="margin-top:6px">第一行写成一个完整的观点句，下面用自己的话展开。一张卡片只讲一个想法。</div>
+        <div class="meter" style="margin-top:8px"><span class="okline">● 原子</span><div class="bar"><i style="width:14%;background:var(--ok)"></i></div><span>58 / 500 字</span></div>
+        <div class="label">来源 <span>可选</span></div>
+        <div class="field"><span class="link">[[读书笔记 ·《卡片笔记写作法》]]</span></div>
+        <div class="label">关联 <span>建议至少一条</span></div>
+        <div class="chips">
+          <span class="chip"><span class="rel">延伸</span>提问是思考的起点 ✕</span>
+          <span class="chip"><span class="rel ex">举例</span>苏格拉底式提问 ✕</span>
+          <span class="chip" style="color:var(--accent-text)">＋ 链接 <kbd>⌘L</kbd></span>
+        </div>
+        <div class="footer">
+          <span class="uncheck small">保存后继续</span><span class="sp"></span>
+          <span class="btn">✦ AI 分拣</span><span class="btn pri">保存 ⌘↵</span>
+        </div>
+      </div>
+      <ul class="notes">
+        <li>卡片排在第 5 位、快捷键 <code>⌘5</code>，不打乱现有 <code>⌘1–4</code> 的习惯。保存到「卡片目录」（默认 <code>50-Zettel</code>，可配置），写入 <code>tangrow_kind: card</code>、<code>tangrow_id</code> 和 <code>tangrow_stage: seed</code>。</li>
+        <li>超过阈值（默认 500 字）或正文里出现 2 个以上二级标题时，进度条变黄，并提示「可能讲了不止一个想法，建议拆分」。只是提示，不会阻止保存。</li>
+        <li>在侧栏打开某张卡片时用快速新建，可以勾选「作为当前卡片的后续」，自动填入 <code>tangrow_parent</code>。</li>
+      </ul>
+    </div>
+
+    <div>
+      <div class="col-title">链接到… · 选卡片并写下理由 <span class="tag new">新增 card-link-modal.ts</span></div>
+      <div class="modal">
+        <div class="field focus">⌕ 复述<span style="border-left:2px solid var(--accent);margin-left:1px"></span></div>
+        <div style="margin-top:8px">
+          <div class="result on"><span class="idchip">202611161428</span><div><div class="name">只用自己的话复述，才算真正理解</div><div class="snip">…合上书用自己的话写下来，才发现哪里没懂…</div></div></div>
+          <div class="result"><span class="idchip">202608141020</span><div><div class="name">费曼技巧</div><div class="snip">向外行解释一个概念…</div></div></div>
+          <div class="result"><span class="idchip faint">新建</span><div><div class="name">“复述的三个层次”</div><div class="snip">没有这张卡片，回车新建并链接</div></div></div>
+        </div>
+        <div class="label">关系</div>
+        <div class="chips"><span class="chip on">支撑</span><span class="chip">反驳</span><span class="chip">延伸</span><span class="chip">举例</span><span class="chip">对比</span><span class="chip">相关</span></div>
+        <div class="label">理由 <span>一句话说清为什么连</span></div>
+        <div class="field">复述是费曼技巧背后的机制</div>
+        <div class="label">写到哪里</div>
+        <div class="chips"><span class="chip on">「## 关联」小节末尾</span><span class="chip">光标处</span></div>
+        <div style="margin-top:10px" class="small"><span class="uncheck">同时在对方卡片里写反向链接</span> <span class="faint">（默认关闭，避免修改另一篇笔记）</span></div>
+        <div class="footer"><span class="sp"></span><span class="btn">取消</span><span class="btn pri">插入链接</span></div>
+        <div class="small faint" style="margin-top:10px">写入结果：<code>- [[只用自己的话复述，才算真正理解]] — 支撑：复述是费曼技巧背后的机制</code></div>
+      </div>
+      <ul class="notes">
+        <li>基于 Obsidian <code>SuggestModal</code>，候选优先展示卡片，其次是其他笔记。链接文本用 <code>fileManager.generateMarkdownLink</code> 生成，跟随用户的链接格式设置。</li>
+        <li>关系词表固定，保持中英文一致，方便侧栏解析和统计。理由可以留空，留空的链接计入「待补理由」。</li>
+        <li>写入用 <code>vault.process</code>，只在「## 关联」小节末尾追加一行；小节不存在时在文末新建。</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ===================== 4. EDITOR ===================== -->
+  <h2>四、编辑器：提取为卡片 + 卡片模板</h2>
+  <div class="grid g2" style="margin-top:16px">
+    <div>
+      <div class="col-title">右键菜单新增「提取为卡片」 <span class="tag ext">扩展编辑器菜单</span></div>
+      <div class="editor">
+        <div class="tabs-ed"><div class="on">读书笔记 ·《卡片笔记写作法》</div><div>12-Tasks</div></div>
+        <div class="ed-body">
+          <h4>第三章 · 写作是唯一重要的事</h4>
+          <p>作者认为，所有的阅读和思考最终都要落到写作上。<span class="sel">卡片之间的链接比放在哪个文件夹重要得多：一张卡片只能放在一个文件夹里，却可以同时连向很多张卡片，新的想法就在这些连接里出现。</span></p>
+          <p class="muted">因此他建议不要花时间设计分类体系……</p>
+          <div class="menu">
+            <div>剪切<span class="faint">⌘X</span></div><div>复制<span class="faint">⌘C</span></div><hr>
+            <div>Tangrow：加为任务</div><div>Tangrow：存为速记</div>
+            <div class="on x-new">Tangrow：提取为卡片</div>
+          </div>
+        </div>
+      </div>
+      <div style="height:12px"></div>
+      <div class="editor">
+        <div class="tabs-ed"><div class="on">读书笔记 ·《卡片笔记写作法》</div><div>卡片之间的链接比分类更重要</div></div>
+        <div class="ed-body">
+          <h4>第三章 · 写作是唯一重要的事</h4>
+          <p>作者认为，所有的阅读和思考最终都要落到写作上。<span class="link">[[卡片之间的链接比分类更重要]]</span></p>
+          <p class="muted">因此他建议不要花时间设计分类体系……</p>
+        </div>
+      </div>
+      <ul class="notes">
+        <li>弹出一个只有标题的小对话框（默认取选中内容的第一句），确认后新建卡片，选中的文字原样作为正文，并把选中内容替换成链接。新卡片的 <code>tangrow_source</code> 指向当前笔记。</li>
+        <li>替换选中内容会修改当前笔记，所以默认<b>保留原文、在后面追加链接</b>；设置里可以改成「替换为链接」。</li>
+      </ul>
+    </div>
+    <div>
+      <div class="col-title">卡片文件格式（纯 Markdown，没有插件也能读）</div>
+<pre class="md"><span class="c">50-Zettel/只用自己的话复述，才算真正理解.md</span>
+<span class="k">---</span>
+<span class="k">tangrow_kind:</span> card
+<span class="k">tangrow_id:</span> "202611161428"
+<span class="k">tangrow_stage:</span> growing          <span class="c"># seed | growing | evergreen</span>
+<span class="k">tangrow_parent:</span> "[[写作是思考的媒介]]"   <span class="c"># 序列，可选</span>
+<span class="k">tangrow_source:</span> "[[读书笔记 ·《卡片笔记写作法》]]"
+<span class="k">tangrow_reviewed_at:</span> 2026-11-16T08:30:00+08:00
+<span class="k">created:</span> 2026-11-16T14:28:00+08:00
+<span class="k">tags:</span> [学习, 写作]
+<span class="k">---</span>
+
+<span class="h"># 只用自己的话复述，才算真正理解</span>
+
+摘抄时大脑处于“搬运”模式，看起来懂了，其实
+只是认得。合上原文、用自己的话写一遍，
+卡住的地方就是没懂的地方。
+
+<span class="h">## 关联</span>
+- <span class="l">[[外部化思考能减轻工作记忆负担]]</span> — 支撑：解释复述为什么有效
+- <span class="l">[[摘抄不等于学习]]</span> — 反驳：摘抄是复述的反面
+- <span class="l">[[费曼技巧]]</span> — 举例：同一原则的具体方法
+
+<span class="h">## 来源</span>
+- 《卡片笔记写作法》第 3 章，p.45
+</pre>
+      <ul class="notes">
+        <li>文件名默认用 <code>{{title}}</code>，ID 放在属性里，链接读起来更自然；也可以改成 <code>{{id}} {{title}}</code>。ID 精确到分钟，同一分钟内冲突时自动加秒。</li>
+        <li>「## 关联」「## 来源」的小节名跟随界面语言，解析时中英文都识别。用户可以指定自己的卡片模板（同周期笔记模板的占位符机制）。</li>
+        <li>结构笔记就是 <code>tangrow_kind: hub</code> 的普通笔记，用列表组织卡片链接，可以带小标题和简短说明。</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ===================== 5. REPORT ===================== -->
+  <h2>五、报表新增「卡片」页 <span class="tag new">新增</span></h2>
+  <div class="rp" style="margin-top:16px">
+    <div class="rtabs"><div>总览</div><div>行动</div><div>任务</div><div>项目</div><div>笔记</div><div class="on x-new">卡片</div><div>剪藏</div><div>领域</div><div>时间</div></div>
+    <div class="kpis">
+      <div class="kpi"><b>312</b><span>卡片</span><em>+11 本周</em></div>
+      <div class="kpi"><b>2.8</b><span>每张卡片平均出链</span><em>+0.2</em></div>
+      <div class="kpi"><b>8.7%</b><span>孤立率（27 张）</span><em class="w">需关注</em></div>
+      <div class="kpi"><b>68%</b><span>已纳入结构笔记</span></div>
+      <div class="kpi"><b>87%</b><span>链接带理由</span></div>
+      <div class="kpi"><b>46%</b><span>速记 → 卡片转化率（90 天）</span></div>
+    </div>
+    <div class="grid g2" style="gap:12px">
+      <div class="panel">
+        <div class="panel-h"><b>成熟度分布</b><span class="muted small">按 tangrow_stage</span></div>
+        <div class="stack"><i style="width:44%;background:color-mix(in srgb,var(--accent) 35%,var(--surface-3))"></i><i style="width:38%;background:color-mix(in srgb,var(--accent) 65%,var(--surface-3))"></i><i style="width:18%;background:var(--accent)"></i></div>
+        <div class="lg"><span style="--c:color-mix(in srgb,var(--accent) 35%,var(--surface-3))">种子 137</span><span style="--c:color-mix(in srgb,var(--accent) 65%,var(--surface-3))">生长 119</span><span style="--c:var(--accent)">常青 56</span></div>
+        <div class="panel-h" style="margin-top:16px"><b>每周新增卡片 vs 处理速记</b><span class="muted small">近 12 周</span></div>
+        <svg viewBox="0 0 360 90" width="100%" height="90" aria-hidden="true">
+          <g fill="var(--accent)">
+            <rect x="6" y="50" width="11" height="40" rx="2"/><rect x="36" y="40" width="11" height="50" rx="2"/><rect x="66" y="60" width="11" height="30" rx="2"/><rect x="96" y="35" width="11" height="55" rx="2"/><rect x="126" y="45" width="11" height="45" rx="2"/><rect x="156" y="30" width="11" height="60" rx="2"/><rect x="186" y="55" width="11" height="35" rx="2"/><rect x="216" y="25" width="11" height="65" rx="2"/><rect x="246" y="38" width="11" height="52" rx="2"/><rect x="276" y="20" width="11" height="70" rx="2"/><rect x="306" y="42" width="11" height="48" rx="2"/><rect x="336" y="32" width="11" height="58" rx="2"/>
+          </g>
+          <g fill="var(--surface-3)">
+            <rect x="18" y="30" width="9" height="60" rx="2"/><rect x="48" y="22" width="9" height="68" rx="2"/><rect x="78" y="40" width="9" height="50" rx="2"/><rect x="108" y="18" width="9" height="72" rx="2"/><rect x="138" y="28" width="9" height="62" rx="2"/><rect x="168" y="15" width="9" height="75" rx="2"/><rect x="198" y="38" width="9" height="52" rx="2"/><rect x="228" y="12" width="9" height="78" rx="2"/><rect x="258" y="25" width="9" height="65" rx="2"/><rect x="288" y="10" width="9" height="80" rx="2"/><rect x="318" y="30" width="9" height="60" rx="2"/><rect x="348" y="20" width="9" height="70" rx="2"/>
+          </g>
+        </svg>
+        <div class="lg"><span style="--c:var(--accent)">新增卡片</span><span style="--c:var(--surface-3)">处理速记</span></div>
+      </div>
+      <div class="panel">
+        <div class="panel-h"><b>结构笔记</b><span class="muted small">18 篇</span></div>
+        <div class="tw"><table class="t">
+          <tr><th>结构笔记</th><th>收录卡片</th><th>其中孤立</th><th>最近更新</th></tr>
+          <tr><td>写作方法 MOC</td><td>42</td><td>0</td><td>2 天前</td></tr>
+          <tr><td>学习科学</td><td>31</td><td>2</td><td>1 周前</td></tr>
+          <tr><td>决策与习惯</td><td>18</td><td>1</td><td>3 周前</td></tr>
+          <tr><td>产品思考</td><td>12</td><td>0</td><td>2 个月前</td></tr>
+        </table></div>
+        <div class="panel-h" style="margin-top:14px"><b>中心卡片</b><span class="muted small">反链最多</span></div>
+        <div class="tw"><table class="t">
+          <tr><th>卡片</th><th>反链</th><th>出链</th><th>成熟度</th></tr>
+          <tr><td>写作是思考的媒介</td><td>17</td><td>6</td><td>常青</td></tr>
+          <tr><td>外部化思考能减轻工作记忆负担</td><td>12</td><td>4</td><td>常青</td></tr>
+          <tr><td>系统比目标更持久</td><td>9</td><td>3</td><td>生长</td></tr>
+        </table></div>
+      </div>
+    </div>
+  </div>
+  <ul class="notes">
+    <li>数据来源与「笔记」页相同（<code>ReportSource</code> 已有 <code>links</code>），新增反向索引、<code>tangrow_stage</code> 与「## 关联」理由解析。口径写入 REPORTING.md。</li>
+    <li>转化率 = 90 天内结果为卡片的已处理速记 ÷ 90 天内的速记总数。</li>
+  </ul>
+
+  <!-- ===================== 6. SETTINGS ===================== -->
+  <h2>六、设置：「卡片笔记」分组 <span class="tag new">新增</span></h2>
+  <div class="set" style="margin-top:16px;max-width:860px">
+    <div class="set-h">卡片笔记</div>
+    <div class="set-row"><div class="l"><b>启用卡片工作区</b><span>关闭后隐藏卡片标签、快速新建的卡片类型和报表的卡片页，已有卡片不受影响。</span></div><div class="sw"></div></div>
+    <div class="set-row"><div class="l"><b>卡片目录</b><span>新卡片保存的位置。不能和补充目录相同；已在别处的卡片靠属性识别，不搬动。</span></div><div class="input">50-Zettel</div></div>
+    <div class="set-row"><div class="l"><b>文献笔记目录</b><span>留空表示不单独存放，只靠 <code>tangrow_kind: literature</code> 识别。</span></div><div class="input">40-Resources/Literature</div></div>
+    <div class="set-row"><div class="l"><b>文件名格式</b><span><code>{{title}}</code> 或 <code>{{id}} {{title}}</code>。只影响新卡片。</span></div><div class="input">{{title}} ▾</div></div>
+    <div class="set-row"><div class="l"><b>卡片 ID 格式</b><span>Moment 格式，精确到分钟，冲突时加秒。</span></div><div class="input">YYYYMMDDHHmm</div></div>
+    <div class="set-row"><div class="l"><b>卡片模板</b><span>首次创建时使用。支持 <code>{{title}}</code> <code>{{id}}</code> <code>{{date}}</code> <code>{{source}}</code> <code>{{parent}}</code>。</span></div><div class="input">10-Life(Meta)/Templates/卡片.md</div></div>
+    <div class="set-row"><div class="l"><b>原子性提示阈值</b><span>正文超过这个字数，或二级标题不少于 2 个时提示拆分。</span></div><div class="input">500</div></div>
+    <div class="set-row"><div class="l"><b>每日回顾数量</b><span>0 表示关闭今日回顾。</span></div><div class="input">3</div></div>
+    <div class="set-row"><div class="l"><b>提取为卡片时替换原文</b><span>关闭时保留原文并在后面追加链接。</span></div><div class="sw off"></div></div>
+    <div class="set-h">侧栏</div>
+    <div class="set-row"><div class="l"><b>显示的工作区</b><span>窄侧栏放不下 8 个标签。隐藏的工作区仍然可以通过命令打开。</span></div>
+      <div class="chips" style="max-width:340px;justify-content:flex-end"><span class="chip on">主页</span><span class="chip on">速记</span><span class="chip on">卡片</span><span class="chip on">收藏</span><span class="chip on">写作</span><span class="chip">专注</span><span class="chip">习惯</span><span class="chip on">AI</span></div></div>
+  </div>
+
+  <!-- ===================== 7. QUESTIONS ===================== -->
+  <h2>七、需要拍板的问题</h2>
+  <div class="q">
+    <b>1. 卡片放在哪里？</b>
+    <div class="opts">
+      <div class="opt rec"><b>推荐：独立卡片目录 50-Zettel，平铺</b>和 PARA 目录并列；Luhmann 式卡片盒不需要子目录，靠链接组织。</div>
+      <div class="opt"><b>放进 Resources 下的子目录</b>不新增顶层目录，但会和资源笔记混在一起。</div>
+      <div class="opt"><b>不限目录，只靠属性识别</b>最灵活，但新卡片仍需要一个默认落点。</div>
+    </div>
+  </div>
+  <div class="q">
+    <b>2. 文件名里放不放 ID？</b>
+    <div class="opts">
+      <div class="opt rec"><b>推荐：只用标题，ID 放在属性里</b><code>[[标题]]</code> 读起来自然；改标题时 Obsidian 会自动更新链接。</div>
+      <div class="opt"><b>ID + 标题</b>名字绝不重复，适合有很多相似标题的人，链接显示会长一些。</div>
+    </div>
+  </div>
+  <div class="q">
+    <b>3. 要不要支持 Folgezettel（序列 / 分支）？</b>
+    <div class="opts">
+      <div class="opt rec"><b>推荐：只做 <code>tangrow_parent</code> 父子关系</b>侧栏显示树，「续写 / 分支」两个按钮。不做 1a2b 式编号。</div>
+      <div class="opt"><b>完整 Luhmann 编号</b>文件名带 1a2b，排序直观，但改结构时成本高，和标题文件名冲突。</div>
+      <div class="opt"><b>不做</b>只靠普通链接和结构笔记。</div>
+    </div>
+  </div>
+  <div class="q">
+    <b>4. 第 8 个侧栏标签怎么放？</b>
+    <div class="opts">
+      <div class="opt rec"><b>推荐：新增「卡片」+「显示的工作区」设置</b>默认 8 个都显示，放不下的折叠进「⋯ 更多」；用户可以隐藏不用的工作区。</div>
+      <div class="opt"><b>卡片合并进「收藏」</b>不加标签，但「收藏」和「卡片」的语义不同。</div>
+    </div>
+  </div>
+</main>
+</div>
+</body>
+</html>
