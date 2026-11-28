@@ -16,7 +16,6 @@
   "Today is outlined. Future days are unfilled.": "今天以描边标记，未来日期留空。",
   "Daily count: 0, 1, 2-3, 4-7, 8 or more.": "每天数量：0、1、2–3、4–7、8 及以上。",
   "Less": "少",
-  "More": "多",
   "{count} current pins have no valid pin date and are not shown in the calendar.": "有 {count} 篇当前收藏缺少有效日期，未计入日历。",
   "Notes and pins": "笔记与收藏",
   "{day}: {notes} new notes, {pins} current pins": "{day}：新笔记 {notes} 篇，当前收藏 {pins} 篇",

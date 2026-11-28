@@ -1,6 +1,6 @@
 import { taskDueLabel, type TaskDisplay } from './task-display';
 import type { Locale } from './types';
-import { icon, type SidebarUI } from './ui';
+import { icon, nameTooltipButton, type SidebarUI } from './ui';
 
 interface TaskMetadataOptions {
   source?: string;
@@ -35,6 +35,8 @@ export function renderTaskMetadata(
   }
   for (const tag of display.tags) items.push({ text: tag });
   if (options.source) items.push({ text: options.source });
+  const label = display.title || ui.t('Untitled task');
+  nameTooltipButton(button, [label, ...items.map((item) => item.accessibleText ?? item.text)].join(', '));
   if (!items.length) return;
   const meta = button.createSpan({ cls: 'tangrow-task-meta' });
   for (const { text, iconName, cls } of items) {
@@ -42,6 +44,4 @@ export function renderTaskMetadata(
     if (iconName) icon(item, iconName).setAttribute('aria-hidden', 'true');
     item.createSpan({ text });
   }
-  const label = button.getAttribute('aria-label') ?? display.title;
-  button.setAttribute('aria-label', [label, ...items.map((item) => item.accessibleText ?? item.text)].join(', '));
 }

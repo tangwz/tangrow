@@ -4,7 +4,7 @@ import type { WorkbenchProject, WorkbenchProjectTask } from './project-workbench
 import { sortTaskDisplay, taskDisplayRank, taskDueLabel, type TaskDisplay } from './task-display';
 import { renderTaskMetadata } from './task-row';
 import type { SidebarHost } from './types';
-import { icon, type SidebarUI } from './ui';
+import { icon, nameTooltipButton, type SidebarUI } from './ui';
 
 const TASK_PREVIEW_LIMIT = 5;
 const PROJECT_STATUS = { open: 'Active', done: 'Completed', archived: 'Archived', unknown: 'Status not set' } as const;
@@ -219,14 +219,13 @@ export class ProjectWorkbench {
     const label = display.title || this.ui.t('Untitled task');
     const key = `${task.path}:${task.line}`;
     const row = parent.createDiv({ cls: 'tangrow-task-item' });
-    const check = row.createEl('button', { cls: 'tangrow-task-check', attr: {
-      type: 'button', 'aria-label': this.ui.t('Complete: {task}', { task: label })
-    } });
+    const check = row.createEl('button', { cls: 'tangrow-task-check', attr: { type: 'button' } });
     const busy = this.completingTasks.has(key);
     check.disabled = busy || !!task.labelPending;
     if (busy) row.addClass('is-completing');
     check.dataset.tangrowAction = `project-task-check-${key}`;
     setTooltip(check, this.ui.t(task.labelPending ? 'Open the note to complete this task' : 'Mark done in the note'));
+    nameTooltipButton(check, this.ui.t('Complete: {task}', { task: label }));
     check.addEventListener('click', () => {
       if (check.disabled || this.completingTasks.has(key)) return;
       this.completingTasks.add(key);
