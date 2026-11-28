@@ -1154,7 +1154,7 @@ button.tangrow-report-day:hover { outline: 1px solid var(--text-accent); outline
   padding: var(--size-4-3);
 }
 .tangrow-settings .tangrow-settings-error { color: var(--text-error); }
-.tangrow-settings .tangrow-settings-status {
+.tangrow-settings .tangrow-settings-status:not([hidden]) {
   display: inline-flex;
   align-items: center;
   gap: var(--size-4-2);
