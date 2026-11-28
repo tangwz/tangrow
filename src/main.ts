@@ -219,7 +219,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       try { await this.persist(); } catch (error) { new Notice(this.error(error)); }
     }
     if (!this.alive) return;
-    this.ribbon = this.addRibbonIcon('sprout', this.t('Open Tangrow'), () => { void this.openSidebar().catch((error) => new Notice(this.error(error))); });
+    this.ribbon = this.addRibbonIcon('sprout', this.t('Open Tangrow'), () => { void this.openSidebar({ reveal: true }).catch((error) => new Notice(this.error(error))); });
     this.registerCommands();
     this.addSettingTab(new TangrowSettings(this));
     const refresh = (): void => this.scheduleRefresh();
@@ -373,7 +373,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     if (this.commandsRegistered) {
       for (const id of ['quick-add', 'new-note', 'new-task', 'new-project', 'new-card', 'open-assistant', 'open-companion', 'open-report', 'open-capture-window', 'open-immersive-capture', 'toggle-note-immersion', ...JOURNAL_PERIODS.map((period) => `open-${period}-note`), 'setup-bases', 'migrate-companion-folder', 'quick-capture', 'pin-note']) this.removeCommand(id);
     }
-    this.registerAccessCommand({ id: 'open-companion', name: this.t('Open companion'), callback: () => { void this.openSidebar().catch((error) => new Notice(this.error(error))); } });
+    this.registerAccessCommand({ id: 'open-companion', name: this.t('Open companion'), callback: () => { void this.openSidebar({ reveal: true }).catch((error) => new Notice(this.error(error))); } });
     this.registerAccessCommand({ id: 'quick-add', name: this.t('Quick add'), callback: () => this.openQuickAdd() });
     for (const [id, name, kind] of [['new-note', 'New note', 'note'], ['new-task', 'New task', 'task'], ['new-project', 'New project', 'project']] as const) {
       this.registerAccessCommand({ id, name: this.t(name), callback: () => this.openQuickAdd(kind) });
@@ -456,10 +456,11 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     });
   }
 
-  async openSidebar(): Promise<void> {
+  async openSidebar({ reveal = false }: { reveal?: boolean } = {}): Promise<void> {
     const { workspace } = this.app;
-    const leaf = await workspace.ensureSideLeaf(VIEW_TYPE, 'right', { active: false });
-    if (this.alive && Platform.isMobileApp) workspace.setActiveLeaf(leaf, { focus: true });
+    const mobile = Platform.isMobileApp;
+    const leaf = await workspace.ensureSideLeaf(VIEW_TYPE, 'right', { active: false, reveal: !mobile });
+    if (this.alive && mobile && reveal) await workspace.revealLeaf(leaf);
   }
   openOnboarding(onStartup = false): void {
     if (!this.alive || this.onboardingModal) return;

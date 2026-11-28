@@ -407,6 +407,72 @@ for (const platform of ['ios', 'android'] as const) test(`on ${platform}, first 
   }
 });
 
+test('dismissing the startup guide on mobile prepares the companion without revealing or activating it', async () => {
+  const { app, plugin, dispose } = fixture();
+  const original = Object.getOwnPropertyDescriptor(mock.Platform, 'isMobileApp');
+  Object.defineProperty(mock.Platform, 'isMobileApp', { value: true, configurable: true });
+  try {
+    plugin.settings.autoOpen = true;
+    const ensureRequests: unknown[][] = [];
+    const revealRequests: unknown[] = [];
+    Object.assign(app.workspace, {
+      ensureSideLeaf: async (...args: unknown[]) => {
+        ensureRequests.push(args);
+        return { view: {} };
+      },
+      revealLeaf: async (leaf: unknown) => { revealRequests.push(leaf); }
+    });
+    plugin.openOnboarding(true);
+    const wizard = Modal.current;
+    assert.ok(wizard);
+    wizard.close();
+    await Promise.resolve();
+    assert.deepEqual(ensureRequests, [['tangrow-sidebar', 'right', { active: false, reveal: false }]]);
+    assert.deepEqual(app.workspace.activationRequests, []);
+    assert.deepEqual(revealRequests, []);
+  } finally {
+    Modal.current?.close();
+    dispose();
+    if (original) Object.defineProperty(mock.Platform, 'isMobileApp', original);
+    else Reflect.deleteProperty(mock.Platform, 'isMobileApp');
+  }
+});
+
+test('a new onboarding composition started while read-only keeps its candidate', async () => {
+  const { access, navigate, dispose } = fixture();
+  navigate('Welcome guide');
+  const wizard = Modal.current!;
+  try {
+    const click = async (label: string) => {
+      const button = wizard.contentEl.descendants().find((element) => element.tagName === 'BUTTON' && element.textContent === label);
+      assert.ok(button?.onclick, label);
+      await button.onclick();
+    };
+    await click('Get started');
+    await click('Not now');
+    await click('Next');
+    const capture = wizard.contentEl.querySelector('textarea')!;
+    capture.value = 'First ';
+    capture.dispatchEvent(new Event('input'));
+    capture.dispatchEvent(new Event('compositionstart'));
+    capture.value = 'First ni';
+    access.change('expired');
+    assert.equal(capture.readOnly, true);
+    capture.dispatchEvent(new Event('compositionend'));
+    assert.equal(capture.value, 'First ');
+
+    capture.dispatchEvent(new Event('compositionstart'));
+    access.change('active');
+    assert.equal(capture.readOnly, false);
+    capture.value = 'First 你';
+    capture.dispatchEvent(new Event('compositionend'));
+    assert.equal(capture.value, 'First 你');
+  } finally {
+    wizard.close();
+    dispose();
+  }
+});
+
 test('an unactivated user can skip setup and capture without creating vault content', async () => {
   const { access, app, plugin, navigate, dispose } = fixture();
   access.change('not_started');

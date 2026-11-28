@@ -69,7 +69,7 @@ interface TestPlugin extends MockPlugin {
   loadRecoveryDrafts(): (RecoveryDraft & { saving: boolean })[];
   submitRecoveryDraft(id: string): Promise<void>;
   discardRecoveryDraft(id: string): void;
-  openSidebar(): Promise<void>;
+  openSidebar(options?: { reveal?: boolean }): Promise<void>;
   readCapture(path: string): Promise<string>;
   openPeriodicNote(period: JournalPeriod, date?: string, immersive?: boolean): Promise<void>;
   updateJournalSettings(period: JournalPeriod, format: string, template: string): Promise<void>;
@@ -1824,28 +1824,81 @@ test('recently opened notes track renames and deletions and remain bounded after
   });
 });
 
-test('opening Tangrow activates the existing mobile drawer and preserves desktop focus', async () => {
-  const { app, plugin } = createPlugin();
-  const sidebar = { view: {} };
-  const activations: unknown[] = [];
-  Object.assign(app.workspace, {
-    ensureSideLeaf: async (type: string, side: string, options: unknown) => {
-      assert.equal(type, 'tangrow-sidebar');
-      assert.equal(side, 'right');
-      assert.deepEqual(options, { active: false });
-      return sidebar;
-    },
-    setActiveLeaf: (leaf: unknown, options: unknown) => activations.push([leaf, options])
+test('mobile startup prepares the Tangrow sidebar without revealing it or changing the active leaf', async () => {
+  await withWindow(async () => {
+    const { app, plugin } = createPlugin();
+    plugin.savedData = { onboardingCompleted: true, settings: { autoOpen: true } };
+    app.workspace.setActiveFile(app.vault.seedFile('Open note.md', 'In progress'));
+    const activeLeaf = app.workspace.getMostRecentLeaf();
+    const ensureCalls: unknown[] = [];
+    const reveals: unknown[] = [];
+    Object.assign(app.workspace, {
+      ensureSideLeaf: async (...args: unknown[]) => {
+        ensureCalls.push(args);
+        return { view: {} };
+      },
+      revealLeaf: async (leaf: unknown) => { reveals.push(leaf); }
+    });
+    const wasMobile = harness.Platform.isMobileApp;
+    try {
+      harness.Platform.isMobileApp = true;
+      await plugin.onload();
+      app.workspace.emitLayoutReady();
+      await Promise.resolve();
+      assert.deepEqual(ensureCalls, [['tangrow-sidebar', 'right', { active: false, reveal: false }]]);
+      assert.deepEqual(reveals, []);
+      assert.deepEqual(app.workspace.activationRequests, []);
+      assert.equal(app.workspace.getMostRecentLeaf(), activeLeaf);
+    } finally { harness.Platform.isMobileApp = wasMobile; }
   });
+});
+
+test('the Tangrow ribbon and Open companion command reveal the existing mobile drawer', async () => {
+  await withWindow(async () => {
+    const { app, plugin } = createPlugin();
+    const sidebar = { view: {} };
+    const reveals: unknown[] = [];
+    let ribbon: (() => void) | undefined;
+    let command: Command | undefined;
+    Object.assign(plugin, {
+      addRibbonIcon(_icon: string, _title: string, callback: () => void) { ribbon = callback; },
+      addCommand(candidate: Command) { if (candidate.id === 'open-companion') command = candidate; }
+    });
+    Object.assign(app.workspace, {
+      ensureSideLeaf: async () => sidebar,
+      revealLeaf: async (leaf: unknown) => { reveals.push(leaf); }
+    });
+    const wasMobile = harness.Platform.isMobileApp;
+    try {
+      harness.Platform.isMobileApp = true;
+      await plugin.onload();
+      assert.ok(ribbon);
+      ribbon();
+      await Promise.resolve();
+      assert.deepEqual(reveals, [sidebar]);
+
+      assert.ok(command?.callback);
+      command.callback();
+      await Promise.resolve();
+      assert.deepEqual(reveals, [sidebar, sidebar]);
+    } finally { harness.Platform.isMobileApp = wasMobile; }
+  });
+});
+
+test('opening the desktop Tangrow sidebar reveals it without moving focus', async () => {
+  const { app, plugin } = createPlugin();
   const wasMobile = harness.Platform.isMobileApp;
+  Object.assign(app.workspace, {
+    ensureSideLeaf: async (...args: unknown[]) => {
+      assert.deepEqual(args, ['tangrow-sidebar', 'right', { active: false, reveal: true }]);
+      return { view: {} };
+    }
+  });
   try {
     harness.Platform.isMobileApp = false;
     await plugin.openSidebar();
-    assert.deepEqual(activations, []);
-
-    harness.Platform.isMobileApp = true;
-    await plugin.openSidebar();
-    assert.deepEqual(activations, [[sidebar, { focus: true }]]);
+    await plugin.openSidebar({ reveal: true });
+    assert.deepEqual(app.workspace.activationRequests, []);
   } finally { harness.Platform.isMobileApp = wasMobile; }
 });
 
@@ -3094,7 +3147,7 @@ async function compositionFields(plugin: TestPlugin) {
   return { fields, close: async () => { panel.destroy(); await studio.onClose(); } };
 }
 
-test('iOS outside taps do not confirm preedit when WebKit briefly refocuses the editor', async t => {
+test('iOS drops preedit after an outside tap and keeps candidates selected after returning', async t => {
   t.mock.method(harness.compositionTiming, 'later', nativeCompositionTiming);
   const desktop = harness.Platform.isDesktopApp;
   const ios = Object.getOwnPropertyDescriptor(harness.Platform, 'isIosApp');
@@ -3111,9 +3164,14 @@ test('iOS outside taps do not confirm preedit when WebKit briefly refocuses the 
     try {
       for (const [field, control, shared] of fields) {
         await t.test(field, () => {
-          const pointerDown = (target: EventTarget) => control.ownerDocument.dispatchEvent(Object.assign(new Event('pointerdown'), {
-            composedPath: () => [target, control.ownerDocument]
-          }));
+          const at = (type: string, timeStamp: number) =>
+            Object.defineProperty(new Event(type), 'timeStamp', { value: timeStamp });
+          const pointer = (type: 'pointerdown' | 'pointerup', target: EventTarget, timeStamp: number) => {
+            control.ownerDocument.dispatchEvent(Object.assign(at(type, timeStamp), {
+              pointerId: 1,
+              composedPath: () => [target, control.ownerDocument]
+            }));
+          };
           const replaceComposition = (inputType: string, data: string | null) => {
             const event = { inputType, data };
             control.dispatchEvent(Object.assign(new Event('beforeinput'), event));
@@ -3121,21 +3179,29 @@ test('iOS outside taps do not confirm preedit when WebKit briefly refocuses the 
             control.dispatchEvent(Object.assign(new Event('input'), event));
           };
 
-          for (const confirmation of ['outside tap', 'inside tap', 'keyboard'] as const) {
+          for (const [confirmation, releasedAt, focusedAt] of [
+            ['outside tap', 105, 110],
+            ['outside touch release', 220, 225],
+            ['inside tap', 105, 110],
+            ['keyboard', 105, 110],
+            ['non-pointer return', 105, 500]
+          ] as const) {
             control.value = 'Original';
             control.dispatchEvent(new Event('input'));
             control.setSelectionRange(control.value.length, control.value.length);
             control.dispatchEvent(new Event('compositionstart'));
             control.value += 'n';
             control.dispatchEvent(Object.assign(new Event('input'), { inputType: 'insertCompositionText', isComposing: true }));
-            pointerDown(outside);
+            pointer('pointerdown', outside, 100);
             control.dispatchEvent(new Event('blur'));
-            if (confirmation === 'inside tap') pointerDown(control);
-            control.dispatchEvent(new Event('focus'));
+            pointer('pointerup', outside, releasedAt);
+            if (confirmation === 'inside tap') pointer('pointerdown', control, focusedAt);
+            control.dispatchEvent(at('focus', focusedAt));
             if (confirmation === 'keyboard') {
               control.dispatchEvent(Object.assign(new Event('keydown'), { key: 'Process', code: 'Space', isComposing: true }));
             }
-            const text = confirmation === 'outside tap' ? 'n' : '\u4f60';
+            const abandoned = confirmation === 'outside tap' || confirmation === 'outside touch release';
+            const text = abandoned ? 'n' : '\u4f60';
             replaceComposition('deleteCompositionText', null);
             replaceComposition('insertFromComposition', text);
             control.dispatchEvent(Object.assign(new Event('compositionend'), { data: text }));
@@ -3144,7 +3210,7 @@ test('iOS outside taps do not confirm preedit when WebKit briefly refocuses the 
             }
             control.dispatchEvent(new Event('blur'));
             timers.flush();
-            const expected = confirmation === 'outside tap' ? 'Original' : 'Original' + text;
+            const expected = abandoned ? 'Original' : 'Original' + text;
             assert.deepEqual([control.value, shared()], [expected, expected], confirmation);
           }
         });

@@ -49,9 +49,15 @@ export class DraftComposition {
   private explicitCommit = false;
   private onSettled?: (confirmed: boolean) => void;
   private awaitingRelease = false;
-  private pointerDownOutside = false;
+  private outsidePointer?: { id: number; at: number };
   private readonly onPointerDown = (event: PointerEvent) => {
-    this.pointerDownOutside = !event.composedPath().includes(this.control);
+    this.outsidePointer = event.composedPath().includes(this.control)
+      ? undefined : { id: event.pointerId, at: event.timeStamp };
+  };
+  private readonly onPointerUp = (event: PointerEvent) => {
+    // WebKit can change focus when a touch ends, well after pointerdown.
+    const outside = this.outsidePointer;
+    if (outside && outside.id === event.pointerId) outside.at = event.timeStamp;
   };
   private readonly onBlur = () => {
     this.focusState = 'blurred';
@@ -60,7 +66,11 @@ export class DraftComposition {
     // Nothing can confirm the composition after this, so do not hold the draft for the rest of the wait.
     if (this.awaitingRelease) this.flush();
   };
-  private readonly onFocus = () => {
+  private readonly onFocus = (event: Event) => {
+    // A return outside the pointer gesture can still confirm the current composition.
+    if (this.outsidePointer && event.timeStamp - this.outsidePointer.at > focusChangeGraceMs) {
+      this.outsidePointer = undefined;
+    }
     // Returning after compositionend cannot revive a candidate dismissed by focus loss.
     if (this.focusState === 'blurred' && !this.onSettled) this.focusState = 'refocused';
   };
@@ -75,7 +85,8 @@ export class DraftComposition {
   private readonly onInput = (event: Event) => {
     // WebKit can report a focus-loss commit as insertFromComposition, even after an outside tap briefly refocuses the field.
     // Only a candidate picked after intentionally returning counts as explicit. Otherwise the grace period decides.
-    if ((event as InputEvent).inputType !== 'insertFromComposition' || this.focusState !== 'refocused' || this.pointerDownOutside) return;
+    if ((event as InputEvent).inputType !== 'insertFromComposition' || this.focusState !== 'refocused' ||
+        this.outsidePointer) return;
     this.explicitCommit = true;
     this.flush();
   };
@@ -101,6 +112,7 @@ export class DraftComposition {
     if (Platform.isIosApp) {
       this.pointerDocument = control.ownerDocument;
       this.pointerDocument.addEventListener('pointerdown', this.onPointerDown, true);
+      this.pointerDocument.addEventListener('pointerup', this.onPointerUp, true);
     }
   }
 
@@ -205,5 +217,6 @@ export class DraftComposition {
     this.control.removeEventListener('keyup', this.onKeyUp);
     this.control.removeEventListener('input', this.onInput);
     this.pointerDocument?.removeEventListener('pointerdown', this.onPointerDown, true);
+    this.pointerDocument?.removeEventListener('pointerup', this.onPointerUp, true);
   }
 }

@@ -180,11 +180,12 @@ export class OnboardingModal extends Modal {
         remember();
       });
       capture.addEventListener('compositionstart', () => {
-        if (!canEdit() || !track) return;
-        this.captureComposition?.flush();
-        if (!canEdit()) return;
-        this.captureComposition?.dispose();
+        if (!isCurrent()) return;
+        if (!capture.readOnly && track) this.captureComposition?.flush();
+        // A new composition invalidates the marker for late endings, even while the field is read-only.
         this.cancelledCaptureComposition = undefined;
+        if (!canEdit() || !track) return;
+        this.captureComposition?.dispose();
         this.captureComposition = new DraftComposition(capture);
         this.refreshControls();
       });
