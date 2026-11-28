@@ -36,7 +36,7 @@ import { addEditingActivity, createActivityState, normalizeActivityState, summar
 import { ReportSource } from './report-source';
 import { captureWritingNavigation } from './writing-navigation';
 import { aggregateReport } from './report-data';
-import { buildWorkbenchPara, projectMetadataOwner, readProjectType, workbenchPathIncluded, type ProjectNoteProperty, type WorkbenchArea,
+import { buildWorkbenchPara, hasProjectMetadataValue, projectMetadataOwner, readProjectType, workbenchPathIncluded, type ProjectNoteProperty, type WorkbenchArea,
   type WorkbenchLinkCandidate, type WorkbenchParaData, type WorkbenchProject, type WorkbenchProjectRecord, type WorkbenchProjectTaskSource,
   type WorkbenchProjectType } from './project-workbench-data';
 import { canonicalEntityNotes, reportStatusSource } from './report-metrics';
@@ -1414,12 +1414,10 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     const included = workbenchPathIncluded(this.settings);
     return canonicalEntityNotes(this.app.vault.getMarkdownFiles().filter((file) => file.parent?.path === folder.path && included(file.path)), folder.path);
   }
-  private workbenchProjectNote(path: string, property?: ProjectNoteProperty): TFile {
+  private workbenchProjectNote(path: string): TFile {
     const project = this.workbenchEntity(path, this.settings.projectFolder, 'Choose an existing project.');
     if (project instanceof TFile) return project;
-    const notePath = property
-      ? projectMetadataOwner(this.canonicalWorkbenchNotes(project).map((file) => ({ path: file.path, frontmatter: this.app.metadataCache.getFileCache(file)?.frontmatter })), property)?.path
-      : this.workbenchProjects().find((entry) => entry.path === path)?.notePath;
+    const notePath = this.workbenchProjects().find((entry) => entry.path === path)?.notePath;
     return this.workbenchLinkedNote(notePath, project.path, 'Choose an existing project note.');
   }
   private workbenchAreaNote(path: string): TFile {
@@ -1427,38 +1425,35 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     const notePath = area instanceof TFile ? area.path : this.workbenchAreas().find((entry) => entry.path === path)?.notePath;
     return this.workbenchLinkedNote(notePath, area.path === notePath ? this.settings.areaFolder : area.path, 'This area has no note to link.');
   }
-  async setWorkbenchProjectArea(projectPath: string, areaPath: string | null): Promise<void> {
-    await this.exclusive(async () => {
-      const project = this.workbenchProjectNote(projectPath, 'tangrow_area');
-      const area = areaPath === null ? null : this.workbenchAreaNote(areaPath);
-      const link = area ? this.propertyLink(area, project.path) : null;
-      await this.app.fileManager.processFrontMatter(project, (fields) => {
-        if (link === null) delete fields.tangrow_area;
-        else fields.tangrow_area = link;
-      });
+  private async setWorkbenchProjectMetadata(
+    projectPath: string, property: ProjectNoteProperty, valueAt: (ownerPath: string) => string | null
+  ): Promise<void> {
+    const project = this.workbenchEntity(projectPath, this.settings.projectFolder, 'Choose an existing project.');
+    const canonical = project instanceof TFile ? [project] : this.canonicalWorkbenchNotes(project);
+    const notes = await Promise.all(canonical.map(async (file) => {
+      const path = file.path;
+      const info = getFrontMatterInfo(await this.app.vault.read(file));
+      const parsed: unknown = info.exists ? parseYaml(info.frontmatter) : null;
+      const frontmatter = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
+      return { file, path, frontmatter };
+    }));
+    const owner = projectMetadataOwner(notes, property);
+    if (!owner || this.app.vault.getAbstractFileByPath(owner.path) !== owner.file) throw new Error('Choose an existing project note.');
+    const value = valueAt(owner.path);
+    const hasFallback = value === null && notes.some((note) => note !== owner && hasProjectMetadataValue(note.frontmatter?.[property]));
+    await this.app.fileManager.processFrontMatter(owner.file, (fields) => {
+      if (value === null && !hasFallback) delete fields[property];
+      else fields[property] = value;
     });
+  }
+  async setWorkbenchProjectArea(projectPath: string, areaPath: string | null): Promise<void> {
+    await this.exclusive(() => this.setWorkbenchProjectMetadata(projectPath, 'tangrow_area',
+      (path) => areaPath === null ? null : this.propertyLink(this.workbenchAreaNote(areaPath), path)));
     this.notify();
   }
   async setWorkbenchProjectType(projectPath: string, type: string | null): Promise<void> {
     const value = readProjectType(type);
-    await this.exclusive(async () => {
-      const project = this.workbenchEntity(projectPath, this.settings.projectFolder, 'Choose an existing project.');
-      const canonical = project instanceof TFile ? [project] : this.canonicalWorkbenchNotes(project);
-      const notes = await Promise.all(canonical.map(async (file) => {
-        const path = file.path;
-        const info = getFrontMatterInfo(await this.app.vault.read(file));
-        const parsed: unknown = info.exists ? parseYaml(info.frontmatter) : null;
-        const frontmatter = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
-        return { file, path, frontmatter };
-      }));
-      const owner = projectMetadataOwner(notes, 'tangrow_project_type');
-      if (!owner || this.app.vault.getAbstractFileByPath(owner.path) !== owner.file) throw new Error('Choose an existing project note.');
-      const hasFallback = notes.some((note) => note !== owner && readProjectType(note.frontmatter?.tangrow_project_type) !== null);
-      await this.app.fileManager.processFrontMatter(owner.file, (fields) => {
-        if (value === null && !hasFallback) delete fields.tangrow_project_type;
-        else fields.tangrow_project_type = value;
-      });
-    });
+    await this.exclusive(() => this.setWorkbenchProjectMetadata(projectPath, 'tangrow_project_type', () => value));
     this.notify();
   }
   async linkWorkbenchNote(notePath: string, projectPath: string): Promise<void> {

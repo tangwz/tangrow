@@ -329,7 +329,9 @@ test('the model selector preserves custom IDs and rolls back a failed preset sav
   const model = row('aiModel');
   const select = model.querySelector('select')!;
   const custom = model.querySelector('input')!;
+  const customControls = custom.parentElement!;
   assert.deepEqual([select.value, custom.value], ['', 'claude-custom-2026']);
+  assert.equal(customControls.hidden, false);
   select.value = 'claude-sonnet-5-5';
   plugin.saveFailures = 1;
   await select.onchange?.();
@@ -337,9 +339,11 @@ test('the model selector preserves custom IDs and rolls back a failed preset sav
   select.value = 'claude-sonnet-5-5';
   await select.onchange?.();
   assert.equal(plugin.settings.aiModel, 'claude-sonnet-5-5');
+  assert.equal(customControls.hidden, true);
   select.value = '';
   await select.onchange?.();
   assert.equal(plugin.settings.aiModel, 'claude-sonnet-5-5');
+  assert.equal(customControls.hidden, false);
   custom.value = 'claude-another-model';
   await byText('Save model').onclick?.();
   assert.deepEqual([select.value, custom.value, plugin.settings.aiModel], ['', 'claude-another-model', 'claude-another-model']);
