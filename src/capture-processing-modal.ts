@@ -26,7 +26,7 @@ export class CaptureProcessingModal extends Modal {
     const title = titleField.createEl('input', { type: 'text', value: this.capture.name, attr: { id: titleId, maxlength: '240' } });
     const projectField = form.createDiv();
     const projectId = `tangrow-capture-project-${crypto.randomUUID()}`;
-    projectField.createEl('label', { text: t('Project note'), attr: { for: projectId } });
+    const projectLabel = projectField.createEl('label', { text: t('Project note'), attr: { for: projectId } });
     const project = projectField.createEl('select', { attr: { id: projectId } });
     project.createEl('option', { value: '', text: t('No project') });
     for (const file of captureProjectFiles(this.host.app, this.host.settings).filter((file) => file.path !== this.capture.path)) {
@@ -105,7 +105,8 @@ export class CaptureProcessingModal extends Modal {
       const mode = action.value;
       const busy = saving || openingCard;
       titleField.hidden = mode !== 'note' && mode !== 'task';
-      projectField.hidden = mode !== 'note' && mode !== 'project';
+      projectField.hidden = mode !== 'note' && mode !== 'project' && mode !== 'task';
+      projectLabel.textContent = t(mode === 'task' ? 'Project link (optional)' : 'Project note');
       save.textContent = t(saving ? 'Processing capture...' : 'Process capture');
       action.disabled = title.disabled = project.disabled = busy;
       if (suggestButton) suggestButton.disabled = busy || this.suggestionController !== null;
@@ -132,8 +133,9 @@ export class CaptureProcessingModal extends Modal {
     form.addEventListener('submit', (event) => {
       event.preventDefault();
       if (saving || openingCard || save.disabled || !this.host.requireAccess()) return;
-      const request: CaptureRequest = action.value === 'note' ? { action: 'note', title: title.value, ...(project.value ? { projectPath: project.value } : {}) }
-        : action.value === 'task' ? { action: 'task', title: title.value }
+      const projectChoice = project.value ? { projectPath: project.value } : {};
+      const request: CaptureRequest = action.value === 'note' ? { action: 'note', title: title.value, ...projectChoice }
+        : action.value === 'task' ? { action: 'task', title: title.value, ...projectChoice }
         : action.value === 'project' ? { action: 'project', projectPath: project.value } : { action: 'done' };
       saving = true;
       this.suggestionController?.abort();

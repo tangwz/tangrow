@@ -6,7 +6,8 @@ type TaskPriority = typeof PRIORITIES[keyof typeof PRIORITIES];
 
 // Match code and links before metadata so their contents stay intact.
 const TASK_TOKENS = new RegExp([
-  /(?<literal>`+[^`\n]+`+|\[\[[^\]\n]+\]\]|\[[^\]\n]*\]\([^\n)]*\))/,
+  /(?<literal>`+[^`\n]+`+|[!\\]\[\[[^\]\n]+\]\]|\[[^\]\n]*\]\([^\n)]*\))/,
+  /(?<link>\[\[[^\]\n]+\]\])/,
   /<!--[^\n]*?-->/,
   /(?<priority>[🔺⏫🔼🔽⏬])\uFE0F?/u,
   /(?<dateMarker>[📅⏳🛫➕✅❌])\uFE0F?\s*(?<date>\d{4}-\d{2}-\d{2})(?![\p{L}\p{M}\p{N}_-])/u,
@@ -17,6 +18,7 @@ const TASK_TOKENS = new RegExp([
 export interface TaskDisplay {
   title: string;
   tags: string[];
+  links: string[];
   priority: TaskPriority | null;
   due: Date | null;
   recurrence: string | null;
@@ -24,10 +26,11 @@ export interface TaskDisplay {
 
 /** Parse the indexed task label for display. The source label remains intact for task edits. */
 export function parseTaskDisplay(raw: string): TaskDisplay {
-  const display: TaskDisplay = { title: '', tags: [], priority: null, due: null, recurrence: null };
+  const display: TaskDisplay = { title: '', tags: [], links: [], priority: null, due: null, recurrence: null };
   let end = 0;
   for (const { 0: token, index, groups } of raw.matchAll(TASK_TOKENS)) {
     if (index === undefined || groups === undefined || groups.literal) continue;
+    if (groups.link) display.links.push(groups.link);
     if (groups.priority) display.priority = PRIORITIES[groups.priority as keyof typeof PRIORITIES];
     if (groups.date) {
       const date = new Date(`${groups.date}T00:00:00Z`);
@@ -73,6 +76,10 @@ function taskRank(display: TaskDisplay, today: number): number {
   if (display.priority === 'highest') return 2;
   if (display.priority === 'high') return 3;
   return 4;
+}
+
+export function taskDisplayRank(display: TaskDisplay, today: Date): number {
+  return taskRank(display, calendarDay(today));
 }
 
 export function sortTaskDisplay<T extends { text: string }>(tasks: readonly T[], today: Date): Array<{ task: T; display: TaskDisplay }> {

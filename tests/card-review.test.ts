@@ -48,12 +48,12 @@ test('persisted review entries survive renames, skip missing cards, and exclude 
 
 test('legacy workbench commands select their matching views within the new top-level navigation', () => {
   const destinations = [
-    ['tools', { tab: 'today' }], ['capture', { tab: 'compose', page: 'captures' }],
-    ['studio', { tab: 'compose', page: 'scratchpad' }], ['record/journal', { tab: 'compose', page: 'journal' }],
-    ['write/manuscripts', { tab: 'compose', page: 'manuscripts' }], ['more/assistant', { tab: 'ai' }],
-    ['ai', { tab: 'ai' }], ['pins', { tab: 'more', page: 'pins' }],
+    ['tools', { tab: 'today' }], ['capture', { tab: 'captures' }],
+    ['studio', { tab: 'projects', page: 'scratchpad' }], ['record/journal', { tab: 'today', focus: 'journal' }],
+    ['write/manuscripts', { tab: 'projects', page: 'manuscripts' }], ['more/assistant', { tab: 'more', page: 'assistant' }],
+    ['ai', { tab: 'more', page: 'assistant' }], ['pins', { tab: 'more', page: 'pins' }],
     ['focus', { tab: 'more', page: 'focus' }], ['habits', { tab: 'more', page: 'habits' }],
-    ['compose', { tab: 'compose' }]
+    ['compose', { tab: 'captures' }], ['projects', { tab: 'projects' }]
   ] as const;
   for (const [entry, expected] of destinations) assert.deepEqual(workbenchDestination(entry), expected);
 });

@@ -11,11 +11,12 @@ import periodic from './locales/periodic.zh-CN.json';
 import assistant from './locales/assistant.zh-CN.json';
 import reportKnowledge from './locales/report-knowledge.zh-CN.json';
 import workbench from './locales/workbench.zh-CN.json';
+import projects from './locales/project-workbench.zh-CN.json';
 import settingsCenter from './locales/settings-center.zh-CN.json';
 import type { Locale } from './types';
 
 export type TranslationValues = Record<string, string | number>;
-const chinese: Record<string, string> = { ...accessGate, ...core, ...sidebar, ...bases, ...report, ...capture, ...expanded, ...reportSettings, ...activity, ...periodic, ...assistant, ...workbench, ...reportKnowledge, ...settingsCenter };
+const chinese: Record<string, string> = { ...accessGate, ...core, ...sidebar, ...bases, ...report, ...capture, ...expanded, ...reportSettings, ...activity, ...periodic, ...assistant, ...workbench, ...projects, ...reportKnowledge, ...settingsCenter };
 
 export function translate(language: Locale, source: string, values: TranslationValues = {}): string {
   const template = language === 'zh-CN' ? chinese[source] ?? source : source;

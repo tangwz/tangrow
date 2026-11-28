@@ -3,6 +3,7 @@ import type { ReportPreferences, ReportRange, ReportRecord, ReportSnapshot, Repo
 import type { CardFilter, CardReport, MaterialReportRow } from './card-report-data';
 import type { CardReviewQueue } from './card-review';
 import type { JournalPeriod } from './periodic-notes';
+import type { WorkbenchProject } from './project-workbench-data';
 import type { CaptureSuggestion, QuickKind } from './ai';
 import type { RecoveryDraft, RecoveryLabel } from './draft-submissions';
 import type { AgentStatus, WorkflowId, WorkflowRun } from './claudian';
@@ -78,12 +79,12 @@ export interface NoteSummary { path: string; name: string; folder: string; modif
 export interface CaptureSummary extends NoteSummary { created: number; processed?: boolean; processing?: boolean }
 export type CaptureRequest =
   | { action: 'note'; title: string; projectPath?: string }
-  | { action: 'task'; title: string }
+  | { action: 'task'; title: string; projectPath?: string }
   | { action: 'project'; projectPath: string }
   | { action: 'done' }
   | { action: 'pending' }
   | { action: 'resume' };
-export interface TaskSummary { path: string; line: number; text: string; done: boolean }
+export interface TaskSummary { path: string; line: number; text: string; done: boolean; labelPending?: true }
 export interface FocusSession {
   id: string;
   startedAt: number;
@@ -118,6 +119,7 @@ export interface SidebarHost {
   setLanguage(language: Locale): Promise<void>;
   settings: Settings;
   snapshot(): Snapshot;
+  workbenchProjects(): WorkbenchProject[];
   loadReport(range: ReportRange): Promise<ReportSnapshot>;
   openCardReport(filter?: CardFilter): Promise<void>;
   loadWorkbenchCards(): Promise<{ knowledge: CardReport; report: CardReport; materials: MaterialReportRow[]; hubs: ReportRecord[] }>;
@@ -134,7 +136,8 @@ export interface SidebarHost {
   createNote(kind: NoteKind, title: string, projectFolder?: string, body?: string): Promise<void>;
   createCard(title: string, body: string, source?: CardSource): Promise<void>;
   addTask(text: string, options?: { due?: string; target?: 'overview' | 'daily' }): Promise<string>;
-  completeTask(path: string, line: number): Promise<void>;
+  addProjectTask(projectNotePath: string, title: string): Promise<void>;
+  completeTask(path: string, line: number, expectedLabel?: string): Promise<void>;
   openQuickAdd(kind?: QuickKind, text?: string): void;
   openCardFromCapture(path: string, beforeOpen?: () => boolean): Promise<boolean>;
   openNewHub(): void;

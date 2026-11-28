@@ -18,7 +18,8 @@ import { AI_SECRET_ID, agentGuide, buildSuggestionPrompt, parseSuggestion, readA
 import { CLAUDIAN_OPEN_COMMAND, CLAUDIAN_TURN_ENDED, WORKFLOWS, claudianApi, skillFiles, workflowPrompt, type AgentStatus, type ClaudianAPI, type WorkflowId, type WorkflowRun } from './claudian';
 import { runPrompt } from './ai-client';
 import { QuickAddModal } from './quick-add';
-import { appendTaskLine, completeTaskLine, openTaskLabel, taskLine } from './task-tools';
+import { appendTaskLine, completeTaskLine, indexedTaskLabel, taskLine } from './task-tools';
+import { parseTaskDisplay } from './task-display';
 import { findSubmittedNote, readDraftSubmissions, readRecoveryDrafts, type DraftSubmission, type DraftSubmissions, type RecoveryLabel, type StoredRecoveryDraft, type SubmissionKind } from './draft-submissions';
 import { JOURNAL_PERIODS, JOURNAL_LABELS, defaultJournal, journalInterval, journalPath, journalTemplate, type JournalPeriod } from './periodic-notes';
 import { ImmersiveCapture, NoteImmersion } from './immersive';
@@ -31,6 +32,7 @@ import { addEditingActivity, createActivityState, normalizeActivityState, summar
 import { ReportSource } from './report-source';
 import { captureWritingNavigation } from './writing-navigation';
 import { aggregateReport } from './report-data';
+import { buildWorkbenchProjects, type WorkbenchProject, type WorkbenchProjectRecord, type WorkbenchProjectTaskSource } from './project-workbench-data';
 import { writeReportStatus } from './report-editing';
 import { buildCardReport, buildWorkbenchCards, type CardFilter } from './card-report-data';
 import { readCardReviewQueue, type CardReviewQueue } from './card-review';
@@ -116,6 +118,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   private ribbon: HTMLElement | null = null;
   private readonly reportSource = new ReportSource(this.app, resolveSubpath);
   private workbenchCards?: { records: ReportRecord[]; scope: string; cards: WorkbenchCards };
+  private workbenchProjectIndex?: { openTasks: TaskSummary[]; projects: WorkbenchProject[] };
   private readonly cardReviews = new Map<string, CardReviewQueue>();
   private editingActivity = createActivityState();
   private lastActivityEvent: number | null = null;
@@ -664,6 +667,50 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     this.workbenchCards = { records: source.records, scope, cards };
     return cards;
   }
+  workbenchProjects(): WorkbenchProject[] {
+    const state = this.snapshot();
+    if (this.workbenchProjectIndex?.openTasks === state.tasks) return this.workbenchProjectIndex.projects;
+    const metadata = this.app.metadataCache;
+    const overviewPath = this.settings.taskOverviewPath;
+    const excludeSupport = hasValidSupportFolder(this.settings);
+    const records: WorkbenchProjectRecord[] = [];
+    const completed: WorkbenchProjectTaskSource[] = [];
+    const overviewLinks = new Map<number, Array<{ raw: string; path: string }>>();
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      if (inFolder(file.path, this.settings.archiveFolder) || (excludeSupport && inFolder(file.path, this.settings.supportFolder))) continue;
+      const cache = metadata.getFileCache(file);
+      const frontmatter = cache?.frontmatter;
+      const property = frontmatter?.tangrow_project;
+      const linked = typeof property === 'string' ? resolvePropertyLink(metadata, file, property)?.path : null;
+      records.push({ path: file.path, name: file.basename, created: file.stat.ctime, modified: file.stat.mtime, frontmatter, linkedProjectPath: linked ?? undefined });
+      for (const item of cache?.listItems ?? []) {
+        if (item.task !== 'x' && item.task !== 'X') continue;
+        const line = item.position.start.line;
+        if (file.path === overviewPath) this.indexTaskLabels(file);
+        completed.push({ path: file.path, line, text: this.indexedTaskText(file, line) ?? '', done: true });
+      }
+      if (file.path === overviewPath) for (const link of cache?.links ?? []) {
+        const line = link.position.start.line;
+        if (link.position.end.line !== line || link.original.startsWith('!')) continue;
+        const paths = overviewLinks.get(line) ?? [];
+        const resolved = resolvePropertyLink(metadata, file, link.original)?.path;
+        if (resolved) { paths.push({ raw: link.original, path: resolved }); overviewLinks.set(line, paths); }
+      }
+    }
+    const overview = this.app.vault.getAbstractFileByPath(overviewPath);
+    const tasks = [...state.tasks, ...completed].map((task): WorkbenchProjectTaskSource => {
+      if (!(overview instanceof TFile) || task.path !== overviewPath) return task;
+      const original = this.indexedTaskText(overview, task.line);
+      const rawLinks = original === undefined ? [] : parseTaskDisplay(original).links.flatMap((link) => resolvePropertyLink(metadata, overview, link)?.path ?? []);
+      // When the exact line is available, parse its wikilinks. The host cache can still contain the previous line.
+      const cachedLinks = (overviewLinks.get(task.line) ?? []).flatMap((link) =>
+        original === undefined || (!link.raw.startsWith('[[') && original.includes(link.raw)) ? [link.path] : []);
+      return { ...task, linkedProjectPaths: [...cachedLinks, ...rawLinks] };
+    });
+    const projects = buildWorkbenchProjects(records, tasks, state.projectFolders, this.settings);
+    this.workbenchProjectIndex = { openTasks: state.tasks, projects };
+    return projects;
+  }
   async updateKnowledgeEnabled(enabled: boolean): Promise<void> {
     await this.exclusive(async () => {
       if (this.settings.knowledgeEnabled === enabled) return;
@@ -919,7 +966,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     void this.app.vault.cachedRead(file).then((content) => {
       const lines = new Map<number, string>();
       content.split(/\r?\n/).forEach((line, index) => {
-        const label = openTaskLabel(line);
+        const label = indexedTaskLabel(line);
         if (label !== null) lines.set(index, label);
       });
       this.taskLabels.set(path, { mtime, lines });
@@ -929,6 +976,10 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       this.taskReads.delete(path);
       if (this.alive) this.notify();
     });
+  }
+  private indexedTaskText(file: TFile, line: number): string | undefined {
+    const index = this.taskLabels.get(file.path);
+    return index?.mtime === file.stat.mtime ? index.lines.get(line) : undefined;
   }
   snapshot(): Snapshot {
     const active = this.activeFile();
@@ -964,7 +1015,12 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       if ((excludeSupport && inFolder(file.path, this.settings.supportFolder)) || inFolder(file.path, this.settings.archiveFolder)) continue;
       if (cache?.listItems?.some((item) => item.task === ' ' || item.task === '/')) this.indexTaskLabels(file);
       for (const item of cache?.listItems ?? []) {
-        if (item.task === ' ' || item.task === '/') taskNotes.push({ path: file.path, line: item.position.start.line, text: this.taskLabels.get(file.path)?.lines.get(item.position.start.line) ?? this.t('{name} · line {line}', { name: file.basename, line: item.position.start.line + 1 }), done: false });
+        if (item.task !== ' ' && item.task !== '/') continue;
+        const line = item.position.start.line;
+        const indexed = this.indexedTaskText(file, line);
+        taskNotes.push({ path: file.path, line, done: false,
+          text: indexed ?? this.t('{name} · line {line}', { name: file.basename, line: line + 1 }),
+          ...(indexed === undefined ? { labelPending: true } : {}) });
       }
     }
     const supportFiles = [...baseDefinitions(this.settings).map((definition) => definition.filename), 'README.md'];
@@ -1204,25 +1260,38 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     const file = await this.exclusive(() => this.createUnique(this.settings.inboxFolder, title, body, { tangrow_kind: 'note', tangrow_status: 'open', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') }));
     await this.openNote(file.path);
   }
-  async addTask(text: string, options: { due?: string; target?: 'overview' | 'daily' } = {}): Promise<string> {
+  async addTask(text: string, options: { due?: string; target?: 'overview' | 'daily'; projectNotePath?: string } = {}): Promise<string> {
     const line = taskLine(text, options.due);
     const path = options.target === 'daily' ? await this.ensurePeriodicNote('daily', dayKey()) : this.settings.taskOverviewPath;
     await this.exclusive(async () => {
       const note = this.app.vault.getAbstractFileByPath(path);
       if (!(note instanceof TFile) || note.extension !== 'md') throw new Error('Set an existing Tasks note path in Tangrow settings.');
-      await this.app.vault.process(note, (content) => appendTaskLine(content, line));
+      let entry = line;
+      if (options.projectNotePath !== undefined) {
+        const project = this.app.vault.getAbstractFileByPath(options.projectNotePath);
+        if (!(project instanceof TFile) || project.extension !== 'md' || !inFolder(project.path, this.settings.projectFolder)
+          || inFolder(project.path, this.settings.archiveFolder) || (hasValidSupportFolder(this.settings) && inFolder(project.path, this.settings.supportFolder))) {
+          throw new Error('Choose an existing project note.');
+        }
+        entry += ` ${this.propertyLink(project, note.path)}`;
+      }
+      await this.app.vault.process(note, (content) => appendTaskLine(content, entry));
+      this.taskLabels.delete(path);
     });
     if (!this.alive) return path;
     this.notify();
     new Notice(this.t('Task added to {path}.', { path }));
     return path;
   }
-  async completeTask(path: string, line: number): Promise<void> {
+  async addProjectTask(projectNotePath: string, title: string): Promise<void> {
+    await this.addTask(title, { projectNotePath });
+  }
+  async completeTask(path: string, line: number, expectedLabel?: string): Promise<void> {
     await this.exclusive(async () => {
       const note = this.app.vault.getAbstractFileByPath(path);
       if (!(note instanceof TFile) || note.extension !== 'md') throw new Error('This note no longer exists.');
       // The indexed label, when known, proves the line is still the task the user saw.
-      const label = this.taskLabels.get(path)?.lines.get(line);
+      const label = expectedLabel ?? this.taskLabels.get(path)?.lines.get(line);
       await this.app.vault.process(note, (content) => completeTaskLine(content, line, label));
       this.taskLabels.delete(path);
     });

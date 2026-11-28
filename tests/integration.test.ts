@@ -13,6 +13,7 @@ import type { QuickKind } from '../src/ai';
 import type { RecoveryDraft } from '../src/draft-submissions';
 import { baseDefinitions, setupReadme } from '../src/bases';
 import { aggregateReport } from '../src/report-data';
+import type { WorkbenchProject } from '../src/project-workbench-data';
 import type { ActionId, CardSource, ComposerState, FocusSession, Locale, NoteKind, Settings, Snapshot, WritingDraft } from '../src/types';
 import { JOURNAL_PERIODS, type JournalPeriod } from '../src/periodic-notes';
 import type { FileView as MockFileView, ItemView as MockItemView, MarkdownView as MockMarkdownView, MockApp, Plugin as MockPlugin, TFile as MockFile, TFolder as MockFolder, createMockApp as MockAppFactory } from './obsidian-mock';
@@ -31,6 +32,9 @@ interface TestPlugin extends MockPlugin {
   openNote(path: string, line?: number): Promise<void>;
   openBase(id: 'captures'): Promise<void>;
   snapshot(): Snapshot;
+  workbenchProjects(): WorkbenchProject[];
+  addProjectTask(projectNotePath: string, title: string): Promise<void>;
+  completeTask(path: string, line: number, expectedLabel?: string): Promise<void>;
   action(id: ActionId): Promise<void>;
   createNote(kind: NoteKind, title: string, projectFolder?: string): Promise<void>;
   createCard(title: string, body: string, source?: CardSource): Promise<void>;
@@ -69,7 +73,7 @@ interface TestPlugin extends MockPlugin {
 }
 interface Harness {
   TangrowPlugin: new (app: MockApp) => TestPlugin;
-  CapturePanel: new (host: TestPlugin, surface: 'immersive' | 'window' | 'sidebar') => {
+  CapturePanel: new (host: TestPlugin, surface: 'immersive' | 'window' | 'sidebar' | 'today') => {
     mount(container: GateElement): void; destroy(): void; editor: GateElement;
   };
   TangrowSidebar: new (leaf: unknown, host: TestPlugin) => TestSidebar;
@@ -1392,6 +1396,39 @@ test('failed shared capture submissions retain the draft and release the submiss
   });
 });
 
+test('project tasks resolve existing property aliases and overview wikilinks, and write only the requested checkbox edit', async () => {
+  const { plugin, app } = createPlugin();
+  const project = app.vault.seedFile('20-Project/Plan/Plan.md', '---\ntangrow_status: "open"\n---\n\n# Plan\n');
+  const folderTask = app.vault.seedFile('20-Project/Plan/Checklist.md', '- [ ] Prepare 📅 2026-12-12\n');
+  const linked = app.vault.seedFile('00-Inbox/Draft.md', '---\ntangrow_kind: "draft"\ntangrow_project: "[[Plan|my plan]]"\n---\n\n- [/] Review draft\n');
+  const query = '# Tasks\r\n\r\n```tasks\r\nnot done\r\n```\r\n\r\n- [x] Already done [[Plan|my plan]]\r\n';
+  const overview = app.vault.seedFile(plugin.settings.taskOverviewPath, query);
+  app.metadataCache.getFirstLinkpathDest = (link) => link === 'Plan' || link === project.path.slice(0, -3) ? project : null;
+
+  await plugin.addProjectTask(project.path, 'Draft the opening');
+  assert.equal(overview.content, `${query}- [ ] Draft the opening [[20-Project/Plan/Plan]]\r\n`);
+  assert.deepEqual(app.vault.processedPaths, [overview.path]);
+  await assert.rejects(plugin.addProjectTask(linked.path, 'Out of project root'), /Choose an existing project note/);
+  await assert.rejects(plugin.addProjectTask('', 'No target'), /Choose an existing project note/);
+
+  assert.equal(plugin.workbenchProjects()[0]?.tasks.find((task) => task.path === folderTask.path)?.labelPending, true);
+  await new Promise((resolve) => setImmediate(resolve));
+  const [plan] = plugin.workbenchProjects();
+  assert.ok(plan);
+  assert.equal(plan.notePath, project.path);
+  assert.deepEqual(plan.tasks.map((task) => [task.text, task.sourceKind, task.done]).sort(), [
+    ['Already done [[Plan|my plan]]', 'overview', true], ['Draft the opening [[20-Project/Plan/Plan]]', 'overview', false],
+    ['Prepare 📅 2026-12-12', 'folder', false], ['Review draft', 'linked', false]
+  ]);
+  const task = plan.tasks.find((candidate) => candidate.path === folderTask.path);
+  assert.ok(task);
+  assert.equal(task.labelPending, undefined);
+  await app.vault.process(folderTask, (content) => content.replace('Prepare', 'Changed'));
+  await assert.rejects(plugin.completeTask(task.path, task.line, task.text), /This task changed in its note/);
+  assert.equal(folderTask.content, '- [ ] Changed 📅 2026-12-12\n');
+  assert.equal(project.content, '---\ntangrow_status: "open"\n---\n\n# Plan\n');
+});
+
 test('capture history exposes every record with its creation timestamp and lazy content reads', async () => {
   const { plugin, app } = createPlugin();
   const expected = new Map<string, number>();
@@ -1867,10 +1904,10 @@ test('Scratchpad language refresh keeps the composing inputs and editing lease w
       querySelector: (): null => null
     };
     Object.assign(view, {
-      section: 'compose', composeTab: 'scratchpad', scratchComposition: { control: text, dispose() {}, flush() { return undefined; } }, contentEl: content,
+      section: 'projects', projectTab: 'scratchpad', scratchComposition: { control: text, dispose() {}, flush() { return undefined; } }, contentEl: content,
       workspacePane: { querySelectorAll: () => [] },
       pane: { contains: (control: unknown) => control === text || control === title, querySelectorAll: () => [] },
-      setupBanner: { empty: () => undefined }, studioHeading: heading, studioCaption: caption,
+      studioHeading: heading, studioCaption: caption,
       selectSection: (): void => { selectedSection++; throw new Error('Studio section selection would discard composing controls.'); },
       clearStudioControls: (): void => { clearedControls++; throw new Error('Studio controls must remain mounted during composition.'); }
     });
@@ -2106,6 +2143,14 @@ test('sidebar captures start with the composer and a week, with an expandable mo
       assert.equal(toggle.getAttribute('aria-expanded'), 'true');
       assert.equal(toggle.children[0]?.textContent, 'Hide month');
       assert.equal(days().length, 42);
+      assert.equal(journal.hidden, true);
+      assert.ok(!root.all().some((element) => element.getAttribute('aria-label')?.startsWith('Open weekly note')));
+      const historical = days()[15]!;
+      historical.click();
+      assert.equal(journal.hidden, false);
+      await root.clickButton('Journal for this day');
+      assert.deepEqual(opened, [['daily', historical.dataset.captureDate]]);
+      await root.clickButton('All days');
       toggle.click();
       assert.equal(toggle.getAttribute('aria-expanded'), 'false');
       assert.equal(days().length, 7);
@@ -2115,11 +2160,45 @@ test('sidebar captures start with the composer and a week, with an expandable mo
       assert.equal(days()[0]?.getAttribute('aria-pressed'), 'true');
       assert.equal(journal.hidden, false);
       await root.clickButton('Journal for this day');
-      assert.deepEqual(opened, [['daily', selected.dataset.captureDate]]);
+      assert.deepEqual(opened, [['daily', historical.dataset.captureDate], ['daily', selected.dataset.captureDate]]);
       await root.clickButton('All days');
       assert.equal(journal.hidden, true);
       assert.ok(days().every((element) => element.getAttribute('aria-pressed') === 'false'));
     } finally { panel.destroy(); }
+  });
+});
+
+test('today capture mounts a one-line composer and saves through the shared draft', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    plugin.savedData = { settings: { language: 'en' } };
+    await plugin.onload();
+    assert.ok(plugin.access.startTrial().ok);
+    const root = new GateElement();
+    const today = new harness.CapturePanel(plugin, 'today');
+    const sidebar = new harness.CapturePanel(plugin, 'sidebar');
+    today.mount(root);
+    sidebar.mount(new GateElement());
+    try {
+      const panel = root.children[0]!;
+      assert.equal(today.editor.getAttribute('rows'), '1');
+      assert.equal(today.editor.getAttribute('placeholder'), 'Capture a thought…');
+      assert.equal(root.querySelector('section'), undefined);
+      assert.ok(!root.all().some((element) => element.getAttribute('aria-label') === 'Immersive capture'));
+      assert.equal(panel.getAttribute('data-has-draft'), 'false');
+      today.editor.value = 'Captured from Today';
+      today.editor.dispatchEvent(new Event('input'));
+      assert.equal(sidebar.editor.value, 'Captured from Today');
+      assert.equal(panel.getAttribute('data-has-draft'), 'true');
+      await root.clickButton('Save capture');
+      assert.equal(captureFiles(app).length, 1);
+      assert.equal(sidebar.editor.value, '');
+      assert.equal(panel.getAttribute('data-has-draft'), 'false');
+    } finally {
+      today.destroy();
+      sidebar.destroy();
+      plugin.onunload();
+    }
   });
 });
 

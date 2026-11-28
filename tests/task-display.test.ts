@@ -6,11 +6,11 @@ import { completeTaskLine, openTaskLabel } from '../src/task-tools';
 test('task display separates due date, priority, recurrence, and complete nested tags', () => {
   const raw = '整理本周读书笔记 #目标/写作 #计划/2026-11 🔺️ 📅️ 2026-11-27 🔁 every 2 weeks when done';
   assert.deepEqual(parseTaskDisplay(raw), {
-    title: '整理本周读书笔记', tags: ['#目标/写作', '#计划/2026-11'], priority: 'highest',
+    title: '整理本周读书笔记', tags: ['#目标/写作', '#计划/2026-11'], links: [], priority: 'highest',
     due: new Date('2026-11-27T00:00:00Z'), recurrence: 'every 2 weeks when done'
   });
   assert.deepEqual(parseTaskDisplay('Read 🔁 every week #a/b 📅 2026-11-27'), {
-    title: 'Read', tags: ['#a/b'], priority: null, due: new Date('2026-11-27T00:00:00Z'), recurrence: 'every week'
+    title: 'Read', tags: ['#a/b'], links: [], priority: null, due: new Date('2026-11-27T00:00:00Z'), recurrence: 'every week'
   });
 });
 
@@ -24,16 +24,22 @@ test('task display cleans each known priority and date marker while retaining ma
     assert.equal(display.title, 'Prepare');
     assert.equal(display.due, null);
   }
-  const literal = 'Review #123, `🔁 #sample` and [[A 📅 2026-11-27|#a/b]] 📅 2026-02-30';
+  const literal = 'Review #123, `🔁 #sample` and ![[A 📅 2026-11-27|#a/b]] 📅 2026-02-30';
   assert.equal(parseTaskDisplay(literal).title, literal);
   assert.equal(parseTaskDisplay(literal).due, null);
   assert.equal(parseTaskDisplay('Check #topic, #目标/写作。').tags.join(' '), '#topic #目标/写作');
-  assert.equal(parseTaskDisplay('Read [[Capture]] <!-- tangrow-capture:example -->').title, 'Read [[Capture]]');
+  assert.equal(parseTaskDisplay('Read [[Capture]] <!-- tangrow-capture:example -->').title, 'Read');
   assert.deepEqual(parseTaskDisplay('Press 🔁 to resend the invitation #work'), {
-    title: 'Press 🔁 to resend the invitation', tags: ['#work'], priority: null, due: null, recurrence: null
+    title: 'Press 🔁 to resend the invitation', tags: ['#work'], links: [], priority: null, due: null, recurrence: null
   });
   assert.equal(parseTaskDisplay('Compare 📅 2026-11-27th and 28th').due, null);
   assert.equal(parseTaskDisplay('Read 🔁 EVERY DAY').recurrence, 'EVERY DAY');
+});
+
+test('only real wikilinks become task metadata and code, embeds, and escapes stay literal', () => {
+  const task = parseTaskDisplay('Read `[[Example]]` ![[Embedded]] \\[[Escaped]] [[20-Project/Plan#Tasks|Plan]] [[Second]]');
+  assert.deepEqual(task.links, ['[[20-Project/Plan#Tasks|Plan]]', '[[Second]]']);
+  assert.equal(task.title, 'Read `[[Example]]` ![[Embedded]] \\[[Escaped]]');
 });
 
 test('task sorting prioritizes overdue and today, then highest and high, and preserves tie order', () => {

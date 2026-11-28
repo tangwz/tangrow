@@ -14,7 +14,7 @@ const PAGE_SIZE = 12;
 const PREVIEW_CONCURRENCY = 3;
 const PREVIEW_CACHE_SIZE = 200;
 
-type CaptureSurface = 'sidebar' | 'window' | 'immersive';
+type CaptureSurface = 'sidebar' | 'today' | 'window' | 'immersive';
 interface PreviewJob { key: string; path: string; targets: Set<HTMLElement> }
 const openPanels = new WeakMap<SidebarHost, Set<CapturePanel>>();
 
@@ -92,12 +92,13 @@ export class CapturePanel {
 
   mount(container: HTMLElement): void {
     if (this.mounted) this.destroy();
+    const compact = this.surface === 'today';
     this.mounted = true;
     const panels = openPanels.get(this.host) ?? new Set<CapturePanel>();
     panels.add(this);
     openPanels.set(this.host, panels);
-    this.root = container.createDiv({ cls: 'tangrow-capture-panel' });
-    if (this.surface !== 'sidebar') {
+    this.root = container.createDiv({ cls: compact ? 'tangrow-capture-panel tangrow-capture-today' : 'tangrow-capture-panel' });
+    if (this.surface === 'window' || this.surface === 'immersive') {
       this.gate = new AccessGate(this.host, this.root, locked => this.protectDraft(locked), () => {
         if (this.editor) {
           this.editor.readOnly = false;
@@ -109,10 +110,12 @@ export class CapturePanel {
     }
     this.labels = [];
     this.buttonLabels.clear();
-    this.label(this.root, 'h3', 'Capture a thought', 'tangrow-section-title');
-    this.label(this.root, 'p', 'A small note in your existing inbox, ready to organize when you are.', 'tangrow-section-caption');
+    if (!compact) {
+      this.label(this.root, 'h3', 'Capture a thought', 'tangrow-section-title');
+      this.label(this.root, 'p', 'A small note in your existing inbox, ready to organize when you are.', 'tangrow-section-caption');
+    }
     const composer = this.root.createDiv({ cls: 'tangrow-composer' });
-    const editor = this.editor = composer.createEl('textarea', { cls: 'tangrow-textarea', attr: { rows: '6' } });
+    const editor = this.editor = composer.createEl('textarea', { cls: 'tangrow-textarea', attr: { rows: compact ? '1' : '6' } });
     editor.value = this.syncedCapture = this.host.loadComposer().capture;
     const canEdit = () => this.mounted && this.editor === editor && editor.isConnected && !editor.readOnly && !this.protecting;
     const suggestRecomposition = () => {
@@ -186,15 +189,20 @@ export class CapturePanel {
       this.button(composer, 'Open capture window', () => this.host.openCaptureWindow(), 'external-link', 'tangrow-capture-icon-button tangrow-capture-popout');
     }
     const composerFooter = composer.createDiv({ cls: 'tangrow-composer-footer' });
-    this.count = composerFooter.createSpan({ cls: 'tangrow-muted' });
-    if (this.surface !== 'immersive') this.button(composerFooter, 'Immersive capture', () => this.host.openImmersiveCapture(), 'expand', 'tangrow-capture-icon-button');
+    if (compact) this.destination = composerFooter.createSpan({ cls: 'tangrow-destination' });
+    else this.count = composerFooter.createSpan({ cls: 'tangrow-muted' });
+    if (this.surface === 'sidebar' || this.surface === 'window') {
+      this.button(composerFooter, 'Immersive capture', () => this.host.openImmersiveCapture(), 'expand', 'tangrow-capture-icon-button');
+    }
     this.saveButton = this.button(composerFooter, 'Save capture', () => this.submit(), 'arrow-up-right', 'mod-cta');
-    this.destination = this.root.createEl('p', { cls: 'tangrow-destination' });
+    if (!compact) this.destination = this.root.createEl('p', { cls: 'tangrow-destination' });
     this.recoveryArea = this.root.createDiv();
     this.unsubscribeRecovery = this.host.subscribeRecoveryDrafts(() => this.refreshRecoveryDrafts());
-    if (this.surface === 'immersive') {
-      this.root.addClass('tangrow-capture-composer-only');
-      this.label(this.root, 'p', 'Drafts sync automatically. Mod+Enter saves; Esc returns to your workspace.', 'tangrow-muted tangrow-immersive-hint');
+    if (compact || this.surface === 'immersive') {
+      if (this.surface === 'immersive') {
+        this.root.addClass('tangrow-capture-composer-only');
+        this.label(this.root, 'p', 'Drafts sync automatically. Mod+Enter saves; Esc returns to your workspace.', 'tangrow-muted tangrow-immersive-hint');
+      }
       this.unsubscribe = this.host.subscribe(() => this.refresh());
       this.unsubscribeComposer = this.host.subscribeComposer(() => this.syncComposer());
       this.language = '';
@@ -219,7 +227,9 @@ export class CapturePanel {
     this.button(calendarHeader, 'Previous month', () => this.moveMonth(-1), 'chevron-left', 'tangrow-capture-icon-button');
     this.calendarTitle = calendarHeader.createEl('h3', { attr: { id: `${this.instanceId}-month`, 'aria-live': 'polite' } });
     this.button(calendarHeader, 'Next month', () => this.moveMonth(1), 'chevron-right', 'tangrow-capture-icon-button');
-    this.periodControls = this.monthControls.createDiv({ cls: 'tangrow-period-controls', attr: { role: 'group' } });
+    if (this.surface === 'window') {
+      this.periodControls = this.monthControls.createDiv({ cls: 'tangrow-period-controls', attr: { role: 'group' } });
+    }
     this.weekdays = calendar.createDiv({ cls: 'tangrow-capture-weekdays', attr: { 'aria-hidden': 'true' } });
     this.calendarGrid = calendar.createDiv({ cls: 'tangrow-capture-days', attr: { id: `${this.instanceId}-days`, role: 'group' } });
     const calendarFooter = this.calendarFooter = calendar.createDiv({ cls: 'tangrow-capture-calendar-footer' });
@@ -274,7 +284,7 @@ export class CapturePanel {
       this.refreshRecoveryDrafts();
       for (const { element, source, values } of this.labels) element.textContent = this.t(source, values);
       this.root.setAttribute('aria-label', this.t('Quick capture'));
-      this.editor?.setAttribute('placeholder', this.t('An idea, a question, a link...'));
+      this.editor?.setAttribute('placeholder', this.t(this.surface === 'today' ? 'Capture a thought…' : 'An idea, a question, a link...'));
       this.statusFilter?.setAttribute('aria-label', this.t('Capture status'));
       const labels = { pending: 'Pending captures', processed: 'Processed captures', all: 'All captures' };
       for (const option of Array.from(this.statusFilter?.options ?? [])) option.textContent = this.t(labels[option.value as keyof typeof labels]);
@@ -286,7 +296,7 @@ export class CapturePanel {
     }
     if (this.destination) this.destination.textContent = this.t('Destination: {path}', { path: this.host.settings.inboxFolder });
     this.syncComposer();
-    if (this.surface === 'immersive') return;
+    if (this.surface === 'today' || this.surface === 'immersive') return;
     const captures = this.host.snapshot().captures;
     const fingerprint = captures.map((capture) => [capture.path, capture.created, capture.modified, capture.name, capture.processed, capture.processing]);
     const calendarSignature = JSON.stringify([this.language, this.year, this.monthIndex, this.monthExpanded, this.selectedDay, this.focusedDay, captureDay(Date.now()), fingerprint]);
@@ -441,6 +451,7 @@ export class CapturePanel {
 
   private updateComposerControls(): void {
     const text = this.host.loadComposer().capture;
+    if (this.surface === 'today') this.root?.setAttribute('data-has-draft', String(Boolean(text.trim())));
     if (this.count) this.count.textContent = text.length ? this.t('{count} characters', { count: this.number(Array.from(text).length) }) : this.t('Saved as Markdown');
     if (this.saveButton) {
       this.saveButton.disabled = this.submitting || !!this.composition || !text.trim();
@@ -493,7 +504,7 @@ export class CapturePanel {
     if (this.monthControls) this.monthControls.hidden = week;
     if (this.calendarFooter) this.calendarFooter.hidden = week && this.selectedDay === null;
     if (this.todayButton) this.todayButton.hidden = week;
-    if (this.journalButton) this.journalButton.hidden = !week || this.selectedDay === null;
+    if (this.journalButton) this.journalButton.hidden = this.selectedDay === null;
     if (this.monthCount) this.monthCount.hidden = week;
     if (week) this.calendarGrid.removeAttribute('aria-labelledby');
     else {

@@ -1,8 +1,9 @@
 import { Notice } from 'obsidian';
-import type { CardFilter, CardReportRow } from './card-report-data';
+import type { CardReportRow } from './card-report-data';
 import { createCardReviewQueue, resolveCardReviewQueue, type CardReviewQueue, type CardReviewReason } from './card-review';
 import { sortCaptures } from './capture-data';
 import { capturePreview } from './capture-preview';
+import { journalInterval } from './periodic-notes';
 import type { ReportRecord } from './report-contract';
 import type { CaptureSummary, SidebarHost } from './types';
 import type { SidebarUI } from './ui';
@@ -78,16 +79,19 @@ export class WorkbenchCards {
     }
   }
 
-  get homeSignature(): string {
-    const { data } = this;
-    return JSON.stringify([this.failed, this.queueFailed, data?.knowledge.today, data?.knowledge.counts.all,
-      data?.report.linksReady, data && [data.report.counts.week, data.report.counts.isolated, data.report.counts.candidate],
-      data?.knowledge.linksReady, this.recent().map((row) => [row.note.path, row.note.name, row.created, row.stage]),
-      this.reviewItems().map(({ entry, row, reviewed }) => [entry, row?.note.path, row?.note.name, reviewed]), this.queue !== undefined]);
-  }
-
-  private recent(): CardReportRow[] {
-    return this.data?.knowledge.rows.slice(0, 2).filter((row) => row.created) ?? [];
+  get todayActivity() {
+    const knowledge = this.data?.knowledge;
+    if (!knowledge || this.failed) return null;
+    const review = this.reviewItems().filter(({ row }) => row);
+    const week = journalInterval('weekly', knowledge.today).start;
+    return {
+      total: knowledge.rows.length,
+      newThisWeek: knowledge.rows.filter(({ created }) => created && created >= week && created <= knowledge.today).length,
+      unlinked: knowledge.linksReady ? knowledge.counts.isolated : null,
+      reviewTotal: review.length,
+      reviewDone: review.filter(({ reviewed }) => reviewed).length,
+      nextCard: review.find(({ reviewed }) => !reviewed)?.row?.note.name
+    };
   }
 
   private reviewItems() {
@@ -107,41 +111,12 @@ export class WorkbenchCards {
     }
   }
 
-  private reportButton(parent: HTMLElement, source: string, filter: CardFilter, count: number | null): void {
-    const label = `${this.ui.t(source)} · ${count === null ? this.ui.t('Pending confirmation') : this.ui.number(count)}`;
-    const button = this.ui.userButton(parent, label, () => this.host.openCardReport(filter), { level: 'text', disabled: count === null });
-    button.dataset.tangrowAction = `home-card-report-${filter}`;
-  }
-
-  renderToday(parent: HTMLElement): void {
-    const section = parent.createEl('section', { cls: 'tangrow-today-loop' });
-    const heading = section.createDiv({ cls: 'tangrow-list-heading' });
-    this.ui.sectionHeading(heading, "Today's loop");
-    if (!this.renderStatus(section)) return;
-    const { knowledge, report } = this.data!;
-    const total = this.ui.userButton(heading, this.ui.t('View all · {count}', { count: this.ui.number(knowledge.counts.all) }), () => this.showKnowledge('cards'), { level: 'text' });
-    total.dataset.tangrowAction = 'home-cards';
-    const links = section.createDiv({ cls: 'tangrow-chips tangrow-card-links' });
-    this.reportButton(links, 'Created in the last 7 days', 'week', report.counts.week);
-    this.reportButton(links, 'Awaiting connections', 'isolated', report.linksReady ? report.counts.isolated : null);
-    this.reportButton(links, 'Manuscript candidates only', 'candidate', report.linksReady ? report.counts.candidate : null);
-    if (knowledge.counts.all === 0) {
-      this.ui.button(section, 'New card', () => this.host.openQuickAdd('card'), { icon: 'plus', cls: 'tangrow-full-width' });
-      return;
-    }
-    this.renderReview(section, false);
-    const recent = this.recent();
-    this.ui.sectionHeading(section, 'Recently created cards');
-    if (!recent.length) this.ui.paragraph(section, 'No cards with a known creation date.');
-    for (const row of recent) this.note(section, row.note, this.cardMeta(row), 'notebook-pen');
-  }
-
   renderKnowledge(parent: HTMLElement, tab: KnowledgeTab): void {
     parent.empty();
     if (!this.renderStatus(parent)) return;
     const { knowledge, materials, hubs } = this.data!;
     if (tab === 'review') {
-      this.renderReview(parent, true);
+      this.renderReview(parent);
       this.ui.comingSoon(parent, 'AI drafts today’s review');
       return;
     }
@@ -253,9 +228,9 @@ export class WorkbenchCards {
     control.dataset.tangrowAction = `knowledge-note-${note.path}`;
   }
 
-  private renderReview(parent: HTMLElement, full: boolean): void {
+  private renderReview(parent: HTMLElement): void {
     const cards = this.data!.knowledge;
-    if (full && !cards.rows.length) {
+    if (!cards.rows.length) {
       const capture = this.recentCaptures()[0];
       const label = capture ? 'Distill your first card' : 'Capture your first thought';
       const onClick = capture ? async () => {
@@ -277,8 +252,7 @@ export class WorkbenchCards {
     if (items.length > available.length) {
       section.createEl('p', { cls: 'tangrow-muted', text: this.ui.t('Unavailable cards · {count}', { count: this.ui.number(items.length - available.length) }) });
     }
-    if (!items.length && !cards.rows.length) this.ui.paragraph(section, 'No cards to review.');
-    else if (!this.queue && !cards.linksReady) this.ui.paragraph(section, 'Building knowledge links…');
+    if (!this.queue && !cards.linksReady) this.ui.paragraph(section, 'Building knowledge links…');
     else if (this.queueFailed) {
       this.ui.paragraph(section, 'The review queue could not be saved.');
       this.ui.button(section, 'Retry', async () => { await this.saveQueue(); this.onChange(); }, { icon: 'refresh-cw', cls: 'tangrow-chip' });
@@ -299,7 +273,7 @@ export class WorkbenchCards {
           this.queue = this.host.loadCardReview(this.queue.day) ?? this.queue;
         }
         this.onChange();
-      }, { icon: 'check', level: full ? 'primary' : 'secondary' });
+      }, { icon: 'check', level: 'primary' });
       mark.dataset.tangrowAction = 'mark-card-reviewed';
       const target = this.manuscript();
       const use = this.ui.button(actions, target ? 'Use in selected manuscript' : 'Choose a manuscript', async () => {
@@ -313,17 +287,10 @@ export class WorkbenchCards {
       use.dataset.tangrowAction = 'review-use-card';
     } else if (items.length && !available.length) this.ui.paragraph(section, 'No cards from today’s queue are available.');
     else if (items.length) {
-      if (full) {
-        const unlinked = cards.linksReady ? cards.counts.isolated : 0;
-        this.ui.empty(section, 'Today’s card review is complete.', 'A new set will be available tomorrow.', 'check', unlinked ? [{
-          label: this.ui.t('See unlinked cards · {count}', { count: this.ui.number(unlinked) }), onClick: () => this.host.openCardReport('isolated')
-        }] : []).setAttribute('role', 'status');
-      } else this.ui.paragraph(section, 'Today’s card review is complete.');
-    }
-    if (!full) {
-      const control = this.ui.button(section, 'Open review queue', () => this.showKnowledge('review'), { icon: 'list-checks', cls: 'tangrow-full-width tangrow-text-button' });
-      control.dataset.tangrowAction = 'home-card-review';
-      return;
+      const unlinked = cards.linksReady ? cards.counts.isolated : 0;
+      this.ui.empty(section, 'Today’s card review is complete.', 'A new set will be available tomorrow.', 'check', unlinked ? [{
+        label: this.ui.t('See unlinked cards · {count}', { count: this.ui.number(unlinked) }), onClick: () => this.host.openCardReport('isolated')
+      }] : []).setAttribute('role', 'status');
     }
     if (items.length) {
       this.ui.sectionHeading(section, 'Today’s review queue');

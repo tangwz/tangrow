@@ -96,7 +96,7 @@ function fixture() {
   const view = new TangrowSidebar({} as ConstructorParameters<typeof TangrowSidebar>[0], host as SidebarHost);
   const root = new Element();
   const content = root.createDiv();
-  Object.assign(view, { contentEl: root, workspacePane: content, noteLabel: root.createDiv(), setupBanner: root.createDiv(), isMounted: true });
+  Object.assign(view, { contentEl: root, workspacePane: content, noteLabel: root.createDiv(), isMounted: true });
   view.showSection('more');
   return { view, state, content, actions, bases };
 }

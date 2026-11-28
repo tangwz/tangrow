@@ -270,25 +270,25 @@
 .tangrow-actions, .tangrow-databases { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
 .tangrow-actions > .tangrow-button .tangrow-icon { color: var(--text-muted); }
 .tangrow-actions > .tangrow-button.mod-cta .tangrow-icon { color: inherit; }
-.tangrow-today { display: flex; align-items: baseline; gap: 9px; margin: 0 2px 12px; }
+.tangrow-sidebar .tangrow-today-header { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin-bottom: 12px; }
+.tangrow-today { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 9px; }
 .tangrow-today-date { font-size: 22px; font-weight: 600; letter-spacing: -0.6px; line-height: 1.2; }
 .tangrow-today-weekday { color: var(--text-muted); font-size: 11px; }
-.tangrow-overview { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
-.tangrow-button.tangrow-metric {
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 3px;
-  min-height: 56px;
-  padding: 9px 9px 8px;
+.tangrow-sidebar .tangrow-today-periods { display: flex; flex-wrap: wrap; gap: 2px 6px; }
+.tangrow-sidebar .tangrow-today-periods .tangrow-button { min-height: 28px; }
+.tangrow-sidebar .tangrow-loop-row {
+  display: grid;
+  grid-template-columns: minmax(42px, min-content) minmax(0, 1fr);
+  align-items: start;
+  gap: 3px 8px;
+  width: 100%;
+  padding: 8px 4px;
   border: none;
   border-radius: var(--radius-s);
-  background: transparent;
+  font-size: var(--font-ui-small);
 }
-.tangrow-button.tangrow-metric:hover:not(:disabled) { background: var(--background-modifier-hover); }
-.tangrow-metric > strong { font-size: 19px; font-weight: 600; letter-spacing: -0.5px; line-height: 1.1; font-variant-numeric: tabular-nums; }
-.tangrow-metric > span { max-width: 100%; color: var(--text-muted); font-size: 10px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
+.tangrow-sidebar .tangrow-loop-step { grid-row: span 2; color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.tangrow-sidebar .tangrow-loop-detail { grid-column: 2; color: var(--text-muted); font-size: var(--font-ui-smaller); }
 /* Pills: tool groups, sources, dates. */
 .tangrow-chips { display: flex; flex-wrap: wrap; gap: 5px; }
 .tangrow-chip, .tangrow-button.tangrow-chip {
@@ -335,9 +335,6 @@
 }
 .tangrow-sidebar .tangrow-subnav > :is(.tangrow-subnav-item, .tangrow-chip):hover { color: var(--text-normal); }
 .tangrow-sidebar .tangrow-subnav > :is(.tangrow-subnav-item, .tangrow-chip)[aria-pressed="true"] { color: var(--text-normal); font-weight: 650; }
-.tangrow-more-report { margin-bottom: 14px; }
-.tangrow-today-overview { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.tangrow-today-shortcuts { margin-top: 10px; }
 .tangrow-workbench-card {
   min-width: 0;
   margin-top: 16px;
@@ -346,16 +343,14 @@
 .tangrow-workbench-card > .tangrow-list-heading:first-child > .tangrow-section-title,
 .tangrow-review > .tangrow-list-heading:first-child > .tangrow-section-title { margin-top: 0; }
 .tangrow-sidebar .tangrow-today-loop { min-width: 0; }
-.tangrow-sidebar .tangrow-today-loop > .tangrow-list-heading { flex-wrap: wrap; }
 .tangrow-card-links { margin: 0 0 10px; }
 .tangrow-card-links > button { max-width: 100%; white-space: normal; }
 .tangrow-review { margin-top: 12px; }
 .tangrow-review .tangrow-list-heading { flex-wrap: wrap; gap: 4px 9px; }
 .tangrow-review .tangrow-list-heading .tangrow-muted { margin: 0 0 9px; }
-.tangrow-workbench-field, .tangrow-journal-controls { display: grid; min-width: 0; gap: 6px; }
+.tangrow-workbench-field { display: grid; min-width: 0; gap: 6px; }
 .tangrow-workbench-field { font-size: var(--font-ui-smaller); color: var(--text-muted); }
 .tangrow-workbench-field :is(select, input) { min-width: 0; max-width: 100%; color: var(--text-normal); }
-.tangrow-journal-controls { gap: 12px; }
 .tangrow-workbench-pager { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .tangrow-workbench-pager > .tangrow-muted { margin: 0; }
 .tangrow-manuscript-links { margin: 7px 0; font-size: var(--font-ui-smaller); }
@@ -413,11 +408,6 @@
 .tangrow-task-meta .tangrow-icon svg { width: 11px; height: 11px; }
 .tangrow-task-meta > .is-overdue { color: var(--text-error); }
 .tangrow-task-meta > .is-highest { color: var(--text-normal); font-weight: 600; }
-.tangrow-setup { background: var(--tangrow-tint); border: 1px solid var(--tangrow-line); border-radius: var(--tangrow-radius); padding: 12px; margin-bottom: 18px; }
-.tangrow-setup[hidden] { display: none; }
-.tangrow-setup > strong { font-size: 12px; }
-.tangrow-setup .tangrow-button { margin-top: 9px; width: 100%; justify-content: center; }
-.tangrow-sidebar .tangrow-setup { background: transparent; }
 .tangrow-composer { border: 1px solid var(--tangrow-line); border-radius: var(--tangrow-radius); overflow: hidden; background: var(--background-primary); }
 .tangrow-composer:focus-within { border-color: var(--interactive-accent); box-shadow: 0 0 0 2px var(--tangrow-tint); }
 .tangrow-composer .tangrow-textarea {
@@ -535,8 +525,6 @@
 
 @container (max-width: 260px) {
   .tangrow-sidebar .tangrow-nav-item { min-height: 32px; }
-  .tangrow-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .tangrow-today-overview { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .tangrow-local-badge { display: none; }
   .tangrow-actions { gap: 5px; }
   .tangrow-actions > .tangrow-button { gap: 6px; padding: 8px 7px; font-size: 10px; }
@@ -553,7 +541,6 @@
   .tangrow-brand > strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tangrow-header-tools { flex-shrink: 0; }
   .tangrow-nav-label { display: none; }
-  .tangrow-today-shortcuts { grid-template-columns: 1fr; }
   .tangrow-coming-soon { grid-template-columns: auto minmax(0, 1fr); }
   .tangrow-coming-soon-label { grid-column: 2; justify-self: start; }
 }
@@ -870,6 +857,18 @@ button.tangrow-report-day:hover { outline: 1px solid var(--text-accent); outline
 .tangrow-capture-panel .tangrow-button:focus-visible,
 .tangrow-capture-panel .tangrow-capture-day:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; }
 .tangrow-capture-panel .tangrow-destination { margin: 9px 1px 11px; }
+.tangrow-capture-today .tangrow-composer .tangrow-textarea {
+  height: var(--size-4-8);
+  min-height: var(--size-4-8);
+  padding: var(--size-4-1) var(--size-4-3);
+  resize: none;
+}
+.tangrow-capture-today[data-has-draft="true"] .tangrow-composer .tangrow-textarea,
+.tangrow-capture-today .tangrow-composer:focus-within .tangrow-textarea {
+  height: calc(var(--size-4-8) * 2 + var(--size-4-3));
+}
+.tangrow-capture-today:not([data-has-draft="true"]) .tangrow-composer:not(:focus-within) > .tangrow-composer-footer { display: none; }
+.tangrow-capture-today .tangrow-composer-footer > .tangrow-destination { margin: 0; min-width: 0; }
 .tangrow-composer-with-popout { position: relative; }
 .tangrow-composer-with-popout > .tangrow-textarea { padding-right: 44px; }
 .tangrow-capture-panel .tangrow-capture-popout { position: absolute; top: 6px; right: 6px; margin: 0; color: var(--text-muted); }
@@ -919,7 +918,7 @@ button.tangrow-report-day:hover { outline: 1px solid var(--text-accent); outline
 .tangrow-capture-day-count { color: var(--text-muted); font-size: 8px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .tangrow-capture-calendar-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 5px; border-top: 1px solid var(--tangrow-line); margin-top: 6px; padding-top: 4px; }
 .tangrow-capture-calendar-footer > .tangrow-muted { margin: 0; font-size: 9px; }
-.tangrow-capture-calendar-actions { display: flex; align-items: center; gap: 9px; margin-left: auto; }
+.tangrow-capture-calendar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-left: auto; }
 .tangrow-capture-calendar-actions > .tangrow-button { font-size: 9px; min-height: 23px; padding: 3px; border-radius: 4px; }
 .tangrow-capture-calendar-actions > .tangrow-button[aria-pressed="true"] { background: var(--tangrow-tint); color: var(--text-accent); border: none; }
 .tangrow-capture-timeline-heading { display: flex; align-items: flex-start; justify-content: space-between; flex-direction: column; gap: 5px; margin: 23px 1px 14px; }
@@ -1231,3 +1230,34 @@ button.tangrow-report-day:hover { outline: 1px solid var(--text-accent); outline
   flex: none;
   color: var(--text-muted);
 }
+
+.tangrow-sidebar .tangrow-project-workbench { min-inline-size: 0; }
+.tangrow-sidebar .tangrow-project-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+}
+.tangrow-sidebar .tangrow-project-heading h3 {
+  margin: 0;
+  font-size: var(--font-ui-medium);
+  overflow-wrap: anywhere;
+}
+.tangrow-sidebar .tangrow-project-status { overflow-wrap: anywhere; }
+.tangrow-sidebar .tangrow-project-task-heading { flex-wrap: wrap; }
+.tangrow-sidebar .tangrow-project-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-variant-numeric: tabular-nums;
+}
+.tangrow-sidebar .tangrow-project-progress progress {
+  inline-size: calc(2 * var(--size-4-8));
+  block-size: var(--size-4-1);
+  border: 0;
+  accent-color: var(--text-muted);
+}
+.tangrow-sidebar .tangrow-project-progress progress::-webkit-progress-bar { background: var(--background-modifier-border); }
+.tangrow-sidebar .tangrow-project-progress progress::-webkit-progress-value { background: var(--text-muted); }

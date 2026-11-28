@@ -13,6 +13,7 @@ import expanded from '../src/locales/report-expanded.zh-CN.json';
 import reportSettings from '../src/locales/report-settings.zh-CN.json';
 import reportKnowledge from '../src/locales/report-knowledge.zh-CN.json';
 import workbench from '../src/locales/workbench.zh-CN.json';
+import projects from '../src/locales/project-workbench.zh-CN.json';
 import chinese from '../src/locales/bases.zh-CN.json';
 import accessGate from '../src/locales/access-gate.zh-CN.json';
 import settingsCenter from '../src/locales/settings-center.zh-CN.json';
@@ -53,7 +54,7 @@ test('the Bases dictionary retains every interpolation token and supplies Chines
 
 test('all interface dictionaries keep shared terms and interpolation tokens consistent', () => {
   const seen = new Map<string, string>();
-  for (const dictionary of [core, sidebar, chinese, report, capture, expanded, reportSettings, activity, periodic, assistant, reportKnowledge, workbench, accessGate, settingsCenter]) {
+  for (const dictionary of [core, sidebar, chinese, report, capture, expanded, reportSettings, activity, periodic, assistant, reportKnowledge, workbench, projects, accessGate, settingsCenter]) {
     for (const [source, translated] of Object.entries(dictionary)) {
       assert.deepEqual(placeholders(translated), placeholders(source), source);
       if (seen.has(source)) assert.equal(translated, seen.get(source), source);

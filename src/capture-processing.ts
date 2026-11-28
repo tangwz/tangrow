@@ -7,6 +7,7 @@ import type { CaptureRequest, Settings } from './types';
 interface CaptureJob { id: string; action: 'note' | 'task'; target: string; title: string; project?: string }
 const JOB_FIELD = 'tangrow_capture_processing';
 const RESULT_FIELD = 'tangrow_capture_result';
+const PROJECT_TASK_LINK = /^\[\[[^\[\]\r\n|]+\]\]$/;
 
 function fieldsFrom(content: string): Record<string, unknown> {
   const info = getFrontMatterInfo(content);
@@ -28,7 +29,10 @@ function readJob(value: unknown): CaptureJob | null {
     || !job.target.endsWith('.md') || safeFolder(job.target) !== job.target || typeof job.title !== 'string'
     || (job.project !== undefined && typeof job.project !== 'string')) throw new Error('The saved capture action is invalid.');
   if (job.action === 'note') safeTitle(job.title);
-  else taskTitle(job.title);
+  else {
+    taskTitle(job.title);
+    if (job.project !== undefined && !PROJECT_TASK_LINK.test(job.project)) throw new Error('The saved capture action is invalid.');
+  }
   return job as CaptureJob;
 }
 function taskTitle(value: string): string {
@@ -51,6 +55,13 @@ function projectFile(app: App, settings: Settings, path: string, source: TFile):
   const file = markdownFile(app, path);
   if (file === source || !captureProjectFiles(app, settings).includes(file)) throw new Error('Choose an existing project note.');
   return file;
+}
+
+function projectLink(app: App, project: TFile, target: string, action: CaptureJob['action']): string {
+  if (action === 'note') return app.fileManager.generateMarkdownLink(project, target);
+  const link = `[[${app.metadataCache.fileToLinktext(project, target)}]]`;
+  if (!PROJECT_TASK_LINK.test(link)) throw new Error('Choose an existing project note.');
+  return link;
 }
 async function ensureFolder(app: App, folder: string): Promise<void> {
   let path = '';
@@ -91,8 +102,9 @@ async function createResult(app: App, source: TFile, job: CaptureJob, resume: bo
     const target = markdownFile(app, job.target);
     if (target === source) throw new Error('The task overview must be different from the capture.');
     const marker = `<!-- tangrow-capture:${job.id} -->`;
+    const links = job.project ? `${sourceLink} ${job.project}` : sourceLink;
     await app.vault.process(target, (content) => content.includes(marker) ? content
-      : `${content}${content.endsWith('\n') ? '' : '\n'}\n- [ ] ${job.title} ${sourceLink} ${marker}\n`);
+      : `${content}${content.endsWith('\n') ? '' : '\n'}\n- [ ] ${job.title} ${links} ${marker}\n`);
     return target;
   }
   const content = await app.vault.read(source);
@@ -120,8 +132,8 @@ export async function processCapturedNote(app: App, settings: Settings, path: st
   let job = readJob(fields[JOB_FIELD]);
   const resume = job !== null;
   if (job && request.action !== 'resume') {
-    const project = request.action === 'note' && request.projectPath
-      ? app.fileManager.generateMarkdownLink(projectFile(app, settings, request.projectPath, source), job.target) : undefined;
+    const project = (request.action === 'note' || request.action === 'task') && request.projectPath
+      ? projectLink(app, projectFile(app, settings, request.projectPath, source), job.target, request.action) : undefined;
     if ((request.action !== 'note' && request.action !== 'task') || request.action !== job.action
       || (request.action === 'note' ? safeTitle(request.title) : taskTitle(request.title)) !== job.title
       || project !== job.project) throw new Error('Continue the unfinished capture action first.');
@@ -130,7 +142,7 @@ export async function processCapturedNote(app: App, settings: Settings, path: st
 
   if (!job) {
     let project: TFile | undefined;
-    if (request.action === 'project' || (request.action === 'note' && request.projectPath)) {
+    if (request.action === 'project' || ('projectPath' in request && request.projectPath)) {
       project = projectFile(app, settings, request.projectPath!, source);
     }
     if (request.action === 'done' || request.action === 'project' || request.action === 'pending') {
@@ -153,7 +165,7 @@ export async function processCapturedNote(app: App, settings: Settings, path: st
       : uniquePath(app, project?.parent?.path ?? settings.inboxFolder, title);
     if (target === source.path) throw new Error('The task overview must be different from the capture.');
     job = { id: crypto.randomUUID(), action: request.action, target, title,
-      ...(project ? { project: app.fileManager.generateMarkdownLink(project, target) } : {}) };
+      ...(project ? { project: projectLink(app, project, target, request.action) } : {}) };
     const prepared = job;
     let accepted = false;
     // Store the operation in the source note before touching its destination.

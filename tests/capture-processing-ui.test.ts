@@ -308,6 +308,30 @@ test('the processing dialog validates project selection and opens the result onl
   assert.equal(closed, 1);
 });
 
+test('the capture task form submits an optional project link only when selected', async () => {
+  const service = host();
+  const projectPath = service.app.vault.seedFile('20-Project/Launch/Launch.md', '# Launch').path;
+  const requests: CaptureRequest[] = [];
+  service.processCapture = async (_path, request) => { requests.push(request); return null; };
+  for (const project of ['', projectPath]) {
+    const dialog = openDialog(service);
+    const form = dialog.contentEl.querySelector('form')!;
+    const [action, picker] = form.querySelectorAll('select') as [Element, Element];
+    action.value = 'task';
+    action.dispatchEvent(new Event('change'));
+    assert.equal(picker.parentElement?.hidden, false);
+    assert.equal(picker.parentElement?.querySelector('label')?.textContent, 'Project link (optional)');
+    picker.value = project;
+    picker.dispatchEvent(new Event('change'));
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+  }
+  assert.deepEqual(requests, [
+    { action: 'task', title: 'Source' },
+    { action: 'task', title: 'Source', projectPath }
+  ]);
+});
+
 test('distilling hands off to the source-aware card editor without submitting capture processing', async () => {
   const service = host();
   const ready = deferred<void>();

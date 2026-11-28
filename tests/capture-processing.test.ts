@@ -159,6 +159,31 @@ test('task conversion appends a single checkbox and source link without rewritin
   assert.equal(app.vault.getMarkdownFiles().length, 2);
 });
 
+test('task conversion keeps the selected project link through an interrupted operation', async () => {
+  const { app, plugin, source } = setup();
+  const content = '# Existing tasks\n\n```tasks\nnot done\n```\n';
+  const overview = app.vault.seedFile(plugin.settings.taskOverviewPath, content);
+  const project = app.vault.seedFile('20-Project/Launch/Launch.md', '# Launch');
+  const apply = app.vault.process.bind(app.vault);
+  app.vault.process = async (file, transform) => {
+    if (file === overview) throw new Error('Task write failed');
+    return apply(file, transform);
+  };
+  const request: CaptureRequest = { action: 'task', title: 'Follow up', projectPath: project.path };
+  await assert.rejects(plugin.processCapture(source.path, request), /Task write failed/);
+  assert.equal(overview.content, content);
+  await assert.rejects(plugin.processCapture(source.path, { action: 'task', title: request.title }), /unfinished/);
+
+  app.vault.process = apply;
+  await plugin.processCapture(source.path, { action: 'resume' });
+  assert.ok(overview.content.startsWith(content));
+  assert.equal((overview.content.match(/^- \[ \]/gm) ?? []).length, 1);
+  const projectLink = `[[${app.metadataCache.fileToLinktext(project, overview.path)}]]`;
+  assert.ok(overview.content.includes(`Follow up [[${source.path}]] ${projectLink}`));
+  assert.equal(project.content, '# Launch');
+  assert.equal(fields(source).tangrow_capture_processing, undefined);
+});
+
 test('linking a project and marking processed only update the selected capture properties', async () => {
   for (const action of ['project', 'done'] as const) {
     const { app, plugin, source } = setup();
