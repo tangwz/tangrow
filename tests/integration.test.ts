@@ -1437,6 +1437,38 @@ test('writing submissions keep the selected project across a failed save and ret
   });
 });
 
+test('writing submissions qualify a same-title project link when Obsidian prefers short links', async () => {
+  for (const [projectTitle, draftTitle] of [['Launch', 'Launch'], ['Café', 'cafe\u0301']] as const) {
+    await withWindow(async (timers) => {
+      const { plugin, app } = createPlugin();
+      const projectFolder = `20-Project/${projectTitle}`;
+      const original = '# Project note\n';
+      const project = app.vault.seedFile(`${projectFolder}/${projectTitle}.md`, original);
+      const projectTarget = project.path.slice(0, -3);
+      app.metadataCache.fileToLinktext = (file) => file.basename;
+      app.metadataCache.getFirstLinkpathDest = (link, sourcePath) => {
+        if (link === projectTarget) return project;
+        const source = app.vault.getAbstractFileByPath(sourcePath);
+        return link === projectTitle && source instanceof harness.TFile ? source : null;
+      };
+      await plugin.onload();
+      plugin.updateWritingDraft({ text: 'A project manuscript.', title: draftTitle }, plugin.loadWritingDraft().revision);
+
+      await plugin.submitWritingDraft(plugin.loadWritingDraft().revision, undefined, false, projectFolder);
+
+      const [draft] = draftFiles(app);
+      assert.ok(draft);
+      assert.equal(draft.path, `00-Inbox/${draftTitle}.md`);
+      assert.equal(app.metadataCache.getFileCache(draft).frontmatter?.tangrow_project, `[[${projectTarget}]]`);
+      app.metadataCache.trigger('changed', draft);
+      timers.flush();
+      assert.ok(plugin.workbenchProjects().find(({ path }) => path === projectFolder)?.notes.some(({ path }) => path === draft.path));
+      assert.deepEqual(plugin.workbenchDrafts(), []);
+      assert.equal(project.content, original);
+    });
+  }
+});
+
 test('a failed writing save can choose a new project after the original project moves', async () => {
   await withWindow(async () => {
     const { plugin, app } = createPlugin();
