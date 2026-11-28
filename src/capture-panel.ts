@@ -1,6 +1,6 @@
 import { AccessGate, showRecoveryDrafts } from './access-gate';
 import { Notice, setIcon, setTooltip } from 'obsidian';
-import { captureCalendar, captureDay, groupCapturesByDay, shiftCaptureMonth } from './capture-data';
+import { captureCalendar, captureDay, captureWeek, groupCapturesByDay, shiftCaptureMonth } from './capture-data';
 import { capturePreview } from './capture-preview';
 import { CaptureProcessingModal } from './capture-processing-modal';
 import { DraftComposition, recomposeHint, tracksComposition } from './draft-composition';
@@ -30,10 +30,15 @@ export class CapturePanel {
   private saveButton?: HTMLButtonElement;
   private count?: HTMLElement;
   private destination?: HTMLElement;
+  private monthToggle?: HTMLButtonElement;
+  private monthControls?: HTMLElement;
   private calendarTitle?: HTMLElement;
   private monthCount?: HTMLElement;
   private weekdays?: HTMLElement;
   private calendarGrid?: HTMLElement;
+  private calendarFooter?: HTMLElement;
+  private todayButton?: HTMLButtonElement;
+  private journalButton?: HTMLButtonElement;
   private timelineTitle?: HTMLElement;
   private timelineCount?: HTMLElement;
   private statusFilter?: HTMLSelectElement;
@@ -49,6 +54,7 @@ export class CapturePanel {
   private unsubscribeRecovery?: () => void;
   private removeSaveShortcut?: () => void;
   private selectedDay: string | null = null;
+  private monthExpanded = false;
   private focusedDay = captureDay(Date.now());
   private year = new Date().getFullYear();
   private monthIndex = new Date().getMonth();
@@ -197,23 +203,42 @@ export class CapturePanel {
       return;
     }
     const calendar = this.root.createEl('section', { cls: 'tangrow-capture-calendar' });
-    const calendarHeader = calendar.createDiv({ cls: 'tangrow-capture-calendar-heading' });
+    if (this.surface === 'sidebar') {
+      this.monthToggle = calendar.createEl('button', {
+        cls: 'tangrow-button tangrow-text-button tangrow-capture-month-toggle',
+        attr: { type: 'button', 'aria-controls': `${this.instanceId}-month-controls ${this.instanceId}-days` }
+      });
+      this.monthToggle.addEventListener('click', () => {
+        if (this.showWeek) this.focusCalendarDate(new Date(this.selectedDay ? `${this.selectedDay}T12:00:00` : Date.now()));
+        this.monthExpanded = !this.monthExpanded;
+        this.refresh();
+      });
+    }
+    this.monthControls = calendar.createDiv({ attr: { id: `${this.instanceId}-month-controls` } });
+    const calendarHeader = this.monthControls.createDiv({ cls: 'tangrow-capture-calendar-heading' });
     this.button(calendarHeader, 'Previous month', () => this.moveMonth(-1), 'chevron-left', 'tangrow-capture-icon-button');
     this.calendarTitle = calendarHeader.createEl('h3', { attr: { id: `${this.instanceId}-month`, 'aria-live': 'polite' } });
     this.button(calendarHeader, 'Next month', () => this.moveMonth(1), 'chevron-right', 'tangrow-capture-icon-button');
-    this.periodControls = calendar.createDiv({ cls: 'tangrow-period-controls', attr: { role: 'group' } });
+    this.periodControls = this.monthControls.createDiv({ cls: 'tangrow-period-controls', attr: { role: 'group' } });
     this.weekdays = calendar.createDiv({ cls: 'tangrow-capture-weekdays', attr: { 'aria-hidden': 'true' } });
-    this.calendarGrid = calendar.createDiv({ cls: 'tangrow-capture-days', attr: { role: 'group', 'aria-labelledby': `${this.instanceId}-month` } });
-    const calendarFooter = calendar.createDiv({ cls: 'tangrow-capture-calendar-footer' });
+    this.calendarGrid = calendar.createDiv({ cls: 'tangrow-capture-days', attr: { id: `${this.instanceId}-days`, role: 'group' } });
+    const calendarFooter = this.calendarFooter = calendar.createDiv({ cls: 'tangrow-capture-calendar-footer' });
     this.monthCount = calendarFooter.createSpan({ cls: 'tangrow-muted' });
     const calendarActions = calendarFooter.createDiv({ cls: 'tangrow-capture-calendar-actions' });
-    this.button(calendarActions, 'Today', () => this.selectToday(), undefined, 'tangrow-text-button');
+    this.todayButton = this.button(calendarActions, 'Today', () => this.selectToday(), undefined, 'tangrow-text-button');
     this.allDaysButton = this.button(calendarActions, 'All days', () => {
       this.selectedDay = null;
       this.limit = PAGE_SIZE;
       this.refresh();
+      if (this.showWeek) {
+        const control = this.dayButtons.get(this.focusedDay) ?? this.dayButtons.get(captureDay(Date.now()));
+        control?.focus({ preventScroll: true });
+      }
     }, undefined, 'tangrow-text-button');
-    this.root.prepend(calendar);
+    if (this.surface === 'sidebar') this.journalButton = this.button(calendarActions, 'Journal for this day', () => {
+      if (this.selectedDay) return this.host.openPeriodicNote('daily', this.selectedDay);
+    }, 'book-open', 'tangrow-text-button');
+    else this.root.prepend(calendar);
 
     const timelineHeader = this.root.createDiv({ cls: 'tangrow-capture-timeline-heading' });
     this.timelineTitle = this.label(timelineHeader, 'h3', 'Capture timeline', 'tangrow-section-title');
@@ -264,7 +289,7 @@ export class CapturePanel {
     if (this.surface === 'immersive') return;
     const captures = this.host.snapshot().captures;
     const fingerprint = captures.map((capture) => [capture.path, capture.created, capture.modified, capture.name, capture.processed, capture.processing]);
-    const calendarSignature = JSON.stringify([this.language, this.year, this.monthIndex, this.selectedDay, this.focusedDay, captureDay(Date.now()), fingerprint]);
+    const calendarSignature = JSON.stringify([this.language, this.year, this.monthIndex, this.monthExpanded, this.selectedDay, this.focusedDay, captureDay(Date.now()), fingerprint]);
     const timelineSignature = JSON.stringify([this.language, this.selectedDay, this.captureFilter, this.limit, fingerprint]);
     if (calendarSignature !== this.calendarSignature) {
       this.calendarSignature = calendarSignature;
@@ -305,6 +330,11 @@ export class CapturePanel {
     this.root = undefined;
     this.editor = undefined;
     this.recoveryArea = undefined;
+    this.monthToggle = undefined;
+    this.monthControls = undefined;
+    this.calendarFooter = undefined;
+    this.todayButton = undefined;
+    this.journalButton = undefined;
     this.periodControls = undefined;
     this.statusFilter = undefined;
     this.labels = [];
@@ -448,18 +478,37 @@ export class CapturePanel {
     }
   }
 
+  private get showWeek(): boolean { return this.surface === 'sidebar' && !this.monthExpanded; }
+
   private renderCalendar(captures: CaptureSummary[]): void {
     if (!this.calendarGrid || !this.calendarTitle) return;
-    const cells = captureCalendar(captures, this.year, this.monthIndex);
-    this.calendarTitle.textContent = new Date(this.year, this.monthIndex, 1, 12).toLocaleDateString(this.host.settings.language, { year: 'numeric', month: 'long' });
-    this.renderPeriodControls();
-    if (this.monthCount) this.monthCount.textContent = this.t('{count} captures this month', { count: this.number(cells.filter((cell) => cell.inMonth).reduce((sum, cell) => sum + cell.count, 0)) });
+    const week = this.showWeek;
+    const cells = week ? captureWeek(captures) : captureCalendar(captures, this.year, this.monthIndex);
+    if (this.monthToggle) {
+      this.monthToggle.empty();
+      this.monthToggle.createSpan({ text: this.t(week ? 'This week' : 'Hide month') });
+      setIcon(this.monthToggle.createSpan({ cls: 'tangrow-icon', attr: { 'aria-hidden': 'true' } }), week ? 'chevron-down' : 'chevron-up');
+      this.monthToggle.setAttribute('aria-expanded', String(!week));
+    }
+    if (this.monthControls) this.monthControls.hidden = week;
+    if (this.calendarFooter) this.calendarFooter.hidden = week && this.selectedDay === null;
+    if (this.todayButton) this.todayButton.hidden = week;
+    if (this.journalButton) this.journalButton.hidden = !week || this.selectedDay === null;
+    if (this.monthCount) this.monthCount.hidden = week;
+    if (week) this.calendarGrid.removeAttribute('aria-labelledby');
+    else {
+      this.calendarGrid.setAttribute('aria-labelledby', `${this.instanceId}-month`);
+      this.calendarTitle.textContent = new Date(this.year, this.monthIndex, 1, 12).toLocaleDateString(this.host.settings.language, { year: 'numeric', month: 'long' });
+      this.renderPeriodControls();
+      if (this.monthCount) this.monthCount.textContent = this.t('{count} captures this month', { count: this.number(cells.filter((cell) => cell.inMonth).reduce((sum, cell) => sum + cell.count, 0)) });
+    }
     if (this.allDaysButton) this.allDaysButton.setAttribute('aria-pressed', String(this.selectedDay === null));
     const active = this.calendarGrid.ownerDocument.activeElement as HTMLElement | null;
     const activeDay = this.calendarGrid.contains(active) ? active?.dataset.captureDate : undefined;
     this.calendarGrid.empty();
     this.dayButtons.clear();
-    const focusDate = cells.some((cell) => cell.date === this.focusedDay) ? this.focusedDay : cells.find((cell) => cell.inMonth)?.date;
+    const defaultCell = week ? cells.find((cell) => cell.today) : cells.find((cell) => cell.inMonth);
+    const focusDate = cells.some((cell) => cell.date === this.focusedDay) ? this.focusedDay : defaultCell?.date;
     for (const cell of cells) {
       const date = new Date(`${cell.date}T12:00:00`);
       const fullDate = date.toLocaleDateString(this.host.settings.language, { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
@@ -482,14 +531,17 @@ export class CapturePanel {
   }
 
   private selectDay(date: string): void {
-    const selected = new Date(`${date}T12:00:00`);
     this.selectedDay = date;
-    this.focusedDay = date;
-    this.year = selected.getFullYear();
-    this.monthIndex = selected.getMonth();
+    this.focusCalendarDate(new Date(`${date}T12:00:00`));
     this.limit = PAGE_SIZE;
     this.refresh();
     this.dayButtons.get(date)?.focus({ preventScroll: true });
+  }
+
+  private focusCalendarDate(date: Date): void {
+    this.focusedDay = captureDay(date.getTime());
+    this.year = date.getFullYear();
+    this.monthIndex = date.getMonth();
   }
 
   private selectToday(): void { this.selectDay(captureDay(Date.now())); }
@@ -536,6 +588,7 @@ export class CapturePanel {
   }
 
   private navigateCalendar(event: KeyboardEvent, date: string): void {
+    if (this.showWeek && ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown'].includes(event.key)) return;
     const movement: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 };
     const next = new Date(`${date}T12:00:00`);
     const weekday = (next.getDay() + 6) % 7;
@@ -548,9 +601,8 @@ export class CapturePanel {
       next.setFullYear(month.year, month.monthIndex, day);
     } else return;
     event.preventDefault();
-    this.focusedDay = captureDay(next.getTime());
-    this.year = next.getFullYear();
-    this.monthIndex = next.getMonth();
+    if (this.showWeek && !this.dayButtons.has(captureDay(next.getTime()))) return;
+    this.focusCalendarDate(next);
     this.refresh();
     this.dayButtons.get(this.focusedDay)?.focus({ preventScroll: true });
   }

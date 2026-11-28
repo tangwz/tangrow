@@ -13,6 +13,7 @@ import { readKnowledgeRecord } from './knowledge-index';
 import { WorkbenchCards } from './workbench-cards';
 import { captureDay } from './capture-data';
 import { JOURNAL_LABELS, JOURNAL_PERIODS, journalInterval, type JournalPeriod } from './periodic-notes';
+import { sortTaskDisplay, taskDueLabel, type TaskDisplay } from './task-display';
 import { SidebarUI, icon } from './ui';
 import { workbenchDestination, type ComposeTab, type KnowledgeTab, type MoreTab, type WorkbenchEntry, type WorkbenchTab } from './workbench-navigation';
 
@@ -32,7 +33,7 @@ const COMPOSE_TABS: Record<ComposeTab, string> = {
 const KNOWLEDGE_TABS: Record<KnowledgeTab, string> = {
   materials: 'Knowledge materials', cards: 'Cards', hubs: 'Knowledge hubs', review: 'Card review'
 };
-const MORE_TABS: Record<MoreTab, string> = { pins: 'Pins', focus: 'Focus', habits: 'Habits', tools: 'File tools', databases: 'Databases' };
+const MORE_TABS: Record<MoreTab, string> = { pins: 'Pins', focus: 'Focus', habits: 'Habits', tools: 'File tools', databases: 'Your database views' };
 
 const BASES: { id: BaseId; label: string; icon: string }[] = [
   { id: 'notes', label: 'All notes', icon: 'files' },
@@ -66,13 +67,14 @@ export class TangrowSidebar extends ItemView {
   private section: WorkbenchTab = 'today';
   private composeTab: ComposeTab = 'captures';
   private knowledgeTab: KnowledgeTab = 'materials';
-  private moreTab: MoreTab = 'pins';
+  private moreTab: MoreTab | null = null;
   private workspacePane!: HTMLElement;
   private pane!: HTMLElement;
   private noteLabel!: HTMLElement;
   private setupBanner!: HTMLElement;
   private navButtons = new Map<WorkbenchTab, HTMLButtonElement>();
   private unsubscribe?: () => void;
+  private statusBarObserver?: ResizeObserver;
   private dismissCreateMenu?: (restoreFocus?: boolean) => void;
   private unsubscribeComposer?: () => void;
   private refreshSection: (state: Snapshot) => void = () => undefined;
@@ -103,9 +105,8 @@ export class TangrowSidebar extends ItemView {
   private habitSaving = false;
   private habitInput?: HTMLInputElement;
   private habitAddButton?: HTMLButtonElement;
-  private focusMinutes: number;
-  private focusDefaultMinutes: number;
-  private customFocusMinutes = false;
+  private focusPreset?: number;
+  private customFocusDuration?: string;
   private clock?: HTMLElement;
   private clockStatus?: HTMLElement;
   private clockProgress?: HTMLProgressElement;
@@ -114,8 +115,6 @@ export class TangrowSidebar extends ItemView {
     super(leaf);
     this.host = host;
     this.ui = new SidebarUI(() => this.host.settings.language);
-    this.focusMinutes = host.settings.focusMinutes;
-    this.focusDefaultMinutes = host.settings.focusMinutes;
     this.aiPanel = new AiPanel(host, this);
     this.workbenchCards = new WorkbenchCards(host, this.ui, () => {
       if (this.isMounted && (this.section === 'today' || this.section === 'knowledge')) this.refreshSection(this.host.snapshot());
@@ -130,7 +129,7 @@ export class TangrowSidebar extends ItemView {
     if (this.gate?.locked) return;
     const destination = workbenchDestination(entry);
     if (destination.tab === 'compose' && destination.page) this.showCompose(destination.page);
-    else if (destination.tab === 'more' && destination.page) this.showMore(destination.page);
+    else if (destination.tab === 'more') this.showMore(destination.page ?? null);
     else this.showWorkbench(destination.tab);
   }
 
@@ -152,7 +151,7 @@ export class TangrowSidebar extends ItemView {
     this.showWorkbench('knowledge', changed);
   }
 
-  private showMore(tab: MoreTab): void {
+  private showMore(tab: MoreTab | null): void {
     const changed = this.moreTab !== tab;
     this.moreTab = tab;
     this.showWorkbench('more', changed);
@@ -251,6 +250,7 @@ export class TangrowSidebar extends ItemView {
     this.contentEl.empty();
     this.navButtons.clear();
     this.contentEl.addClass('tangrow-sidebar');
+    this.observeStatusBar();
     const header = this.contentEl.createDiv({ cls: 'tangrow-header' });
     const brand = header.createDiv({ cls: 'tangrow-brand' });
     icon(brand, 'sprout');
@@ -286,7 +286,7 @@ export class TangrowSidebar extends ItemView {
       itemButton.createSpan({ cls: 'tangrow-nav-label', text: this.ui.t(item.label) });
       setTooltip(itemButton, this.ui.t(item.label));
       itemButton.addEventListener('click', () => {
-        this.showWorkbench(item.id);
+        this.showSection(item.id);
       });
       itemButton.addEventListener('keydown', (event) => {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
@@ -297,7 +297,7 @@ export class TangrowSidebar extends ItemView {
           : (index + (event.key === 'ArrowRight' ? 1 : -1) + available.length) % available.length;
         const target = available[next];
         if (target) {
-          this.showWorkbench(target.id);
+          this.showSection(target.id);
           this.navButtons.get(target.id)?.focus({ preventScroll: true });
         }
       });
@@ -396,6 +396,8 @@ export class TangrowSidebar extends ItemView {
     this.unsubscribeAccess?.();
     this.gate?.dispose();
     this.isMounted = false;
+    this.statusBarObserver?.disconnect();
+    this.statusBarObserver = undefined;
     this.workbenchCards.pause();
     this.dismissCreateMenu?.();
     this.capturePanel?.destroy();
@@ -408,6 +410,22 @@ export class TangrowSidebar extends ItemView {
     this.clearStudioControls();
     this.contentEl.empty();
     this.navButtons.clear();
+  }
+
+  private observeStatusBar(): void {
+    this.statusBarObserver?.disconnect();
+    this.statusBarObserver = undefined;
+    const { ownerDocument, style } = this.contentEl;
+    style.removeProperty('--tangrow-status-bar-height');
+    const Observer = ownerDocument.defaultView?.ResizeObserver;
+    const statusBar = ownerDocument.querySelector<HTMLElement>('.status-bar');
+    if (!statusBar) return;
+    const measure = () => style.setProperty('--tangrow-status-bar-height', `${statusBar.getBoundingClientRect().height}px`);
+    measure();
+    if (Observer) {
+      this.statusBarObserver = new Observer(measure);
+      this.statusBarObserver.observe(statusBar);
+    }
   }
 
   private selectSection(section: WorkbenchTab): void {
@@ -425,7 +443,7 @@ export class TangrowSidebar extends ItemView {
     this.workspacePane.empty();
     if (section === 'compose') this.renderNestedTabs('Compose views', COMPOSE_TABS, this.composeTab, (tab) => this.showCompose(tab));
     if (section === 'knowledge') this.renderNestedTabs('Knowledge views', KNOWLEDGE_TABS, this.knowledgeTab, (tab) => this.showKnowledge(tab));
-    if (section === 'more') this.renderNestedTabs('More views', MORE_TABS, this.moreTab, (tab) => this.showMore(tab));
+    if (section === 'more' && this.moreTab) this.renderMoreBack(this.moreTab);
     this.pane = this.workspacePane.createDiv({ cls: 'tangrow-pane' });
     this.clearStudioControls();
     this.clock = undefined;
@@ -468,10 +486,17 @@ export class TangrowSidebar extends ItemView {
         break;
       }
       case 'more': {
-        const reportButton = this.actionButton(this.workspacePane, 'report', 'Open report', 'chart-no-axes-combined');
-        reportButton.addClass('tangrow-more-report', 'tangrow-full-width');
-        this.workspacePane.insertBefore(reportButton, this.pane);
         switch (this.moreTab) {
+          case null: {
+            let signature = '';
+            this.refreshSection = (snapshot) => {
+              const next = JSON.stringify([snapshot.supportReady, snapshot.habits.length, snapshot.habits.filter((habit) => habit.completedToday).length, this.host.settings.focusMinutes]);
+              if (next === signature) return;
+              signature = next;
+              this.preserveFocus(() => this.renderMoreMenu(snapshot));
+            };
+            break;
+          }
           case 'pins': {
             let signature = '';
             this.refreshSection = (snapshot) => {
@@ -499,7 +524,7 @@ export class TangrowSidebar extends ItemView {
             break;
           }
           case 'databases': {
-            this.ui.sectionHeading(this.pane, 'Your database views', 'Views query notes in their current folders.');
+            this.ui.paragraph(this.pane, 'Views query notes in their current folders.');
             const databases = this.pane.createDiv({ cls: 'tangrow-databases' });
             for (const base of BASES) this.ui.button(databases, base.label, () => this.host.openBase(base.id), { icon: base.icon });
             break;
@@ -519,6 +544,50 @@ export class TangrowSidebar extends ItemView {
       }
     }
     this.refresh(state);
+  }
+
+  private renderMoreBack(tab: MoreTab): void {
+    const heading = this.workspacePane.createDiv({ cls: 'tangrow-more-heading' });
+    const back = this.ui.button(heading, 'Back to More', () => {
+      this.showMore(null);
+      this.pane.querySelector<HTMLButtonElement>(`[data-tangrow-action="more-${tab}"]`)?.focus({ preventScroll: true });
+    }, { icon: 'chevron-left', cls: 'tangrow-text-button' });
+    back.dataset.tangrowAction = 'more-back';
+    this.ui.sectionHeading(heading, MORE_TABS[tab]);
+  }
+
+  private renderMoreMenu(state: Snapshot): void {
+    this.pane.empty();
+    const menu = this.pane.createDiv({ cls: 'tangrow-more-menu' });
+    const group = (label: string) => {
+      const section = menu.createEl('section');
+      this.ui.sectionHeading(section, label);
+      return section;
+    };
+    const row = (parent: HTMLElement, key: string, label: string, iconName: string, open: () => void | Promise<void>, detail?: string) => {
+      const control = this.ui.button(parent, label, open, { icon: iconName, cls: 'tangrow-note-row' });
+      control.dataset.tangrowAction = `more-${key}`;
+      if (detail) {
+        control.createSpan({ cls: 'tangrow-note-folder', text: detail });
+        control.setAttribute('aria-label', `${this.ui.t(label)} · ${detail}`);
+      }
+    };
+    const page = (parent: HTMLElement, tab: MoreTab, label: string, iconName: string, detail?: string) => row(parent, tab, label, iconName, () => {
+      this.showMore(tab);
+      this.workspacePane.querySelector<HTMLButtonElement>('[data-tangrow-action="more-back"]')?.focus({ preventScroll: true });
+    }, detail);
+
+    const extras = group('Extras');
+    page(extras, 'focus', 'Focus', 'timer', this.ui.t('{count} minutes', { count: this.ui.number(this.host.settings.focusMinutes) }));
+    const totalHabits = state.habits.length;
+    const done = state.habits.filter((habit) => habit.completedToday).length;
+    page(extras, 'habits', 'Habits', 'repeat', totalHabits ? `${this.ui.number(done)}/${this.ui.number(totalHabits)}` : undefined);
+    const browse = group('Browse');
+    page(browse, 'pins', 'Pins and recent', 'pin');
+    row(browse, 'report', 'Open report', 'chart-no-axes-combined', () => this.host.action('report'));
+    page(browse, 'databases', MORE_TABS.databases, 'database', state.supportReady ? undefined : this.ui.t('Not set up'));
+    page(group('Tools'), 'tools', 'File tools', 'wrench');
+    row(group('Settings'), 'settings', 'Companion settings', 'settings-2', () => this.host.action('settings'));
   }
 
   private renderNestedTabs<T extends string>(label: string, tabs: Record<T, string>, active: T, select: (tab: T) => void): void {
@@ -559,7 +628,6 @@ export class TangrowSidebar extends ItemView {
       if (focusedInWorkbench) this.navButtons.get('today')?.focus({ preventScroll: true });
       return;
     }
-    this.syncFocusDuration();
     this.noteLabel.empty();
     this.noteLabel.hidden = !snapshot.active;
     if (snapshot.active) {
@@ -637,37 +705,44 @@ export class TangrowSidebar extends ItemView {
     return state.active?.path.toLowerCase().endsWith('.md') ?? false;
   }
 
+  private toolGroup(label: string): HTMLElement {
+    this.ui.sectionHeading(this.pane, label);
+    return this.pane.createDiv({ cls: 'tangrow-tool-list', attr: { role: 'group', 'aria-label': this.ui.t(label) } });
+  }
+
   private renderCurrentActions(state: Snapshot): void {
-    this.ui.sectionHeading(this.pane, 'Current file');
-    const current = this.pane.createDiv({ cls: 'tangrow-actions' });
     const noFile = !state.active;
     const noMarkdown = !this.isMarkdown(state);
-    this.actionButton(current, 'copy-link', 'Copy file link', 'link', noFile);
-    this.actionButton(current, 'copy-path', 'Copy vault path', 'copy', noFile);
-    this.actionButton(current, 'file-location', 'Locate this file', 'folder-search', noFile);
-    this.actionButton(current, 'toggle-pin', state.activePinned ? 'Unpin note' : 'Pin note', 'pin', noMarkdown, state.activePinned);
-    this.actionButton(current, 'fold', 'Fold sections', 'fold-vertical', noMarkdown);
-    this.actionButton(current, 'unfold', 'Unfold sections', 'unfold-vertical', noMarkdown);
-    this.actionButton(current, 'page-width', 'Roomier page', 'move-horizontal', noMarkdown, state.widePage);
-    this.actionButton(current, 'cover', 'Set cover', 'image', noMarkdown);
-    const titleDate = this.actionButton(current, 'title-date', 'Date note heading', 'calendar-plus', noMarkdown);
+    const file = this.toolGroup('Current file');
+    if (noFile) this.ui.paragraph(file, 'Open a file to use its tools.');
+    this.actionButton(file, 'copy-link', 'Copy file link', 'link', noFile);
+    this.actionButton(file, 'copy-path', 'Copy vault path', 'copy', noFile);
+    this.actionButton(file, 'file-location', 'Locate this file', 'folder-search', noFile);
+
+    const note = this.toolGroup('Current note');
+    this.actionButton(note, 'toggle-pin', state.activePinned ? 'Unpin note' : 'Pin note', 'pin', noMarkdown, state.activePinned);
+    this.actionButton(note, 'fold', 'Fold sections', 'fold-vertical', noMarkdown);
+    this.actionButton(note, 'unfold', 'Unfold sections', 'unfold-vertical', noMarkdown);
+    this.actionButton(note, 'page-width', 'Roomier page', 'move-horizontal', noMarkdown, state.widePage);
+    this.actionButton(note, 'cover', 'Set cover', 'image', noMarkdown);
+    const titleDate = this.actionButton(note, 'title-date', 'Date note heading', 'calendar-plus', noMarkdown);
     setTooltip(titleDate, this.ui.t("Adds today's date to the first note heading without renaming the file."));
-    this.actionButton(current, 'timestamp', 'Insert body timestamp', 'calendar-clock', noMarkdown);
-    this.actionButton(current, 'refresh', 'Refresh index', 'refresh-cw');
-    if (noFile) this.ui.paragraph(this.pane, 'Open a file to use its tools.');
+    this.actionButton(note, 'timestamp', 'Insert body timestamp', 'calendar-clock', noMarkdown);
   }
 
   private renderWorkspaceActions(): void {
-    this.ui.sectionHeading(this.pane, 'Workspace');
-    const workspace = this.pane.createDiv({ cls: 'tangrow-actions' });
+    const workspace = this.toolGroup('Workspace');
+    this.actionButton(workspace, 'refresh', 'Refresh index', 'refresh-cw');
     this.actionButton(workspace, 'random-note', 'Rediscover a note', 'shuffle', this.host.snapshot().counts.notes === 0);
-    this.actionButton(workspace, 'toggle-theme', 'Toggle light / dark', 'sun-moon');
-    this.actionButton(workspace, 'appearance', 'Theme & accent settings', 'palette');
     this.actionButton(workspace, 'all-width', 'Roomier workspace', 'expand', false, this.host.settings.wideByDefault);
     this.actionButton(workspace, 'file-list', 'File navigation', 'folder-tree');
     this.actionButton(workspace, 'stack-tabs', 'Tab layout', 'panels-top-left');
     this.actionButton(workspace, 'settings', 'Companion settings', 'settings-2');
     this.actionButton(workspace, 'hide-panel', 'Close companion', 'panel-right-close');
+
+    const appearance = this.toolGroup('Appearance');
+    this.actionButton(appearance, 'toggle-theme', 'Toggle light / dark', 'sun-moon');
+    this.actionButton(appearance, 'appearance', 'Theme & accent settings', 'palette');
   }
 
   private renderTaskPreview(state: Snapshot): void {
@@ -704,8 +779,9 @@ export class TangrowSidebar extends ItemView {
       return;
     }
     const list = taskSection.createDiv({ cls: 'tangrow-task-list' });
-    for (const task of openTasks.slice(0, 6)) {
-      const label = task.text || this.ui.t('Untitled task');
+    const today = new Date();
+    for (const { task, display } of sortTaskDisplay(openTasks, today).slice(0, 6)) {
+      const label = display.title || this.ui.t('Untitled task');
       const row = list.createDiv({ cls: 'tangrow-task-item' });
       const check = row.createEl('button', { cls: 'tangrow-task-check', attr: { type: 'button', 'aria-label': this.ui.t('Complete: {task}', { task: label }) } });
       check.dataset.tangrowAction = `task-check-${task.path}:${task.line}`;
@@ -721,8 +797,35 @@ export class TangrowSidebar extends ItemView {
         });
       });
       const open = this.ui.userButton(row, label, () => this.host.openNote(task.path, task.line), { cls: 'tangrow-task-row' });
-      setTooltip(open, task.path);
+      setTooltip(open, task.text || task.path);
+      this.renderTaskMetadata(open, label, display, today);
     }
+  }
+
+  private renderTaskMetadata(open: HTMLButtonElement, label: string, display: TaskDisplay, today: Date): void {
+    const items: Array<{ text: string; iconName?: string; cls?: string; accessibleText?: string }> = [];
+    if (display.due) {
+      const due = taskDueLabel(display.due, today, this.host.settings.language);
+      items.push({ text: due.text, iconName: 'calendar-days', cls: due.overdue ? 'is-overdue' : undefined });
+    }
+    if (display.priority === 'highest') {
+      items.push({ text: this.ui.t('Highest'), iconName: 'flag', cls: 'is-highest', accessibleText: this.ui.t('Highest priority') });
+    }
+    if (display.priority === 'high') {
+      items.push({ text: this.ui.t('High'), iconName: 'flag', accessibleText: this.ui.t('High priority') });
+    }
+    if (display.recurrence !== null) {
+      items.push({ text: this.ui.t(display.recurrence.toLowerCase() === 'every week' ? 'Weekly' : 'Repeats'), iconName: 'repeat' });
+    }
+    for (const tag of display.tags) items.push({ text: tag });
+    if (!items.length) return;
+    const meta = open.createSpan({ cls: 'tangrow-task-meta' });
+    for (const { text, iconName, cls } of items) {
+      const item = meta.createSpan({ cls });
+      if (iconName) icon(item, iconName).setAttribute('aria-hidden', 'true');
+      item.createSpan({ text });
+    }
+    open.setAttribute('aria-label', [label, ...items.map((item) => item.accessibleText ?? item.text)].join(', '));
   }
 
   private mountCapture(): void {
@@ -1054,9 +1157,10 @@ export class TangrowSidebar extends ItemView {
     const session = this.pane.createDiv();
     let signature: string | null = null;
     this.refreshSection = (state) => {
-      const next = JSON.stringify([state.focus?.id, state.focus?.endsAt, state.focus?.remainingMs, state.counts.focusMinutes, this.focusMinutes, this.focusDefaultMinutes, this.customFocusMinutes]);
+      const next = JSON.stringify([state.focus?.id, state.focus?.endsAt, state.focus?.remainingMs, state.counts.focusMinutes, this.host.settings.focusMinutes]);
       if (next === signature) return;
       signature = next;
+      const restoreCustomFocus = session.ownerDocument.activeElement?.id === `${this.viewId}-focus-minutes`;
       session.empty();
       const card = session.createDiv({ cls: 'tangrow-focus-card' });
       card.createSpan({ cls: 'tangrow-eyebrow', text: this.ui.t(state.focus ? 'CURRENT SESSION' : 'A FRESH START') });
@@ -1069,43 +1173,13 @@ export class TangrowSidebar extends ItemView {
       }
       const controls = session.createDiv({ cls: 'tangrow-focus-controls' });
       if (!state.focus) {
-        const options = controls.createDiv({ cls: 'tangrow-minute-presets', attr: { 'aria-label': this.ui.t('Session length presets') } });
-        const inputRow = controls.createDiv({ cls: 'tangrow-minute-input' });
-        const inputId = `${this.viewId}-focus-minutes`;
-        inputRow.createEl('label', { text: this.ui.t('Minutes'), attr: { for: inputId } });
-        const input = inputRow.createEl('input', { type: 'number', attr: { id: inputId, min: '1', max: '240', step: '1' } });
-        input.value = String(this.focusMinutes);
-        const hint = controls.createDiv({ cls: 'tangrow-duration-hint tangrow-muted' });
-        const updateHint = () => { hint.textContent = this.customFocusMinutes ? this.ui.t('Custom session length') : this.ui.t('Using your default: {count} minutes', { count: this.ui.number(this.focusDefaultMinutes) }); };
-        const updateMinutes = (value: number, useDefault = false) => {
-          this.focusMinutes = Math.max(1, Math.min(240, Math.round(value || this.host.settings.focusMinutes)));
-          this.customFocusMinutes = !useDefault && this.focusMinutes !== this.focusDefaultMinutes;
-          input.value = String(this.focusMinutes);
-          updateHint();
-          this.updateClock();
-        };
-        input.addEventListener('input', () => {
-          const value = Number(input.value);
-          if (!Number.isInteger(value) || value < 1 || value > 240) return;
-          this.focusMinutes = value;
-          this.customFocusMinutes = value !== this.focusDefaultMinutes;
-          updateHint();
-          this.updateClock();
-        });
-        input.addEventListener('change', () => updateMinutes(Number(input.value)));
-        for (const minutes of [15, 25, 45]) this.ui.userButton(options, this.ui.t('{count}m', { count: this.ui.number(minutes) }), () => updateMinutes(minutes), { cls: 'tangrow-preset' });
-        this.ui.button(controls, 'Use default duration', () => updateMinutes(this.host.settings.focusMinutes, true), { cls: 'tangrow-text-button' });
-        updateHint();
-        this.ui.button(controls, 'Begin focus', () => {
-          updateMinutes(Number(input.value));
-          return this.host.startFocus(this.focusMinutes);
-        }, { icon: 'play', cls: 'mod-cta tangrow-full-width' });
+        this.mountFocusDurations(controls, restoreCustomFocus);
       } else {
-        const actions = controls.createDiv({ cls: 'tangrow-actions' });
-        if (state.focus.endsAt === null) this.ui.button(actions, 'Resume', () => this.host.resumeFocus(), { icon: 'play', cls: 'mod-cta' });
+        const actions = controls.createDiv({ cls: 'tangrow-focus-active-actions' });
+        this.ui.button(actions, 'Finish & record', () => this.host.finishFocus(), { icon: 'check', cls: 'mod-cta' });
+        if (state.focus.endsAt === null) this.ui.button(actions, 'Resume', () => this.host.resumeFocus(), { icon: 'play' });
         else this.ui.button(actions, 'Pause', () => this.host.pauseFocus(), { icon: 'pause' });
-        this.ui.button(actions, 'Finish & record', () => this.host.finishFocus(), { icon: 'check' });
-        this.ui.button(controls, 'Discard session', () => this.host.cancelFocus(), { icon: 'x', cls: 'tangrow-text-button' });
+        this.ui.button(actions, 'Discard session', () => this.host.cancelFocus(), { icon: 'x', cls: 'tangrow-text-button' });
       }
       const total = session.createDiv({ cls: 'tangrow-focus-total' });
       icon(total, 'timer');
@@ -1116,18 +1190,91 @@ export class TangrowSidebar extends ItemView {
     };
   }
 
-  private syncFocusDuration(): void {
-    const configured = this.host.settings.focusMinutes;
-    if (configured === this.focusDefaultMinutes) return;
-    this.focusDefaultMinutes = configured;
-    if (!this.customFocusMinutes) this.focusMinutes = configured;
+  private mountFocusDurations(controls: HTMLElement, restoreFocus: boolean): void {
+    const options = controls.createDiv({ cls: 'tangrow-minute-presets', attr: { role: 'group', 'aria-label': this.ui.t('Session length') } });
+    const defaultMinutes = this.host.settings.focusMinutes;
+    const minutes = [...new Set([15, 25, 45, defaultMinutes])].sort((left, right) => left - right);
+    const presets = new Map<number, HTMLButtonElement>();
+    for (const value of minutes) {
+      const count = this.ui.number(value);
+      const button = this.ui.userButton(options, this.ui.t('{count}m', { count }), () => {
+        this.focusPreset = value === defaultMinutes ? undefined : value;
+        this.customFocusDuration = undefined;
+        renderCustom(false);
+        sync();
+      }, { cls: 'tangrow-preset' });
+      button.setAttribute('aria-label', this.ui.t(value === defaultMinutes ? 'Default duration: {count} minutes' : '{count} minutes', { count }));
+      presets.set(value, button);
+    }
+    const custom = options.createDiv({ cls: 'tangrow-focus-custom' });
+    const errorId = `${this.viewId}-focus-duration-error`;
+    const error = controls.createEl('p', { cls: 'tangrow-input-error', attr: { id: errorId, role: 'status' } });
+    const start = this.ui.button(controls, 'Begin focus', () => {
+      const duration = this.focusDuration();
+      if (duration !== null) return this.host.startFocus(duration);
+    }, { icon: 'play', cls: 'mod-cta tangrow-full-width' });
+    const startLabel = start.lastElementChild;
+    let input: HTMLInputElement | undefined;
+
+    const sync = (): void => {
+      const duration = this.focusDuration();
+      for (const [value, button] of presets) button.setAttribute('aria-pressed', String(this.customFocusDuration === undefined && duration === value));
+      const label = duration === null ? this.ui.t('Begin focus') : this.ui.t('Start {count} min', { count: this.ui.number(duration) });
+      start.setAttribute('aria-label', label);
+      if (startLabel) startLabel.textContent = label;
+      start.disabled = duration === null;
+      input?.setAttribute('aria-invalid', String(duration === null));
+      error.textContent = duration === null ? this.ui.t('Focus duration must be a whole number between 1 and 240 minutes.') : '';
+      this.updateClock();
+    };
+    const renderCustom = (focus: boolean): void => {
+      custom.empty();
+      input = undefined;
+      if (this.customFocusDuration === undefined) {
+        const button = this.ui.button(custom, 'Custom', () => {
+          this.customFocusDuration = String(this.focusDuration() ?? defaultMinutes);
+          renderCustom(true);
+          sync();
+        }, { cls: 'tangrow-preset' });
+        if (focus) button.focus({ preventScroll: true });
+        return;
+      }
+      const field = input = custom.createEl('input', { type: 'number', attr: {
+        id: `${this.viewId}-focus-minutes`, min: '1', max: '240', step: '1', inputmode: 'numeric',
+        'aria-label': this.ui.t('Custom minutes'), 'aria-describedby': errorId
+      } });
+      field.value = this.customFocusDuration;
+      field.addEventListener('input', () => { this.customFocusDuration = field.value; sync(); });
+      field.addEventListener('keydown', (event) => {
+        if (event.isComposing) return;
+        if (event.key === 'Enter') { event.preventDefault(); start.click(); }
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          this.customFocusDuration = undefined;
+          renderCustom(true);
+          sync();
+        }
+      });
+      if (focus) field.focus({ preventScroll: true });
+    };
+    renderCustom(restoreFocus);
+    sync();
+  }
+
+  private focusDuration(): number | null {
+    if (this.customFocusDuration === undefined) return this.focusPreset ?? this.host.settings.focusMinutes;
+    const minutes = Number(this.customFocusDuration);
+    return Number.isInteger(minutes) && minutes >= 1 && minutes <= 240 ? minutes : null;
   }
 
   private updateClock(state = this.host.snapshot()): void {
     if (!this.clock) return;
-    const remaining = state.focus ? state.focusRemainingMs : this.focusMinutes * 60_000;
+    const duration = this.focusDuration();
+    const remaining = state.focus ? state.focusRemainingMs : (duration ?? 0) * 60_000;
     const seconds = Math.max(0, Math.ceil(remaining / 1000));
-    this.clock.textContent = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+    this.clock.textContent = !state.focus && duration === null
+      ? '--:--' : `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
     if (this.clockStatus) this.clockStatus.textContent = this.ui.t(!state.focus ? 'Ready when you are' : state.focus.endsAt === null ? 'Paused · take your time' : 'Focusing · keep going');
     if (this.clockProgress) this.clockProgress.value = state.focus ? Math.min(1, Math.max(0, 1 - remaining / state.focus.durationMs)) : 0;
   }

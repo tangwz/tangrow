@@ -89,7 +89,7 @@
 
 .tangrow-sidebar {
   container-type: inline-size;
-  padding: 18px 14px 24px;
+  padding: 18px 14px calc(16px + var(--status-bar-scroll-padding, var(--tangrow-status-bar-height, 0px)));
   overflow-y: auto;
   scrollbar-gutter: stable;
   font-size: var(--font-ui-small);
@@ -102,8 +102,7 @@
 .tangrow-list-heading,
 .tangrow-habit-heading,
 .tangrow-habit-footer,
-.tangrow-focus-total,
-.tangrow-minute-input {
+.tangrow-focus-total {
   display: flex;
   align-items: center;
   gap: 9px;
@@ -346,6 +345,8 @@
 .tangrow-workbench-card > .tangrow-section-title:first-child,
 .tangrow-workbench-card > .tangrow-list-heading:first-child > .tangrow-section-title,
 .tangrow-review > .tangrow-list-heading:first-child > .tangrow-section-title { margin-top: 0; }
+.tangrow-sidebar .tangrow-today-loop { min-width: 0; }
+.tangrow-sidebar .tangrow-today-loop > .tangrow-list-heading { flex-wrap: wrap; }
 .tangrow-card-links { margin: 0 0 10px; }
 .tangrow-card-links > button { max-width: 100%; white-space: normal; }
 .tangrow-review { margin-top: 12px; }
@@ -375,7 +376,7 @@
 .tangrow-task-item { display: flex; align-items: flex-start; gap: 2px; border-radius: 7px; padding-left: 6px; }
 .tangrow-task-item:hover { background: var(--background-modifier-hover); }
 .tangrow-task-item.is-completing { opacity: 0.45; }
-.tangrow-task-item.is-completing .tangrow-task-row { text-decoration: line-through; }
+.tangrow-task-item.is-completing .tangrow-task-row > span:first-child { text-decoration: line-through; }
 .tangrow-task-check {
   flex: 0 0 auto;
   width: 16px;
@@ -390,9 +391,28 @@
 }
 .tangrow-task-check:hover { border-color: var(--interactive-accent); background: var(--tangrow-tint); }
 .tangrow-task-item.is-completing .tangrow-task-check { border-color: var(--interactive-accent); background: var(--interactive-accent); }
-.tangrow-task-row { flex: 1; min-width: 0; border: none; border-radius: 6px; padding: 8px 6px; background: transparent; min-height: 34px; }
+.tangrow-task-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: center;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+  min-height: 34px;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 6px;
+  background: transparent;
+  font-size: var(--font-ui-small);
+}
 .tangrow-task-row:hover:not(:disabled) { background: transparent; color: var(--text-accent); }
-.tangrow-task-row > span:last-child { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.tangrow-task-row > span:first-child { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.tangrow-task-row .tangrow-task-meta { display: flex; flex-wrap: wrap; gap: 2px 8px; min-width: 0; color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.tangrow-task-meta > span { display: inline-flex; align-items: center; gap: 3px; min-width: 0; max-width: 100%; }
+.tangrow-task-meta > span > :not(.tangrow-icon) { min-width: 0; overflow-wrap: anywhere; }
+.tangrow-task-meta .tangrow-icon svg { width: 11px; height: 11px; }
+.tangrow-task-meta > .is-overdue { color: var(--text-error); }
+.tangrow-task-meta > .is-highest { color: var(--text-normal); font-weight: 600; }
 .tangrow-setup { background: var(--tangrow-tint); border: 1px solid var(--tangrow-line); border-radius: var(--tangrow-radius); padding: 12px; margin-bottom: 18px; }
 .tangrow-setup[hidden] { display: none; }
 .tangrow-setup > strong { font-size: 12px; }
@@ -470,11 +490,26 @@
 .tangrow-focus-progress::-webkit-progress-value { background: var(--text-muted); border-radius: 3px; }
 .tangrow-focus-note { max-width: 100%; margin-top: 19px; border: none; background: transparent; color: var(--text-muted); padding: 0; min-height: 20px; font-size: 10px; }
 .tangrow-focus-note > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tangrow-focus-controls > .tangrow-text-button { margin: 10px auto 0; }
-.tangrow-minute-presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
-.tangrow-preset { min-height: 31px; justify-content: center; }
-.tangrow-minute-input { justify-content: space-between; padding: 14px 1px; font-size: 11px; color: var(--text-muted); }
-.tangrow-minute-input input { width: 76px; font-size: 12px; }
+.tangrow-sidebar .tangrow-minute-presets { display: flex; gap: 4px; margin-bottom: 8px; }
+.tangrow-sidebar .tangrow-minute-presets > .tangrow-preset { flex: 1 1 0; }
+.tangrow-sidebar .tangrow-focus-custom { display: flex; flex: 1.5 1 0; min-width: 0; }
+.tangrow-sidebar .tangrow-preset,
+.tangrow-sidebar .tangrow-focus-custom input {
+  width: 100%;
+  min-width: 0;
+  min-height: 31px;
+  padding: 4px 2px;
+  border-radius: var(--radius-s);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.tangrow-sidebar .tangrow-preset { justify-content: center; font-size: var(--font-ui-smaller); }
+.tangrow-sidebar .tangrow-focus-custom input { height: auto; appearance: textfield; }
+.tangrow-sidebar .tangrow-focus-custom input::-webkit-inner-spin-button { appearance: none; }
+.tangrow-sidebar .tangrow-focus-custom input[aria-invalid="true"] { border-color: var(--text-error); }
+.tangrow-sidebar .tangrow-focus-controls > .tangrow-input-error { margin: 0; }
+.tangrow-sidebar .tangrow-focus-controls > .tangrow-input-error:not(:empty) { margin-bottom: 8px; }
+.tangrow-sidebar .tangrow-focus-active-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .tangrow-focus-total { justify-content: center; color: var(--text-muted); font-size: 11px; margin: 23px 0 14px; }
 .tangrow-habit-form { display: flex; gap: 6px; margin: 16px 0 22px; }
 .tangrow-habit-form input { min-width: 0; flex: 1; height: 36px; font-size: 11px; }
@@ -839,6 +874,9 @@ button.tangrow-report-day:hover { outline: 1px solid var(--text-accent); outline
 .tangrow-composer-with-popout > .tangrow-textarea { padding-right: 44px; }
 .tangrow-capture-panel .tangrow-capture-popout { position: absolute; top: 6px; right: 6px; margin: 0; color: var(--text-muted); }
 .tangrow-capture-calendar { border: 1px solid var(--tangrow-line); border-radius: 10px; padding: 8px 8px 6px; margin: 0 0 16px; background: var(--background-primary); }
+.tangrow-capture-panel .tangrow-capture-calendar [hidden] { display: none; }
+.tangrow-capture-panel .tangrow-capture-month-toggle { display: flex; margin: 0 0 4px auto; }
+.tangrow-capture-panel .tangrow-capture-month-toggle .tangrow-icon svg { width: 12px; height: 12px; }
 .tangrow-capture-calendar-heading { display: grid; grid-template-columns: 24px minmax(0, 1fr) 24px; gap: 6px; align-items: center; margin-bottom: 6px; }
 .tangrow-capture-calendar-heading h3 { margin: 0; text-align: center; color: var(--text-normal); font-size: 12px; font-weight: 600; letter-spacing: 0; }
 .tangrow-capture-panel .tangrow-capture-calendar { border: none; padding: 0; background: transparent; }
@@ -1157,4 +1195,39 @@ button.tangrow-report-day:hover { outline: 1px solid var(--text-accent); outline
 @keyframes tangrow-settings-highlight {
   from { background: var(--text-highlight-bg); }
   to { background: transparent; }
+}
+
+/* File tools */
+.tangrow-sidebar .tangrow-more-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 12px; }
+.tangrow-sidebar .tangrow-more-heading .tangrow-section-title { margin: 0; }
+.tangrow-sidebar .tangrow-more-menu .tangrow-note-row { background: transparent; }
+.tangrow-sidebar .tangrow-more-menu .tangrow-note-row:hover { background: var(--background-modifier-hover); }
+
+@container (max-width: 180px) {
+  .tangrow-sidebar .tangrow-minute-presets { gap: 2px; }
+  .tangrow-sidebar .tangrow-preset,
+  .tangrow-sidebar .tangrow-focus-custom input { padding-inline: 0; font-size: 10px; }
+}
+
+.tangrow-sidebar .tangrow-tool-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+.tangrow-sidebar .tangrow-tool-list > .tangrow-button {
+  min-inline-size: 0;
+  min-block-size: var(--size-4-8);
+  padding: var(--size-4-1) var(--size-4-2);
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+}
+.tangrow-sidebar .tangrow-tool-list > .tangrow-button:hover:not(:disabled) {
+  background: var(--background-modifier-hover);
+}
+.tangrow-sidebar .tangrow-tool-list > .tangrow-button[aria-pressed="true"] {
+  background: var(--background-modifier-active-hover);
+}
+.tangrow-sidebar .tangrow-tool-list > .tangrow-button .tangrow-icon {
+  flex: none;
+  color: var(--text-muted);
 }

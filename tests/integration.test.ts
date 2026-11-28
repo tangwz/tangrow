@@ -112,10 +112,13 @@ interface TestSidebar {
   onOpen(): Promise<void>;
   onClose(): Promise<void>;
   renderShell(): void;
+  observeStatusBar(): void;
   refresh(): void;
   registerInterval(): void;
   clearStudioControls(): void;
   mountStudio(): void;
+  mountFocus(): void;
+  refreshSection(state: Snapshot): void;
   refreshLanguage(): void;
   flushWritingDraft(): void;
 }
@@ -997,6 +1000,36 @@ test('finishing IME composition publishes the final body and releases other Stud
     assert.equal(finished.editingView, undefined);
     assert.equal(plugin.updateWritingDraft({ title: 'A title from the other view' }, finished.revision, 'second-view'), true);
   });
+});
+
+test('sidebar measures its own window status bar and stops observing on close', async () => {
+  const { plugin } = createPlugin();
+  const view = new harness.TangrowSidebar({}, plugin);
+  const properties = new Map<string, string>();
+  let height = 28;
+  let resize: () => void = () => undefined;
+  let disconnected = false;
+  const statusBar = { getBoundingClientRect: () => ({ height }) };
+  class Observer {
+    constructor(callback: () => void) { resize = callback; }
+    observe(element: unknown): void { assert.equal(element, statusBar); }
+    disconnect(): void { disconnected = true; }
+  }
+  view.contentEl = Object.assign(new EventTarget(), {
+    empty: () => undefined,
+    ownerDocument: {
+      defaultView: { ResizeObserver: Observer },
+      querySelector: (selector: string) => selector === '.status-bar' ? statusBar : null
+    },
+    style: { removeProperty: (name: string) => properties.delete(name), setProperty: properties.set.bind(properties) }
+  });
+  view.observeStatusBar();
+  assert.equal(properties.get('--tangrow-status-bar-height'), '28px');
+  height = 34;
+  resize();
+  assert.equal(properties.get('--tangrow-status-bar-height'), '34px');
+  await view.onClose();
+  assert.ok(disconnected);
 });
 
 class StudioElement extends EventTarget {
@@ -2008,20 +2041,24 @@ test('the note header immersion action stays attached to its native view when th
 class GateElement extends StudioElement {
   attributes = new Map<string, string>();
   children: GateElement[] = [];
+  classes: string[] = [];
+  focused = false;
   parent?: GateElement;
+  hidden = false;
   dataset: Record<string, string> = {};
   prepend(child: GateElement): void { this.children = [child, ...this.children.filter(entry => entry !== child)]; }
   constructor(readonly tag = 'div') { super(); }
-  createEl(tag = 'div', options: { attr?: Record<string, string>; text?: string; value?: string } = {}): GateElement {
+  createEl(tag = 'div', options: { attr?: Record<string, string>; cls?: string; text?: string; value?: string } = {}): GateElement {
     const child = new GateElement(tag);
     child.attributes = new Map(Object.entries(options.attr ?? {}));
+    child.classes = options.cls?.split(/\s+/).filter(Boolean) ?? [];
     child.textContent = options.text ?? '';
     child.value = options.value ?? '';
     child.parent = this;
     this.children.push(child);
     return child;
   }
-  createDiv(): GateElement { return this.createEl(); }
+  createDiv(options = {}): GateElement { return this.createEl('div', options); }
   createSpan(options = {}): GateElement { return this.createEl('span', options); }
   addClass(): void {}
   removeClass(): void {}
@@ -2033,7 +2070,8 @@ class GateElement extends StudioElement {
   getAttribute(key: string): string | null { return this.attributes.get(key) ?? null; }
   removeAttribute(key: string): void { this.attributes.delete(key); }
   all(): GateElement[] { return [this, ...this.children.flatMap(child => child.all())]; }
-  focus(): void {}
+  get lastElementChild(): GateElement | null { return this.children.at(-1) ?? null; }
+  focus(): void { this.focused = true; }
   click(): void { if (!this.disabled) this.dispatchEvent(new Event('click')); }
   querySelectorAll(tags: string): GateElement[] { return this.all().filter(el => tags.split(',').some(tag => tag.trim() === el.tag)); }
   querySelector(tag: string): GateElement | undefined { return this.all().find(child => child.tag === tag); }
@@ -2044,6 +2082,46 @@ class GateElement extends StudioElement {
     await new Promise(resolve => setImmediate(resolve));
   }
 }
+
+test('sidebar captures start with the composer and a week, with an expandable month and a date-specific journal', async () => {
+  await withWindow(async () => {
+    const { plugin } = createPlugin();
+    plugin.settings.language = 'en';
+    const opened: Array<[JournalPeriod, string | undefined]> = [];
+    plugin.openPeriodicNote = async (period, date) => { opened.push([period, date]); };
+    const panel = new harness.CapturePanel(plugin, 'sidebar');
+    const root = new GateElement();
+    panel.mount(root);
+    try {
+      const calendar = root.querySelector('section')!;
+      assert.ok(root.all().indexOf(panel.editor) < root.all().indexOf(calendar));
+      const toggle = root.all().find((element) => element.getAttribute('aria-expanded') === 'false')!;
+      const days = () => root.all().filter((element) => element.dataset.captureDate);
+      const journal = root.all().find((element) => element.getAttribute('aria-label') === 'Journal for this day')!;
+      assert.equal(toggle.children[0]?.textContent, 'This week');
+      assert.equal(days().length, 7);
+      assert.equal(journal.hidden, true);
+
+      toggle.click();
+      assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+      assert.equal(toggle.children[0]?.textContent, 'Hide month');
+      assert.equal(days().length, 42);
+      toggle.click();
+      assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+      assert.equal(days().length, 7);
+
+      const selected = days()[0]!;
+      selected.click();
+      assert.equal(days()[0]?.getAttribute('aria-pressed'), 'true');
+      assert.equal(journal.hidden, false);
+      await root.clickButton('Journal for this day');
+      assert.deepEqual(opened, [['daily', selected.dataset.captureDate]]);
+      await root.clickButton('All days');
+      assert.equal(journal.hidden, true);
+      assert.ok(days().every((element) => element.getAttribute('aria-pressed') === 'false'));
+    } finally { panel.destroy(); }
+  });
+});
 
 test('capture preedit stays in its window until commit, and closing discards an unfinished candidate', async () => {
   await withWindow(async timers => {
@@ -3394,4 +3472,91 @@ for (const timerFired of [false, true]) test(`a normal Quick Add save at expiry 
     assert.deepEqual((plugin.savedData as { recoveryDrafts: RecoveryDraft[] }).recoveryDrafts, []);
     quick.modal.onClose();
   }));
+});
+
+function mountFocusView(plugin: TestPlugin) {
+  const view = new harness.TangrowSidebar({}, plugin);
+  const pane = new GateElement();
+  Object.assign(view, { pane });
+  view.mountFocus();
+  const refresh = () => view.refreshSection(plugin.snapshot());
+  const button = (label: string) => {
+    const control = pane.all().find((element) => element.tag === 'button' && element.getAttribute('aria-label') === label);
+    assert.ok(control, label);
+    return control;
+  };
+  refresh();
+  return { pane, refresh, button };
+}
+
+test('focus uses a single preset row and follows the configured duration until the user chooses another preset', async () => {
+  const { plugin } = createPlugin();
+  plugin.settings.language = 'en';
+  plugin.settings.focusMinutes = 32;
+  const { pane, refresh, button } = mountFocusView(plugin);
+  const row = pane.all().find((element) => element.getAttribute('aria-label') === 'Session length');
+  assert.ok(row);
+  assert.deepEqual(row.all().filter((element) => element.tag === 'button').map((element) => element.getAttribute('aria-label')),
+    ['15 minutes', '25 minutes', 'Default duration: 32 minutes', '45 minutes', 'Custom']);
+  assert.equal(button('Default duration: 32 minutes').getAttribute('aria-pressed'), 'true');
+  assert.equal(button('Start 32 min').lastElementChild?.textContent, 'Start 32 min');
+  assert.equal(pane.querySelector('input'), undefined);
+
+  plugin.settings.focusMinutes = 45;
+  refresh();
+  assert.equal(button('Default duration: 45 minutes').getAttribute('aria-pressed'), 'true');
+  assert.equal(pane.all().filter((element) => element.getAttribute('aria-label') === '45 minutes').length, 0);
+  await pane.clickButton('15 minutes');
+  plugin.settings.focusMinutes = 55;
+  refresh();
+  assert.equal(button('15 minutes').getAttribute('aria-pressed'), 'true');
+  assert.equal(button('Default duration: 55 minutes').getAttribute('aria-pressed'), 'false');
+  assert.equal(button('Start 15 min').lastElementChild?.textContent, 'Start 15 min');
+});
+
+test('custom focus stays in the same row, rejects invalid values, and supports keyboard cancel and start', async () => {
+  const { plugin } = createPlugin();
+  plugin.settings.language = 'en';
+  const { pane, refresh, button } = mountFocusView(plugin);
+  const customSlot = button('Custom').parent;
+  await pane.clickButton('Custom');
+  const input = pane.querySelector('input');
+  assert.ok(input);
+  assert.equal(input.parent, customSlot);
+  assert.equal(input.focused, true);
+  const key = (name: string) => Object.assign(new Event('keydown', { cancelable: true }), { key: name });
+  for (const value of ['', '0', '12.5', '241']) {
+    input.value = value;
+    input.dispatchEvent(new Event('input'));
+    assert.equal(input.getAttribute('aria-invalid'), 'true');
+    assert.equal(button('Begin focus').disabled, true);
+    input.dispatchEvent(key('Enter'));
+    assert.equal(plugin.focus, null);
+  }
+  input.dispatchEvent(key('Escape'));
+  assert.equal(button('Custom').focused, true);
+  assert.equal(button('Default duration: 25 minutes').getAttribute('aria-pressed'), 'true');
+  await pane.clickButton('Custom');
+  const valid = pane.querySelector('input');
+  assert.ok(valid);
+  valid.value = '37';
+  valid.dispatchEvent(new Event('input'));
+  assert.equal(valid.getAttribute('aria-invalid'), 'false');
+  assert.equal(button('Start 37 min').disabled, false);
+  valid.dispatchEvent(key('Enter'));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(plugin.focus?.durationMs, 37 * 60_000);
+
+  refresh();
+  assert.equal(pane.querySelector('input'), undefined);
+  assert.deepEqual(pane.all().filter((element) => element.classes.includes('mod-cta')).map((element) => element.getAttribute('aria-label')), ['Finish & record']);
+  await pane.clickButton('Pause');
+  refresh();
+  assert.equal(plugin.focus?.endsAt, null);
+  assert.ok(button('Resume'));
+  await pane.clickButton('Resume');
+  assert.notEqual(plugin.focus?.endsAt, null);
+  refresh();
+  await pane.clickButton('Discard session');
+  assert.equal(plugin.focus, null);
 });

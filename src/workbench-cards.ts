@@ -114,9 +114,9 @@ export class WorkbenchCards {
   }
 
   renderToday(parent: HTMLElement): void {
-    const section = parent.createDiv({ cls: 'tangrow-workbench-card' });
+    const section = parent.createEl('section', { cls: 'tangrow-today-loop' });
     const heading = section.createDiv({ cls: 'tangrow-list-heading' });
-    this.ui.sectionHeading(heading, 'Card activity');
+    this.ui.sectionHeading(heading, "Today's loop");
     if (!this.renderStatus(section)) return;
     const { knowledge, report } = this.data!;
     const total = this.ui.userButton(heading, this.ui.t('View all · {count}', { count: this.ui.number(knowledge.counts.all) }), () => this.showKnowledge('cards'), { level: 'text' });
