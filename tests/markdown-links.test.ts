@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { rebaseMarkdownLinks } from '../src/markdown-links';
+import { newNoteCollisionWikiTarget, rebaseMarkdownLinks } from '../src/markdown-links';
 
 const SOURCE = '00-Inbox/Capture.md';
 const TARGET = '20-Project/Launch/Insight.md';
+
+test('new note links qualify matching Markdown basenames only', () => {
+  assert.equal(newNoteCollisionWikiTarget({ basename: 'Capture', path: SOURCE }, TARGET), null);
+  assert.equal(newNoteCollisionWikiTarget({ basename: 'Café', path: '00-Inbox/Café.md' }, '40-Resources/Research/cafe\u0301.md'), '00-Inbox/Café');
+  assert.equal(newNoteCollisionWikiTarget({ basename: 'Capture', path: 'Capture.md' }, '40-Resources/Research/Capture.md'), '../../Capture');
+});
 
 test('copied Markdown links and images retain their original vault destinations', () => {
   const content = '[Plan](./Plan.md#Next)\n![sketch](./assets/sketch.png)\n[Guide](../40-Resources/Guide.md?mode=read#Part)\n[Plain](Related.md)';

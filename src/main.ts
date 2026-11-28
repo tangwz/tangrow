@@ -40,7 +40,7 @@ import { writeReportStatus } from './report-editing';
 import { buildCardReport, buildWorkbenchCards, type CardFilter } from './card-report-data';
 import { readCardReviewQueue, type CardReviewQueue } from './card-review';
 import { readKnowledgeRecord, resolvePropertyLink } from './knowledge-index';
-import { rebaseMarkdownLinks } from './markdown-links';
+import { newNoteCollisionWikiTarget, rebaseMarkdownLinks } from './markdown-links';
 import type { ReportDestination, ReportPreferences, ReportRange, ReportRecord, ReportResource, ReportSnapshot, ReportStatusChange } from './report-contract';
 import { translate, describeError, type TranslationValues } from './i18n';
 import { DEFAULT_SETTINGS, type CaptureRequest, type CardSource, type ComposerState, type Habit, type Locale, type ActionId, type BaseId, type FocusSession, type NoteKind, type NoteSummary, type Settings, type SidebarHost, type Snapshot, type TaskSummary, type WritingDraft, type WritingSaveOrigin } from './types';
@@ -1089,6 +1089,10 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   private propertyLink(file: TFile, sourcePath: string, anchor = ''): string {
     return `[[${this.app.metadataCache.fileToLinktext(file, sourcePath)}${anchor}]]`;
   }
+  private newNotePropertyLink(file: TFile, newNotePath: string, anchor = ''): string {
+    const target = newNoteCollisionWikiTarget(file, newNotePath);
+    return target === null ? this.propertyLink(file, newNotePath, anchor) : `[[${target}${anchor}]]`;
+  }
   private async createUnique(folder: string, title: string, body: string, fields: Record<string, unknown>, source?: CardSource): Promise<TFile> {
     folder = safeFolder(folder);
     title = safeTitle(title);
@@ -1101,14 +1105,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
         const file = source.captureFile ? this.captureFile(source.path) : this.app.vault.getAbstractFileByPath(source.path);
         if (source.captureFile && file !== source.captureFile) throw new Error('This capture no longer exists.');
         if (!(file instanceof TFile) || file.extension !== 'md') throw new Error('The card source no longer exists.');
-        const cardBasename = path.slice(folder.length + 1, -3);
-        if (file.basename.normalize('NFC').toLowerCase() === cardBasename.normalize('NFC').toLowerCase()) {
-          // Obsidian may return a bare basename because the same-name card does not exist yet.
-          const sourcePath = file.path.includes('/') ? file.path.slice(0, -3) : `${'../'.repeat(folder.split('/').length)}${file.basename}`;
-          fields.tangrow_sources = [`[[${sourcePath}${source.anchor ?? ''}]]`];
-        } else {
-          fields.tangrow_sources = [this.propertyLink(file, path, source.anchor)];
-        }
+        fields.tangrow_sources = [this.newNotePropertyLink(file, path, source.anchor)];
       }
       body = rebaseMarkdownLinks(body, source.path, path,
         (link, from) => this.app.metadataCache.getFirstLinkpathDest(link, from)?.path ?? null, { sourceLocalAnchors: true });
@@ -1193,7 +1190,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       const entity = this.workbenchEntity(project.path, this.settings.projectFolder, 'Choose an existing project.');
       const note = entity instanceof TFile && entity.path === project.notePath ? entity
         : this.workbenchLinkedNote(project.notePath, entity.path, 'Choose an existing project note.');
-      const link = this.propertyLink(note, path);
+      const link = this.newNotePropertyLink(note, path);
       if (/^\[\[[^\[\]\r\n|]+\]\]$/.test(link)) return link;
     } catch { /* the project or its saved note is no longer usable */ }
     submission.path = null;
