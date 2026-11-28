@@ -2,9 +2,9 @@
 
 状态：设计提案，部分已实现。已实现的有五区导航、知识区列表、新建卡片与选中文本提炼为卡片、每日卡片回顾和卡片报表明细；这些没有严格按第 10 节的分期顺序落地，其余部分待实现。更新于 2026-11-28（修订速记处理：四个动作、PARA 落点、保存后标记已处理，见 5.2）。
 
-[v4 交互原型](../output/design/zettelkasten-v4.html) 可直接打开[创作](../output/design/zettelkasten-v4.html?scenario=compose#prototype)、[AI](../output/design/zettelkasten-v4.html?scenario=ai#prototype)、[今天主页](../output/design/zettelkasten-v4.html?scenario=today#prototype)、[报表总览](../output/design/zettelkasten-v4.html?scenario=overview#prototype)或[卡片明细](../output/design/zettelkasten-v4.html?scenario=report#prototype)。演示日期固定为 2026-11-17，便于核对日期窗口与回顾队列。[v3](../output/design/zettelkasten-v3.html) 与 [v2](../output/design/zettelkasten-v2.html) 保留为历史参考。
+[v4 交互原型](design/zettelkasten-v4.html) 可直接打开[创作](design/zettelkasten-v4.html?scenario=compose#prototype)、[AI](design/zettelkasten-v4.html?scenario=ai#prototype)、[今天主页](design/zettelkasten-v4.html?scenario=today#prototype)、[报表总览](design/zettelkasten-v4.html?scenario=overview#prototype)或[卡片明细](design/zettelkasten-v4.html?scenario=report#prototype)。演示日期固定为 2026-11-17，便于核对日期窗口与回顾队列。[v3](design/zettelkasten-v3.html) 与 [v2](design/zettelkasten-v2.html) 保留为历史参考。
 
-本方案基于 原始卡片笔记方案（未收入仓库），并对照当前仓库的 [设计边界](DESIGN.md)、[报表定义](REPORTING.md) 与实际代码修订。[v1 UI 草图](../output/design/zettelkasten-v1.html) 保留为历史参考；它与本方案不一致的导航、处理规则和报表结构，以本文为准。术语见 [领域语言](../CONTEXT.md)。
+本方案基于 原始卡片笔记方案（未收入仓库），并对照当前仓库的 [设计边界](DESIGN.md)、[报表定义](REPORTING.md) 与实际代码修订。[v1 UI 草图](design/zettelkasten-v1.html) 保留为历史参考；它与本方案不一致的导航、处理规则和报表结构，以本文为准。术语见 [领域语言](../CONTEXT.md)。
 
 ## 1. 结论与范围
 
@@ -451,7 +451,7 @@ A write can finish before its acknowledgement arrives.
 
 “笔记 → 卡片”支持从指标或分组进入清单，再按标题、路径搜索，每页 20 张。卡片可展开查看完整路径、提炼来源、正文出入链、连接类型与理由、所属主题、候选稿件、正文引用稿件和上次明确回顾的日期。每个可解析的文件都能直接打开。
 
-占比同时显示分子与分母，分母为零显示“无数据”。关系索引未就绪时，相关指标显示“待确认”，卡片总数、创建日期、成熟度和已记录的回顾仍可查看。[索引建立中的演示](../output/design/zettelkasten-v4.html?scenario=report&index=pending#prototype)。文件不可读或链接失效需保留明细提示。关系覆盖反映当前可观察状态，历史日期只用于有日期依据的创建和回顾信息。
+占比同时显示分子与分母，分母为零显示“无数据”。关系索引未就绪时，相关指标显示“待确认”，卡片总数、创建日期、成熟度和已记录的回顾仍可查看。[索引建立中的演示](design/zettelkasten-v4.html?scenario=report&index=pending#prototype)。文件不可读或链接失效需保留明细提示。关系覆盖反映当前可观察状态，历史日期只用于有日期依据的创建和回顾信息。
 
 ## 9. 目录、设置与升级
 

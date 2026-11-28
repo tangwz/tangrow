@@ -35,7 +35,7 @@ Match the proof required to the risk of the change:
   - physical keyboard / live Obsidian host evidence,
   - automated keystroke / scripted host checks, and
   - mocked unit/integration tests.
-- Never present static HTML mockups (`output/design/*.html`), synthetic images,
+- Never present static HTML mockups (`docs/design/*.html`), synthetic images,
   or mocked unit tests as live Obsidian host proof.
 - Do not merge or recommend merge based only on PR prose, AI rationale, or green
   CI when changed user-visible behavior has not been exercised.

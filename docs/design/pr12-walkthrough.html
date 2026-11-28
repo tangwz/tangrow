@@ -1,0 +1,2606 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tangrow PR #12 可视化走读与全条款审核看板</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    :root {
+      color-scheme: dark;
+      --background: #090a0c;
+      --card: #111215;
+      --sidebar: #151619;
+      --border: #303136;
+      --card-border: #28292e;
+      --foreground: #f0f0f2;
+      --muted-foreground: #9d9ea8;
+      --placeholder: #6f707a;
+      --code-foreground: #c6bcff;
+      --primary: #c6bcff;
+      --primary-foreground: #111215;
+      --link: #c6bcff;
+      --success: #99d6b3;
+      --warning: #edc58a;
+      --error: #ffabab;
+    }
+    html[data-theme="light"] {
+      color-scheme: light;
+      --background: #f6f7f9;
+      --card: #ffffff;
+      --sidebar: #f1f2f6;
+      --border: #d8dae2;
+      --card-border: #e5e7ee;
+      --foreground: #17181c;
+      --muted-foreground: #5c6070;
+      --placeholder: #8a8f9e;
+      --code-foreground: #5b46d9;
+      --primary: #5b46d9;
+      --primary-foreground: #ffffff;
+      --link: #5b46d9;
+      --success: #1f7a4c;
+      --warning: #a16207;
+      --error: #c23636;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+    }
+    .tab-btn { transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease; }
+    .tab-btn[aria-selected="true"] {
+      background: color-mix(in srgb, var(--primary) 16%, transparent);
+      color: var(--foreground);
+      border-color: color-mix(in srgb, var(--primary) 48%, var(--border));
+    }
+    .pill-btn[aria-pressed="true"] {
+      background: var(--primary);
+      color: var(--primary-foreground);
+      border-color: var(--primary);
+    }
+    .soft-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-size: 12px;
+      line-height: 1.4;
+      font-weight: 500;
+      border: 1px solid var(--border);
+    }
+    .badge-ok {
+      background: color-mix(in srgb, var(--success) 15%, transparent);
+      color: var(--success);
+      border-color: color-mix(in srgb, var(--success) 38%, transparent);
+    }
+    .badge-warn {
+      background: color-mix(in srgb, var(--warning) 15%, transparent);
+      color: var(--warning);
+      border-color: color-mix(in srgb, var(--warning) 38%, transparent);
+    }
+    .badge-err {
+      background: color-mix(in srgb, var(--error) 15%, transparent);
+      color: var(--error);
+      border-color: color-mix(in srgb, var(--error) 38%, transparent);
+    }
+    .badge-primary {
+      background: color-mix(in srgb, var(--primary) 15%, transparent);
+      color: var(--primary);
+      border-color: color-mix(in srgb, var(--primary) 38%, transparent);
+    }
+    .node-card {
+      transition: transform 140ms ease, border-color 140ms ease, background-color 140ms ease;
+    }
+    .node-card:hover { transform: translateY(-1px); }
+    .node-card.is-active {
+      border-color: var(--primary);
+      background: color-mix(in srgb, var(--primary) 12%, var(--card));
+      box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 40%, transparent);
+    }
+    .code-box {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.6;
+      background: color-mix(in srgb, var(--sidebar) 85%, var(--background));
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      overflow-x: auto;
+      white-space: pre;
+    }
+    .highlight-managed {
+      background: color-mix(in srgb, var(--primary) 16%, transparent);
+      border-left: 3px solid var(--primary);
+      padding: 2px 8px;
+      display: block;
+      margin: 2px -8px;
+    }
+    .highlight-user {
+      background: color-mix(in srgb, var(--success) 14%, transparent);
+      border-left: 3px solid var(--success);
+      padding: 2px 8px;
+      display: block;
+      margin: 2px -8px;
+    }
+    .highlight-meta {
+      background: color-mix(in srgb, var(--warning) 12%, transparent);
+      border-left: 3px solid var(--warning);
+      padding: 2px 8px;
+      display: block;
+      margin: 2px -8px;
+    }
+    .why-box {
+      border-left: 3px solid var(--primary);
+      background: color-mix(in srgb, var(--primary) 7%, var(--sidebar));
+      border-radius: 0 10px 10px 0;
+      padding: 8px 12px;
+    }
+    .check-row input[type="checkbox"] {
+      accent-color: var(--primary);
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+    }
+    .kbd {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      padding: 2px 7px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--sidebar);
+      color: var(--foreground);
+    }
+    .diagram-frame {
+      background: color-mix(in srgb, var(--sidebar) 65%, var(--background));
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 12px;
+      overflow-x: auto;
+    }
+    .svg-box {
+      fill: var(--card);
+      stroke: var(--border);
+      stroke-width: 1.4;
+    }
+    .svg-box-soft {
+      fill: var(--sidebar);
+      stroke: var(--card-border);
+      stroke-width: 1.2;
+    }
+    .svg-box-primary {
+      fill: color-mix(in srgb, var(--primary) 13%, var(--card));
+      stroke: var(--primary);
+      stroke-width: 1.6;
+    }
+    .svg-box-ok {
+      fill: color-mix(in srgb, var(--success) 12%, var(--card));
+      stroke: var(--success);
+      stroke-width: 1.5;
+    }
+    .svg-box-warn {
+      fill: color-mix(in srgb, var(--warning) 13%, var(--card));
+      stroke: var(--warning);
+      stroke-width: 1.5;
+    }
+    .svg-box-err {
+      fill: color-mix(in srgb, var(--error) 12%, var(--card));
+      stroke: var(--error);
+      stroke-width: 1.5;
+    }
+    .svg-zone {
+      fill: color-mix(in srgb, var(--card) 55%, transparent);
+      stroke: var(--border);
+      stroke-width: 1.2;
+      stroke-dasharray: 5 4;
+    }
+    .svg-node { cursor: pointer; }
+    .svg-node:hover rect { stroke: var(--primary); stroke-width: 2; }
+    .svg-node.is-active rect {
+      fill: color-mix(in srgb, var(--primary) 20%, var(--card));
+      stroke: var(--primary);
+      stroke-width: 2.2;
+    }
+    .svg-title { fill: var(--foreground); font-size: 13px; font-weight: 600; }
+    .svg-sub { fill: var(--muted-foreground); font-size: 11px; }
+    .svg-label { fill: var(--muted-foreground); font-size: 11px; font-weight: 500; }
+    .svg-code {
+      fill: var(--code-foreground);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+    }
+    .svg-arrow { stroke: var(--muted-foreground); stroke-width: 1.6; fill: none; }
+    .svg-arrow-primary, .svg-arrow-p { stroke: var(--primary); stroke-width: 1.8; fill: none; }
+    .svg-arrow-ok { stroke: var(--success); stroke-width: 1.7; fill: none; }
+    .svg-arrow-warn, .svg-arrow-w { stroke: var(--warning); stroke-width: 1.7; fill: none; }
+    .svg-arrow-err, .svg-arrow-e { stroke: var(--error); stroke-width: 1.7; fill: none; }
+    .scroll-thin::-webkit-scrollbar { height: 6px; width: 6px; }
+    .scroll-thin::-webkit-scrollbar-thumb {
+      background: color-mix(in srgb, var(--muted-foreground) 35%, transparent);
+      border-radius: 999px;
+    }
+  </style>
+</head>
+<body class="bg-[var(--background)] text-[var(--foreground)] antialiased">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 py-5 space-y-5">
+    <!-- Top Header -->
+    <header class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-4 sm:p-5 space-y-4">
+      <div class="flex flex-wrap items-start justify-between gap-4">
+        <div class="space-y-1.5">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="soft-badge badge-primary">PR #12 全条款可视化走读</span>
+            <span class="soft-badge badge-ok">CI Passed</span>
+            <span class="soft-badge badge-ok">MERGEABLE / CLEAN</span>
+            <span class="soft-badge">HEAD <code class="font-mono text-[var(--code-foreground)]">08d7c09</code></span>
+            <span class="soft-badge">23 Commits · 6 文件 · 7 张架构/流程图</span>
+          </div>
+          <h1 class="text-xl sm:text-2xl font-semibold tracking-tight">Tangrow 核心闭环定位 &amp; AI 整理引擎设计 — 审核看板</h1>
+          <p class="text-xs sm:text-sm text-[var(--muted-foreground)]">
+            完整覆盖 <code class="text-[var(--code-foreground)]">README.md</code>、<code class="text-[var(--code-foreground)]">docs/POSITIONING.md</code>、<code class="text-[var(--code-foreground)]">docs/AI-ENGINE.md</code>、<code class="text-[var(--code-foreground)]">CONTEXT.md</code>、<code class="text-[var(--code-foreground)]">docs/DESIGN.md</code> 与 <code class="text-[var(--code-foreground)]">docs/ZETTELKASTEN.md</code> 的全部条款、流程图、逻辑架构图与关键设计思路。
+          </p>
+        </div>
+        <div class="flex flex-col items-end gap-2 min-w-[230px]">
+          <div class="flex items-center gap-2 text-xs text-[var(--muted-foreground)]">
+            <span>关键点确认进度</span>
+            <strong id="progress-label" class="font-mono text-[var(--foreground)]">0 / 16</strong>
+          </div>
+          <div class="w-full h-2 rounded-full bg-[var(--sidebar)] border border-[var(--card-border)] overflow-hidden">
+            <div id="progress-bar" class="h-full bg-[var(--primary)] transition-all duration-200" style="width: 0%"></div>
+          </div>
+          <div class="flex flex-wrap items-center justify-end gap-2">
+            <button id="btn-theme" type="button" class="text-xs px-2.5 py-1.5 rounded-lg border border-[var(--card-border)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:border-[var(--primary)] cursor-pointer" title="切换深色 / 浅色主题">
+              浅色模式
+            </button>
+            <button id="btn-export" type="button" class="text-xs px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--sidebar)] hover:border-[var(--primary)] text-[var(--foreground)] cursor-pointer">
+              复制审核确认记录
+            </button>
+            <button id="btn-reset" type="button" class="text-xs px-2.5 py-1.5 rounded-lg border border-[var(--card-border)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] cursor-pointer">
+              重置
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Primary Navigation Tabs -->
+      <nav id="main-tabs" role="tablist" aria-label="走读分区" class="flex flex-wrap gap-2 pt-2 border-t border-[var(--card-border)]">
+        <button class="tab-btn text-xs sm:text-sm px-3 py-2 rounded-xl border border-[var(--card-border)] text-[var(--muted-foreground)] cursor-pointer font-medium" role="tab" data-tab="overview" aria-selected="true">1. 总览·文档关系与审核清单</button>
+        <button class="tab-btn text-xs sm:text-sm px-3 py-2 rounded-xl border border-[var(--card-border)] text-[var(--muted-foreground)] cursor-pointer font-medium" role="tab" data-tab="loop" aria-selected="false">2. 核心闭环流程图与现状</button>
+        <button class="tab-btn text-xs sm:text-sm px-3 py-2 rounded-xl border border-[var(--card-border)] text-[var(--muted-foreground)] cursor-pointer font-medium" role="tab" data-tab="engine" aria-selected="false">3. 逻辑架构·流水线与白名单</button>
+        <button class="tab-btn text-xs sm:text-sm px-3 py-2 rounded-xl border border-[var(--card-border)] text-[var(--muted-foreground)] cursor-pointer font-medium" role="tab" data-tab="recovery" aria-selected="false">4. 执行·修订链与崩溃恢复图</button>
+        <button class="tab-btn text-xs sm:text-sm px-3 py-2 rounded-xl border border-[var(--card-border)] text-[var(--muted-foreground)] cursor-pointer font-medium" role="tab" data-tab="tasks" aria-selected="false">5. 五大任务与 LLM Wiki 架构</button>
+        <button class="tab-btn text-xs sm:text-sm px-3 py-2 rounded-xl border border-[var(--card-border)] text-[var(--muted-foreground)] cursor-pointer font-medium" role="tab" data-tab="ops" aria-selected="false">6. 隐私·模型·授权·测试·分期</button>
+        <button class="tab-btn text-xs sm:text-sm px-3 py-2 rounded-xl border border-[var(--card-border)] text-[var(--muted-foreground)] cursor-pointer font-medium" role="tab" data-tab="copy" aria-selected="false">7. 决策·术语·文案与全条款检索</button>
+      </nav>
+    </header>
+
+    <!-- Main Dynamic Content -->
+    <main id="panel-host" class="space-y-5"></main>
+
+    <!-- Toast -->
+    <div id="toast" class="fixed bottom-5 right-5 px-4 py-2.5 rounded-xl bg-[var(--card)] border border-[var(--primary)] text-xs font-medium shadow-lg opacity-0 pointer-events-none transition-opacity duration-200"></div>
+  </div>
+
+<script>
+(() => {
+  const STORAGE_KEY = 'tangrow.pr12.walkthrough.v2';
+
+  const DATA = {
+    positioning: {
+      zh: 'Tangrow：开箱即用的 AI-Native Obsidian 个人工作台。用卡片笔记让想法生长，以 PARA 存放，由 AI 整理和回顾，由你来产出。',
+      en: 'Tangrow — the out-of-the-box, AI-native personal workbench for Obsidian. Zettelkasten cards let ideas grow, PARA keeps them in place, AI organizes and reviews, and you create.',
+      coreClaim: 'Tangrow 卖的不是一组功能，而是一条闭环：记下的东西，最终会变成你的观点和产出。',
+      tagline: '捕获、整理、提炼、连接、回顾、产出——Obsidian 里的一条完整闭环，AI 整理和回顾，你来产出。',
+      short30: 'Tangrow 是开箱即用的 AI-Native Obsidian 工作台，用卡片笔记和 PARA 把记录变成观点与产出。',
+      short100: 'Tangrow 给 Obsidian 加上一条完整的知识闭环：随手捕获，按 PARA 归位，提炼成卡片，连接成主题，每日回顾，最终写成稿件、推进项目。AI 负责繁琐的整理（即将推出），每一次写入都先给你看清单；你的笔记库保持原样，不迁移、不锁定。',
+      promises: [
+        {
+          title: '1. 零迁移，不锁定',
+          badge: '已实现',
+          badgeCls: 'badge-ok',
+          readmeText: '装上就接入你现有的笔记库，多年积累的笔记当天就能进入闭环；Tangrow 只新增，不移动、不删除你的笔记，一切都是原生 Markdown，随时可以带走。',
+          posText: '装上就接入你现有的笔记库，多年积累的笔记当天就能进入闭环，不用搬家、不用改目录。Tangrow 只新增，不移动、不重命名、不删除已有笔记；所有数据都是原生 Markdown 和属性，卸载后照样可读，随时可以带走。',
+          why: '降低老 Obsidian 用户的心理门槛：多年积累的目录与链接不动分毫，插件只是可随时撤回的增补层。'
+        },
+        {
+          title: '2. AI 驱动（整理引擎即将推出）',
+          badge: '08d7c09 已收紧标题',
+          badgeCls: 'badge-warn',
+          readmeText: '归位、提炼、连接、回顾都由 AI 起草，你只需逐项确认；能写什么由代码白名单限定。现有的即时建议只预填表单，由你保存；Claudian 工作流由代理在其对话中向你确认。',
+          posText: '归位、提炼、连接、回顾的繁琐劳动都由 AI 起草，你只需逐项勾选、编辑或拒绝（整理引擎即将推出）。能写什么由代码白名单限定，不靠提示词约束。',
+          why: '明确区分「即将推出的内置整理引擎」与「现已落地的即时建议 / Claudian 工作流」，且安全承诺靠代码白名单而非脆弱的 prompt 约束。'
+        },
+        {
+          title: '3. 开箱即用',
+          badge: '08d7c09 已锐化',
+          badgeCls: 'badge-primary',
+          readmeText: '不用另装插件，填一个 API 密钥就能启用 AI 整理（即将推出）；捕获、速记处理、卡片和回顾现在装上就能用。',
+          posText: '装上就能用：沿用你现有的目录，不要求迁移。整理引擎推出后，填一个 API 密钥就能启用 AI 整理，不需要另装插件；一键建立 PARA 结构和手机端 AI 也在规划中。对外宣传时，规划中的部分须按第 4 节标注「即将推出」。',
+          why: '已验证 DEFAULT_SETTINGS.knowledgeEnabled 默认为 true，装上即可用捕获/速记处理/卡片/回顾；同时直击当前需另装 Claudian 的痛点。'
+        }
+      ]
+    },
+
+    files: [
+      { path: 'docs/POSITIONING.md', change: '新增 (+129)', role: '产品定位、6 步闭环、3 承诺、现状对照、5 原则、对外文案与宣传红线、5 项本地度量', status: '产品定位（2026-11-26 确定）' },
+      { path: 'docs/AI-ENGINE.md', change: '新增 (+310)', role: '内置整理引擎完整设计：架构、TaskSpec、7 类白名单、确认 UI、修订链与恢复、5 大任务、隐私、Provider、迁移、授权、5 决策、测试与 E0–E4 分期', status: '设计提案（未实现）' },
+      { path: 'README.md', change: '修改 (+14 / -1)', role: '顶部升级为一句话定位 + 6 步闭环图 + 3 承诺（08d7c09 将 AI 驱动直接标为即将推出并锐化开箱即用），链接 POSITIONING.md#4 与 AI-ENGINE.md', status: '实时入口文档' },
+      { path: 'CONTEXT.md', change: '修改 (+3)', role: '新增「主题百科（Wiki）」词条（含 Karpathy LLM Wiki 三层与编入/查询/体检三操作，及首批仅实现编入、托管区块、人工确认与非素材边界）', status: '领域术语唯一真源' },
+      { path: 'docs/DESIGN.md', change: '修改 (+4)', role: '顶部链接 POSITIONING.md（取舍看第 5 节）；「AI 功能的边界」前增加演进方向提示（指向 AI-ENGINE.md 提案，下文仍描述现行实现）', status: '现行实现边界' },
+      { path: 'docs/ZETTELKASTEN.md', change: '修改 (+11 / -8)', role: '同步 2026-11-26 5 项决策（精确对应 AI-ENGINE §13 所列 6 处：3.1、3.3、5.2、6.2、7.2、8.2），新增 wiki 角色、tangrow_origin/tangrow_ai 属性、AI 卡片优先回顾', status: '统一设计同步' }
+    ],
+
+    deferred: [
+      { item: 'docs/REPORTING.md 未改动', kind: '刻意留白', reason: '只记录已上线报表口径；wiki 排除出资源条目统计已在 AI-ENGINE.md §8.5 注明，留到 E3 实现时并入。' },
+      { item: 'src/card-report-data.ts 未改动', kind: '刻意留白', reason: '本 PR 为纯文档变更；将 wiki 加入 NON_MATERIAL_KINDS 留到 E3 实施。' },
+      { item: 'AGENTS.md 未改动', kind: '刻意留白', reason: 'AGENTS.md 在另一分支 chore/add-autoreview-skill，合入后再补充 docs/POSITIONING.md 与 docs/AI-ENGINE.md 索引。' },
+      { item: 'DESIGN.md L7 既有表述（非本 PR 引入）', kind: '既有小漂移', reason: 'main 原文仍写「稿件候选与正文引用等其余部分尚未实现」，但实码已有加入稿件候选与只读展示（POSITIONING.md §4 准确）；可合并后单修。' },
+      { item: 'ZETTELKASTEN.md L7 既有绝对路径（非本 PR 引入）', kind: '既有小漂移', reason: 'main 原文含一条指向历史方案的本机绝对路径链接，非本 PR 引入，后续清理文档时顺手移除。' }
+    ],
+
+    checklist: [
+      { id: 'c1', cat: '定位', text: '一句话定位（中/英）、3 个承诺及 README 08d7c09 对「AI 驱动（整理引擎即将推出）」「开箱即用」的界定准确无过承诺', tab: 'overview' },
+      { id: 'c2', cat: '闭环', text: '6 步闭环（含产出→捕获、回顾→提炼两条反馈环）与第 4 节「已实现 vs 规划中」边界和实码 100% 吻合', tab: 'loop' },
+      { id: 'c3', cat: '取舍', text: '5 条产品取舍原则（含专注/习惯为辅助模块、AI 动作嵌入环节不单设目的地）与 5 项本地闭环度量到位', tab: 'loop' },
+      { id: 'c4', cat: '架构', text: '「自研整理引擎、不自研通用代理、Claudian 降为可选后端」定位与 E0 新建可查询 KnowledgeIndex 的前提清晰', tab: 'engine' },
+      { id: 'c5', cat: '白名单', text: '7 类写操作白名单与明确禁止项在类型层封死；验证器要求目标/链接存在于上下文或依赖同提案 create-note', tab: 'engine' },
+      { id: 'c6', cat: '确认UI', text: '确认界面 7 原则（单次 ≤8 新建、7 天整体过期 vs 局部修订过期、编辑固定内容、键盘流 J/K/Space/E/⌘Enter/Esc）完备', tab: 'engine' },
+      { id: 'c7', cat: 'TOCTOU', text: '「当前内容」统一定义（脏编辑器优先于磁盘），且源笔记与所有写入目标（含不发正文目标）均在上下文读取时一次性采集修订摘要', tab: 'recovery' },
+      { id: 'c8', cat: '属性写', text: '规范化 frontmatter + 原始正文摘要免疫 YAML 重排；脏编辑器遇属性项须先存盘落盘再核对并走 processFrontMatter', tab: 'recovery' },
+      { id: 'c9', cat: '恢复', text: '5 阶段执行顺序、可预测 vs 读回写入、4 分支崩溃恢复树（不调模型/不重读源文；链中断即暂停后续项）与旧凭据互斥闭环', tab: 'recovery' },
+      { id: 'c10', cat: '去重', text: 'HTML 注释标记（tangrow:change / tangrow-capture / tangrow:wiki:start）兼容字数剥离、速记覆盖率与 connectionAnnotation 解析', tab: 'recovery' },
+      { id: 'c11', cat: '任务', text: '5 项首批任务（daily-review / distill-cards / para-file / connect-card / wiki-compile）输入输出与防回流/质量约束闭环', tab: 'tasks' },
+      { id: 'c12', cat: 'Wiki', text: 'Karpathy LLM Wiki 三层与三操作（首批仅编入，查询/体检后评估）、托管区块 rev= 保护与非素材排除边界清晰', tab: 'tasks' },
+      { id: 'c13', cat: '隐私', text: '发送前预览（含未保存编辑）、tangrow_ai: false、不静默截断、提示注入多层防线、独立密钥 ID 不复用 AI_SECRET_ID', tab: 'ops' },
+      { id: 'c14', cat: '模型授权', text: 'Anthropic SDK 流式 vs OpenAI 兼容 requestUrl 逻辑取消；plugin.access.canUse() 门禁且已在途变更集始终放行恢复', tab: 'ops' },
+      { id: 'c15', cat: '测试分期', text: '§14 确定性测试矩阵（含各阶段故障注入）+ 真机/IME 验收标准 + E0–E4 分期门禁可落地验收', tab: 'ops' },
+      { id: 'c16', cat: '同步文案', text: '2026-11-26 5 项已定决策已同步至 ZETTELKASTEN（6 处）与 CONTEXT.md；演示脚本与着陆页全部标注阶段门禁与宣传红线', tab: 'copy' }
+    ],
+
+    loop: [
+      {
+        id: 'capture', step: '01', name: '捕获', sub: '速记 · 剪藏 · Journal', status: '骨架已齐', statusCls: 'badge-ok',
+        pain: '灵感来得快、去得也快，打开笔记本就忘了要写什么。',
+        how: '侧栏、独立小窗、沉浸速记、快速新建、编辑器右键、周期笔记，一步记下。',
+        ai: '—（捕获环节不介入模型，保证零延迟与原样留存）',
+        confirm: '—（直接按草稿凭据落盘）',
+        shipped: '速记（侧栏、独立窗口、沉浸）、快速新建、编辑器右键、周期笔记（日/周/月/季/年）。',
+        planned: '一键建立 PARA 目录结构（首次使用引导）。',
+        why: '捕获是闭环入口，核心指标是「低摩擦不丢字」。因此共享草稿 + 原生 IME 组字保护 + 提交凭据先行落地，AI 不打断输入。'
+      },
+      {
+        id: 'organize', step: '02', name: '整理', sub: 'PARA 归位', status: '手动已实现 · AI 规划 E1', statusCls: 'badge-warn',
+        pain: '收件箱越堆越多，不知道每条该放哪。',
+        how: '速记有明确出口：转为笔记、追加到任务总览、关联项目、标记已处理。',
+        ai: '按 PARA 建议每条去向（项目 / 领域 / 资源 / 任务 / 提炼卡片 / 仅标记已处理）。',
+        confirm: '逐条接受或修改去向；只新建，不搬动已有笔记；普通笔记只建议设 tangrow_project。',
+        shipped: '速记处理 4 动作（转为笔记建在所选项目笔记目录或 Inbox、追加到任务总览、关联项目、标记已处理，完成后均标已处理）；即时建议预填（可选）；Claudian「整理收件箱」。',
+        planned: '整理引擎 PARA 归位（AI-ENGINE 8.3，可建在 P/A/R 目录）；ZETTELKASTEN 5.2 手动表单调整（默认资源目录）。',
+        why: '收件箱堆积是知识库烂尾头号元凶。用 AI 做批量归位建议，同时用「只新建不搬动」守住零迁移底线，并区分引擎能力与手动表单边界。'
+      },
+      {
+        id: 'distill', step: '03', name: '提炼', sub: 'Zettel 卡片', status: '手动已实现 · AI 规划 E1', statusCls: 'badge-warn',
+        pain: '收藏了很多，自己的观点很少。',
+        how: '从速记、Journal、素材、普通笔记、稿件中提炼卡片，保留 tangrow_sources 来源。',
+        ai: '起草 0–5 张候选卡片（标题+正文+来源+建议连接），标出可能重复的已有卡片。',
+        confirm: '可在确认界面直接编辑后接受；AI 起草带 tangrow_origin: ai，后续回顾时引导用自己的话改写。',
+        shipped: '新建卡片、将选中文本提炼为卡片（知识区与右键）。',
+        planned: '整理引擎卡片提炼（8.2，可直接以速记为源）；通用提炼凭据（ZETTELKASTEN 7.2）。',
+        why: 'CONTEXT.md 定义卡片是「用自己的话阐明的观点」。为防止 AI 代写稀释思考，强制标 tangrow_origin: ai + tangrow_stage: seed，且只有用户明确确认已改写才清除，不猜 mtime。'
+      },
+      {
+        id: 'connect', step: '04', name: '连接', sub: '主题结构 · 主题百科', status: '基础已实现 · AI 规划 E2/E3', statusCls: 'badge-warn',
+        pain: '卡片孤立，用不起来；收集的素材散落各处看不到全貌。',
+        how: '带关系词（支撑/反驳/延伸/举例/对比/相关）与理由的连接；结构笔记（Hub）组织论证；主题百科（Wiki）汇总素材。',
+        ai: '建议最多 5 条带理由的连接或加入已有结构笔记；增量把新素材编译进主题百科托管区块。',
+        confirm: '逐条选择采纳哪些连接（只改发起卡片或勾选的结构笔记）；主题百科只改托管区块，用户改动过会暂停。',
+        shipped: '知识区主题结构列表；报表识别已标注的连接；Claudian「关联笔记」工作流。',
+        planned: '「连接到……」动作、加入主题（ZETTELKASTEN 6.4）；整理引擎卡片连接（8.4，E2）与主题百科（8.5，E3）。',
+        why: '严格拆分两种主题页：Hub 回答「我怎么组织自己的论证」，Wiki 回答「我收集的材料说了什么」，互不混淆；Wiki 排除出素材防止 AI 自产自销回流。'
+      },
+      {
+        id: 'review', step: '05', name: '回顾', sub: '每日回顾', status: '手动队列已实现 · AI 规划 E1', statusCls: 'badge-warn',
+        pain: '记了就忘，从不回看，积累无法反哺思考与行动。',
+        how: '每日回顾队列（AI 起草未改写 > 孤立卡片 > 久未回顾 > 抽样）；卡片报表追踪结构健康。',
+        ai: '起草今日回顾（记了什么 / 值得展开的想法 / 建议三件事），并提出下一步动作提案（提炼/连接/编入百科）。',
+        confirm: '写进当日 Journal 前预览（不存在先新建）；每条后续动作单独触发独立运行，不在回顾里越权写入。',
+        shipped: '每日卡片回顾队列（card-review.ts）；卡片报表；Claudian「写周回顾」工作流。',
+        planned: '整理引擎每日回顾（8.1，E1）；周期回顾（周/月，AI-ENGINE §11）。',
+        why: '回顾是让闭环真正转起来的飞轮（触发「回顾 → 提炼」反馈环）。复用已持久化队列避免重复抽样，且禁止把速记全文倒灌进 Journal。'
+      },
+      {
+        id: 'produce', step: '06', name: '产出', sub: '稿件 · 项目', status: '基础已实现 · 插入引用规划中', statusCls: 'badge-primary',
+        pain: '写作时找不到自己积累的东西，积累与交付脱节。',
+        how: '写作暂存 → 稿件；稿件收集候选素材并插入正文引用；项目关联记录、材料、卡片与任务。',
+        ai: '项目简报（只读）、拆解任务（当前在 Claudian；后续按需迁移为只读或 add-task）。',
+        confirm: '写入前确认；最终表达与交付始终由用户主导（不替用户写作定稿）。',
+        shipped: '写作暂存、稿件、项目、任务；将当前笔记/卡片加入稿件候选；稿件面板只读查看候选素材与正文引用；Claudian 项目简报/拆解工作流。',
+        planned: '在稿件中插入引用等其余写作动作（ZETTELKASTEN 5.4）。',
+        why: '产出中的新想法再次回到「捕获」形成大闭环；同时严格区分「候选素材（tangrow_materials）」与「正文引用（实际正文链接）」，防止虚高指标。'
+      }
+    ],
+
+    principles: [
+      { n: '1', title: '闭环归属检验', body: '每个功能都必须能指出它服务闭环的哪一环；指不出来的放进「更多」或做成可选模块，不占主导航。', why: '防止工作台退化成大杂烩工具箱。' },
+      { n: '2', title: '按闭环组织主导航', body: '主导航按闭环而不是按功能类型组织。AI 动作嵌在所服务的环节里（速记旁是「整理」，卡片旁是「找连接」），不把 AI 页签当作独立目的地。', why: '用户要的是「把速记理顺」，不是「去和聊天框对话」。' },
+      { n: '3', title: '专注、习惯退居辅助模块', body: '可以关联稿件或出现在周期回顾里，但不进入核心宣传，默认可关闭。', why: '聚焦「知识闭环」主叙事，不稀释产品定位。' },
+      { n: '4', title: '空状态即下一步引导', body: '每个空状态都指向闭环的下一步，例如卡片页为空时引导「从最近的速记提炼第一张卡片」。', why: '用上下文空状态替代冗长教程，自然拉动首轮闭环。' },
+      { n: '5', title: '闭环健康度是北极星', body: '用第 7 节的 5 项本地指标检验产品是否真的帮助用户把记录转化为观点和产出。', why: '拒绝虚荣指标（如打开次数/打卡天数），衡量真实知识流转。' }
+    ],
+
+    metrics: [
+      { name: '整理率', def: '一周内新增的速记中，已产生结果或已处理的比例', stage: '整理环', note: '衡量收件箱是否消化而非堆积' },
+      { name: '提炼数', def: '一周内新建的卡片数，区分 AI 起草（tangrow_origin: ai）与用户改写', stage: '提炼环', note: '防止只堆 AI 初稿不内化' },
+      { name: '连接率', def: '有至少一条连接或主题收录的卡片占全部卡片的比例', stage: '连接环', note: '衡量孤立卡片是否接入网络' },
+      { name: '回顾完成数', def: '一周内完成回顾（显式标记已回顾）的卡片数', stage: '回顾环', note: '不把普通打开或修改时间算回顾' },
+      { name: '产出引用数', def: '被稿件正文实际引用的卡片和素材数', stage: '产出环', note: '只算正文引用，不含仅加入候选列表' }
+    ],
+
+    comparison: [
+      { dim: '开箱即用', old: '需另装 Claudian、配置本机 CLI 环境、选中对话', next: '设置里填一次 API 密钥即可', why: '消除桌面外链依赖，真正兑现「开箱即用」' },
+      { dim: '运行平台', old: '仅桌面端（依赖本机 Claude Code CLI）', next: '桌面端和移动端均可用（iOS / Android）', why: '通勤碎片时间在手机上即可完成每日回顾与卡片提炼' },
+      { dim: '写入约束', old: '只写在提示词里，实际靠 Claudian 权限设置，Tangrow 无法强制', next: '7 类写操作白名单由代码类型层与执行器强制', why: '把「零删除/零移动/不覆盖正文」从软约定变成硬约束' },
+      { dim: '确认方式', old: '在聊天框里打字回复，难逐项增删或编辑', next: '可勾选、可编辑、带差异预览的变更清单（键盘流）', why: '结构化审阅比自由对话更快、更可控' },
+      { dim: '失败恢复', old: '取决于外部代理，断连易留半截或重复创建', next: '复用提炼凭据协议，重试不重新调用模型', why: '避免重复付费与重复写入' },
+      { dim: '接口稳定性', old: '依赖 Claudian 标为实验性的插件 API v1', next: '只依赖模型服务商公开 API（Anthropic / OpenAI 兼容）', why: '核心闭环不再绑定第三方实验性插件接口' }
+    ],
+
+    concepts: [
+      { term: '整理任务（Task）', def: '一种可运行的整理能力（如「卡片提炼」），由 TaskSpec 定义输入、输出和允许的写操作子集。', avoid: '不是 Markdown 复选框任务；界面称「整理」或具体任务名。' },
+      { term: '运行（Run）', def: '某个整理任务的一次执行，包含所选上下文、模型请求与返回的提案。', avoid: '一次运行 ≠ 一次写入（未确认前零落盘）。' },
+      { term: '提案（Proposal）', def: '运行产出的一组建议，每条附理由与依据的来源链接。', avoid: '不是已经发生的修改；可放着，超过 7 天整体过期。' },
+      { term: '变更集（Change Set）', def: '用户从提案中勾选并可能编辑后，已固定内容的写操作列表。', avoid: '确认后不再随模型输出变化，恢复时直接重放固定内容。' },
+      { term: '变更项（Change）', def: '变更集中的一条写操作，类型必须在 7 类白名单内。', avoid: '越权类型在 TypeScript 类型层即无法表达。' },
+      { term: '托管区块（Managed Block）', def: '由 Tangrow 维护、带 <!-- tangrow:wiki:start rev=… --> 与 end 标记的正文段落，只用于主题百科页。', avoid: '区块外正文始终属于用户，Tangrow 逐字节不碰。' }
+    ],
+
+    pipeline: [
+      {
+        id: 'trigger', step: '1', name: '触发入口', file: '侧栏 / 今天页 / 命令 / 可选启动预准备',
+        detail: '按钮（速记整理、卡片找连接）、今天页（开始今日回顾、待编入素材计数）、命令面板，或每日首次打开 Obsidian 时后台预准备提案（默认关闭，只生成不落盘）。',
+        why: 'AI 动作嵌在闭环现场触发，降低切换成本；后台预准备严守「只提案不写入」红线。'
+      },
+      {
+        id: 'context', step: '2', name: '上下文选择', file: 'src/engine/context.ts + E0 KnowledgeIndex',
+        detail: '基于 E0 新建的可查询 KnowledgeIndex（链接邻近、共同来源、关键词；现有 src/knowledge-index.ts 仅有纯解析函数）、元数据缓存和设置选择笔记。按「当前内容」（脏编辑器优先于磁盘）读取正文，同时在这一刻采集所有来源与写入目标（含不发正文的目标）的修订摘要存入 ContextPlan；按预算裁剪并生成发送预览。',
+        why: '把修订摘要采集前移到读上下文同一时刻，彻底堵死模型请求期间的 TOCTOU 竞态窗口。'
+      },
+      {
+        id: 'provider', step: '3', name: '模型适配层', file: 'src/engine/providers/*.ts',
+        detail: '统一 Provider.generate() 接口：Anthropic 沿用官方 SDK + 流式 + JSON schema；OpenAI 兼容接口走 Obsidian requestUrl（避开移动端 CORS，非流式、逻辑取消）。负责网络重试（1 次）、schema 校验纠错重试（1 次）与本地 token 用量统计。',
+        why: '屏蔽服务商与桌面/移动端网络差异，做到 BYOK 可替换且不绑定单一厂商。'
+      },
+      {
+        id: 'validate', step: '4', name: '结果校验', file: 'src/engine/validate.ts',
+        detail: '强制 JSON schema 校验；修改类变更项的目标、以及正文和属性中的链接，必须指向上下文中真实存在的文件，或指向同一提案中某个 create-note 将新建的路径（自动记为依赖该新建项）；create-note 路径必须落在任务允许目录内且当前不存在；丢弃一切越权、不存在项目或未知关系类型的变更项。校验彻底失败时转到提案界面展示原始输出，零写入。',
+        why: '防模型幻觉造出不存在的链接或目录，同时作为提示注入攻击的第二道硬防线。'
+      },
+      {
+        id: 'review', step: '5', name: '提案确认界面', file: 'src/engine/review-view.ts',
+        detail: '一屏显示规模（新建 N / 修改 M / token 用量）；每项带勾选、目标、类型、理由和可点击来源链接；支持直接编辑标题与正文、查看 append-section / update-managed-block 前后差异；支持键盘流（J/K/Space/E/⌘Enter/Esc）；单次应用最多 8 个新建；提案可留待稍后，超 7 天整体过期，单文件修订变化仅对应项暂停。',
+        why: '把判断权和最终措辞留给用户，避免全盘接受或全盘放弃的二选一痛点。'
+      },
+      {
+        id: 'credential', step: '6', name: '变更集与凭据', file: '插件数据（独立版本化运行记录）',
+        detail: '用户点击「应用」后、任何文件写入前，先把变更集写入运行记录：操作 ID、每个产物 ID/路径/编辑后完整内容、mark-processed 固定处理时间戳、上下文采集时的修订摘要（作为初始预期修订）、任务 ID 与版本。保存凭据失败则停止，不写任何文件。',
+        why: '先落盘固定快照再动文件，使崩溃恢复无需再次调用模型或重读可能已变的源笔记。'
+      },
+      {
+        id: 'apply', step: '7', name: '受控写入与索引', file: 'src/engine/apply.ts',
+        detail: '只执行白名单 7 类操作；与现有 tangrow_capture_processing / tangrow_derivation 互斥；与持久化协调器串行；按 5 阶段固定顺序逐项核对修订并写入（脏编辑器正文走原生编辑器读回，属性项先存盘再 processFrontMatter）；全部完成后清除凭据并触发 KnowledgeIndex 增量更新。',
+        why: '把多文件写入收敛到可预测、可幂等重放、不与未保存编辑竞态的安全通道中。'
+      }
+    ],
+
+    allowlist: [
+      { kind: 'create-note', action: '在指定目录新建笔记（带完整属性与正文）；目标已存在则停止，不自动换名', contract: 'ZETTELKASTEN 7.2 固定路径与身份', tasks: ['daily-review', 'distill-cards', 'para-file', 'wiki-compile'] },
+      { kind: 'append-section', action: '在指定已存在笔记的指定小节末尾追加内容（不存在小节则文末新建）；当日 Journal 不存在时先列一条 create-note', contract: 'ZETTELKASTEN 5.5、6.4', tasks: ['daily-review', 'connect-card'] },
+      { kind: 'add-connection', action: '在发起连接的卡片「关联 / Connections」小节追加一条带关系词和理由的链接', contract: 'ZETTELKASTEN 6.4', tasks: ['connect-card'] },
+      { kind: 'set-property', action: '只允许设置 tangrow_ 前缀属性（如 tangrow_sources、tangrow_project）；列表合并保留既有项与顺序', contract: 'ZETTELKASTEN 6.2', tasks: ['para-file', 'distill-cards', 'wiki-compile'] },
+      { kind: 'add-task', action: '向配置好的任务目标（taskOverviewPath）追加一行任务，附来源链接', contract: 'DESIGN.md 任务写入规则', tasks: ['para-file'] },
+      { kind: 'mark-processed', action: '将速记标记为已处理（写入凭据中固定的 tangrow_processed_at）', contract: 'ZETTELKASTEN 5.2', tasks: ['distill-cards', 'para-file'] },
+      { kind: 'update-managed-block', action: '替换主题百科页 <!-- tangrow:wiki:start rev=… --> 至 end 之间的托管区块，区块外逐字节不变', contract: 'AI-ENGINE 8.5', tasks: ['wiki-compile'] }
+    ],
+
+    forbidden: [
+      '删除任何文件或段落',
+      '移动或重命名已有笔记（零迁移承诺）',
+      '覆盖用户正文或托管区块外内容',
+      '修改 .base 视图文件与 Records 记录',
+      '写入库外路径或任务允许目录之外',
+      '写入非 tangrow_ 前缀的第三方/用户自定义属性',
+      '静默改写卡片成熟度（tangrow_stage 始终由用户决定）',
+      '在首批任务中新建稿件'
+    ],
+
+    scenarios: [
+      {
+        id: 'toctou',
+        title: '场景 1：模型生成期间用户编辑了源笔记或目标文件（TOCTOU）',
+        tag: '并发防覆盖', tagCls: 'badge-warn',
+        setup: '10:00 触发卡片提炼，上下文选择读取源笔记 S（当前内容修订 R0）并记录进 ContextPlan。10:01 模型仍在生成，用户修改了 S（修订变为 R1）。10:02 提案返回，用户点「应用」。',
+        steps: [
+          '关键机制：修订摘要在 10:00 读上下文时就已固定写入 ContextPlan 并透传至提案与运行记录，生成提案后绝不重新计算。',
+          '应用前核对 S 的当前修订：实际为 R1 ≠ 预期 R0（同时检查目标与所依据的所有来源修订）。',
+          '只暂停涉及 S 的变更项，提示用户重新生成或手动处理，绝不覆盖；同一变更集内不依赖 S 的其他项照常执行。'
+        ],
+        outcome: '彻底消除「读取上下文 → 模型耗时 → 确认写入」窗口期的静默覆盖或基于过期内容提炼的问题。'
+      },
+      {
+        id: 'chain',
+        title: '场景 2：同一文件连续多项写入（串联修订 + YAML 重排）',
+        tag: '正常串联', tagCls: 'badge-ok',
+        setup: '同一变更集对卡片 C 先执行 2 条 add-connection（均未打开脏编辑器，属可预测写入），再执行 1 条 set-property（经宿主 processFrontMatter）。',
+        steps: [
+          '初始登记 C 的预期修订 R0。',
+          '项 1（可预测）：写入前算出写入后预期修订 R1 并记入运行记录 → 写文件 → 登记完成，C 当前预期修订推进为 R1。',
+          '项 2（可预测）：核对实际 == R1，预计算 R2 → 写文件 → 登记完成，推进为 R2。',
+          '项 3（processFrontMatter）：虽然宿主可能重排 YAML 缩进与键顺序，但修订摘要按「规范化属性对象 + 原始正文」计算，预计算的 R3 与落盘后摘要完全一致，不误报冲突。'
+        ],
+        outcome: '同一变更集自己的连续写入顺畅串联通过，且免疫 Obsidian processFrontMatter 的 YAML 排版重排。'
+      },
+      {
+        id: 'journal-dep',
+        title: '场景 3：当日 Journal 尚不存在时的依赖新建联动',
+        tag: '依赖约束', tagCls: 'badge-primary',
+        setup: '用户运行 daily-review，但当日 Journal 尚未创建。提案包含项 1：create-note（按周期笔记设置新建今日 Journal），以及项 2：append-section（追加「回顾」小节，依赖项 1）。',
+        steps: [
+          '结果校验阶段：项 2 目标虽尚不存在，但命中同一提案的项 1 create-note 路径，因此通过校验并标记依赖关系。',
+          '确认界面联动：勾选「追加回顾」自动勾选「新建今日 Journal」；取消新建项会自动取消依赖它的追加项。',
+          '执行阶段按固定 5 阶段顺序先执行 create-note（推进该文件修订），成功后再执行 append-section；若新建失败或目标已意外存在，则依赖项暂停。'
+        ],
+        outcome: '既支持冷启动当日回顾，又杜绝孤儿写入和悬空路径。'
+      },
+      {
+        id: 'dirty-editor',
+        title: '场景 4：目标在编辑器中打开且有未保存编辑（正文 + 属性混排）',
+        tag: '脏缓冲保护', tagCls: 'badge-primary',
+        setup: '笔记 N 在编辑器中打开且有未保存修改（编辑器缓冲内容为 E0，磁盘仍为旧内容 D0）。同一变更集对 N 先执行 append-section，再执行 set-property。',
+        steps: [
+          '上下文读取与修订采集统一按「当前内容」定义（脏编辑器取 E0，不取 D0），发送预览中也明确包含未保存编辑。',
+          '项 1（append-section，属读回写入）：写入前仅登记「本项写入中」→ 走原生编辑器路径追加 → 立即从编辑器缓冲读回实际内容计算修订 E1（不读磁盘）并登记。',
+          '项 2（set-property）：因为 processFrontMatter 直接改磁盘文件，执行前先保存编辑视图使 E1 落盘，再核对磁盘修订仍为 E1 后调用 processFrontMatter。',
+          '若期间用户又敲字（修订变成 E2）或编辑视图无法保存，项 2 立即按冲突暂停，绝不与未保存缓冲竞态。'
+        ],
+        outcome: '零丢失用户未保存输入；如果 Obsidian 重启导致未保存缓冲丢失，恢复读到磁盘 D0 ≠ E0 会保守暂停，不会错写。'
+      },
+      {
+        id: 'crash-clean',
+        title: '场景 5：文件已写入但尚未登记完成时应用崩溃（无后续修改）',
+        tag: '干净恢复', tagCls: 'badge-ok',
+        setup: '可预测写入项 1（如 add-connection，预期写前 R0、预期写后 R1）已写进磁盘（带 <!-- tangrow:change:<id> -->），尚未把「完成」写入运行记录时崩溃。重启后文件未被用户动过。',
+        steps: [
+          '重启恢复读取运行记录（不调模型、不重读源文）。',
+          '读取目标文件实际修订，命中分支 1：实际修订 == 预期写入后修订 R1。',
+          '确认本项已完整落地且之后无人改动 → 补登项 1 完成，修订链推进为 R1，同文件后续项照常继续执行。'
+        ],
+        outcome: '幂等补齐，零重复写入、零模型费用，结果与一次成功执行完全一致。'
+      },
+      {
+        id: 'crash-edited',
+        title: '场景 6：崩溃后用户修改了文件，或「读回写入」在读回前崩溃',
+        tag: '保守断链', tagCls: 'badge-err',
+        setup: '项 1 已写入目标文件（带标记），但随后崩溃；要么重启前用户手动编辑了该文件，要么项 1 是读回写入（尚未登记预期写后修订就在读回前崩溃）。',
+        steps: [
+          '重启恢复读取目标文件实际修订：既不等于写前 R0，也没有匹配的写后预期修订。',
+          '按项类型识别标记：在文件中检出 <!-- tangrow:change:<id> -->（或对象 ID / 属性值 / 托管区块摘要一致）。',
+          '命中分支 3（两种情况无法区分，一律保守）：将项 1 记为已完成、不重复写入；但该文件的修订链在此中断，该文件的后续项全部按冲突暂停，交用户重新生成或手动处理。'
+        ],
+        outcome: '既不重复追加，也不在未知状态上盲目继续修改后续项。'
+      },
+      {
+        id: 'mutex',
+        title: '场景 7：同一源文件已有未完成的速记处理或提炼凭据',
+        tag: '协议互斥', tagCls: 'badge-warn',
+        setup: '速记 C 的属性中已有未收尾的 tangrow_capture_processing 或 tangrow_derivation，此时引擎变更集也尝试处理 C。',
+        steps: [
+          '执行器在写入前检查源文件既有凭据（ZETTELKASTEN 7.2）。',
+          '发现未结束操作 → 涉及 C 的引擎变更项直接暂停，提示用户先完成或恢复已有操作。',
+          '不涉及 C 的其他变更项不受影响。'
+        ],
+        outcome: '避免新旧两套多文件写入协议相互踩踏或破坏来源处理状态。'
+      }
+    ],
+
+    dedupeRules: [
+      { kind: 'create-note', how: '按产物携带的操作 ID（tangrow_derivation_id）和对象 ID（tangrow_id）识别（ZETTELKASTEN 7.2）。目标已存在且为无关文件则停止，绝不自动换名或覆盖。' },
+      { kind: 'append-section / add-connection / add-task', how: '追加内容带稳定 HTML 注释 <!-- tangrow:change:<id> -->（来自速记的 add-task 沿用 <!-- tangrow-capture:<id> --> 或在 report-source.ts 兼容新标记以保留覆盖率统计）。注释被 markdown-stats.ts 剥离不计字数；落地 add-connection 时 knowledge-index.ts 的 connectionAnnotation 须先剥离行尾注释，避免混入理由或破坏无理由连接关系词解析。' },
+      { kind: 'set-property', how: '标量属性值已等于目标值，或列表属性已包含本次合并写入的全部项（保留既有项与顺序），即视为已完成。' },
+      { kind: 'mark-processed', how: 'tangrow_processed_at 已等于凭据中固定的处理时间戳（或已存在有效处理时间），即视为已完成。' },
+      { kind: 'update-managed-block', how: '起始标记 <!-- tangrow:wiki:start rev=… --> 中记录的内容摘要已等于本次待写入内容，即视为已完成。' }
+    ],
+
+    tasks: [
+      {
+        id: 'daily-review', title: '8.1 每日回顾（daily-review）', phase: 'E1 闭环', phaseCls: 'badge-primary',
+        triggers: ['今天页「开始今日回顾」', '可选：每天首次打开 Obsidian 时预先准备提案（默认关闭，首次引导询问；只生成不落盘）'],
+        inputs: [
+          '当日和昨日的 Journal（若当日不存在，允许提案先列 create-note）',
+          '当日新增速记 + 待处理速记',
+          '到期和逾期任务',
+          '当日卡片回顾队列（复用 card-review.ts 已持久化队列，不另抽样；优先级见 ZETTELKASTEN 8.2，含 AI 起草卡片最优先）',
+          '近 7 日新建但未连接的卡片',
+          'E3 落地后：由本地内容摘要检出的待编入主题百科的新增/改动素材列表'
+        ],
+        outputs: [
+          '一段回顾草稿（今天记了什么 / 哪些想法值得展开 / 建议的三件事）→ 确认后 append-section 写入当日 Journal「回顾」小节',
+          '一组后续动作提案（如「把速记 X 提炼为卡片」「把卡片 Y 连接到 Z」「把素材 W 编入主题百科」）→ 每条都是可单独启动的任务运行，不在回顾里直接写入'
+        ],
+        constraints: ['严禁把速记全文追加进 Journal（ZETTELKASTEN 5.1）；回顾草稿只引用链接与摘要。'],
+        allowed: ['create-note（仅当日 Journal 不存在）', 'append-section'],
+        why: '作为每日总控台把分散记录收束为「反思 + 行动提案」，但把真正的提炼/连接/编译拆成独立子运行，保证单次确认界面聚焦、粒度可控。'
+      },
+      {
+        id: 'distill-cards', title: '8.2 卡片提炼（distill-cards）', phase: 'E1 闭环', phaseCls: 'badge-primary',
+        triggers: ['速记 / 文献笔记 / 普通笔记上下文的「提炼卡片」', '选中文本右键', '每日回顾的动作提案'],
+        inputs: ['源笔记全文（或选段及其所在小节）', '与之关键词相近的已有卡片标题和摘要（用于避免重复与建议连接）'],
+        outputs: ['0–5 张候选卡片：标题（可独立理解的观点）、正文初稿、tangrow_sources、建议连接（附关系与理由）', '可能重复的已有卡片在提案里标「可能重复」并附链接'],
+        constraints: [
+          '新卡片带 tangrow_origin: ai、tangrow_stage: seed（AI 只是初稿，阶段不由 AI 决定）。',
+          '回顾队列最优先抽取 tangrow_origin: ai 卡片；「标记已回顾」时询问是否已用自己的话改写，选「是」才清除，绝不靠文件 mtime 推断。',
+          '报表可区分「AI 起草」与「已改写」卡片数量。',
+          '提炼不自动改变速记处理状态（ZETTELKASTEN 5.2）；用户可在同一确认界面里一并勾选 mark-processed。'
+        ],
+        allowed: ['create-note', 'set-property', 'mark-processed'],
+        why: '破除「收藏很多、观点很少」的冷启动阻力，同时用 tangrow_origin: ai + 显式回顾确认守住 Zettelkasten「自己的话」底线。'
+      },
+      {
+        id: 'para-file', title: '8.3 PARA 归位（para-file）', phase: 'E1 闭环', phaseCls: 'badge-primary',
+        triggers: ['收件箱 / 速记时间线的「整理收件箱」（可批量选择）'],
+        inputs: [
+          '待处理速记及收件箱里的普通笔记',
+          '现有项目、领域、资源目录列表及简短描述（目录名 + 项目笔记标题 + tangrow_project 汇总）',
+          '配置的任务目标笔记（taskOverviewPath）：只登记路径和修订摘要、不发送正文，供「转为任务」的 add-task 通过第 4 节结果校验'
+        ],
+        outputs: [
+          '每条内容四选一建议：',
+          '① 整理为笔记 → 指定现有 Project / Area / Resource 目录（新建笔记并链接原速记）',
+          '② 转为任务 → 配置的任务目标（可附项目）',
+          '③ 提炼卡片 → 转交 8.2 distill-cards',
+          '④ 仅标记已处理'
+        ],
+        constraints: [
+          '目标目录可为 P/A/R（手动表单另行约定：ZETTELKASTEN 5.2 设计只用资源目录，当前实现建在所选项目目录或 Inbox）。',
+          '已有笔记绝不移动；收件箱里的普通笔记只建议设置 tangrow_project，不搬文件。',
+          '建议的目录和项目必须真实存在；指向不存在的项目一律丢弃（与现有即时建议一致）。'
+        ],
+        allowed: ['create-note', 'add-task', 'set-property', 'mark-processed'],
+        why: '用只新建 + 仅登记任务目标路径不发正文的设计，同时达成 PARA 精准归位、隐私最小化与结果校验闭环。'
+      },
+      {
+        id: 'connect-card', title: '8.4 卡片连接（connect-card）', phase: 'E2 连接', phaseCls: 'badge-warn',
+        triggers: ['卡片上下文面板「找连接」', '回顾队列中「待连接」的卡片'],
+        inputs: [
+          '目标卡片全文',
+          '按链接邻近、共同来源、标题和关键词相近度选出的候选卡片（只取标题和前几段）',
+          '候选结构笔记（已收录这些候选卡片或与目标卡片链接相邻的 Hub，只取标题和小节标题）'
+        ],
+        outputs: ['最多 5 条连接建议：目标卡片 + 6 种关系（支撑 / 反驳 / 延伸 / 举例 / 对比 / 相关）+ 一句理由', '可选建议把卡片加入已在上下文中的某个已有结构笔记'],
+        constraints: [
+          'add-connection 只修改发起连接的卡片本身（单向写入，不波及对方）。',
+          '加入结构笔记用 append-section，只修改用户勾选的那篇且必须已在上下文中的结构笔记（ZETTELKASTEN 6.1）。'
+        ],
+        allowed: ['add-connection', 'append-section'],
+        why: '首期不上向量库，通过图邻近 + 共同来源 + 关键词把候选集压到高相关子集，并强制带关系词和理由避免低质无意义双链。'
+      },
+      {
+        id: 'wiki-compile', title: '8.5 主题百科编译（wiki-compile）', phase: 'E3 主题百科', phaseCls: 'badge-warn',
+        triggers: [
+          '今天页「N 篇素材待编入主题百科」入口（独立于第 6 节「待确认 N 条」提案列表，仅按本地内容摘要检测变化并计数，不调模型）',
+          '命令「编译主题百科」',
+          '每日回顾中的动作提案'
+        ],
+        inputs: [
+          '新增或改动的素材（排除 tangrow_kind: wiki 和主题百科目录，防编译结果回流）',
+          '步骤 1（主题归类）：已有主题百科页作为写入目标登记上下文，只发送标题',
+          '步骤 2（重新生成某页）：登记该页路径与修订摘要，只发送其托管区块现有内容，「我的笔记」等区块外内容绝不发送'
+        ],
+        outputs: [
+          '步骤 1 提案：把变动素材归入哪些已有主题页，或新建哪个主题页',
+          '步骤 2 提案：对受影响主题页逐页生成新托管区块（update-managed-block）或新建页面（create-note）'
+        ],
+        constraints: [
+          '位置：资源目录下可配置子目录，默认 <资源目录>/Wiki；新增 tangrow_kind: wiki（区别于 Hub）。',
+          '不是素材：加入 card-report-data.ts 的 NON_MATERIAL_KINDS，排除出知识区素材、卡片报表、稿件默认素材、自身输入与资源条目统计（E3 并入 REPORTING.md）。',
+          '用户编辑保护：起始标记 rev= 记录上次写入内容摘要，用户手动改过区块则暂停更新并给差异供选择。',
+          '规模控制：单次运行最多 10 个素材、更新 5 个主题页，其余排队、可暂停、显示累计 token。',
+          'Karpathy LLM Wiki 三操作中首批仅实现编入（Ingest），查询（Query）与体检（Lint）在 E3 后评估。'
+        ],
+        allowed: ['create-note', 'update-managed-block', 'set-property'],
+        why: '解决传统 RAG 每次重算且不沉淀的问题，同时用「托管区块隔离 + 用户修改保护 + 非素材防回流」化解纯 LLM Wiki 覆盖用户笔记与自我污染的两大风险。'
+      }
+    ],
+
+    privacy: [
+      { n: '1', title: '发送前预览（含未保存编辑）', body: '正文按第 5 节「当前内容」读取（未保存编辑也含在内）。每次运行前展示将发送的笔记列表、估算 token 数和目标服务商，可勾掉不想发送的笔记；可配置「信任的任务直接运行」，但每个任务首次运行必显预览。' },
+      { n: '2', title: '多层排除规则', body: '默认排除辅助目录、归档目录、reportExcludedFolders；额外支持单篇笔记 tangrow_ai: false 与设置里的排除目录列表。被排除的笔记即使被链接到，也只发送标题不发正文。' },
+      { n: '3', title: '按优先级裁剪，绝不静默截断', body: '沿用现有 AI 建议规则：超预算时按任务优先级裁剪并在预览明确列出被裁内容；核心内容仍放不下直接报错要求缩小范围。' },
+      { n: '4', title: '提示注入多层防线', body: '笔记正文一律置于明确标记的数据区，系统提示声明其中指令无效；叠加 7 类写白名单 + 结果校验（丢弃上下文外路径或越界目录）+ 人工逐项确认，即使模型被诱导也无法偷偷落盘。' },
+      { n: '5', title: '服务商独立密钥存储', body: '继续优先使用 Obsidian 宿主密钥存储（SecretStorage）；现有 AI_SECRET_ID 仅对应 Anthropic，新增服务商各自使用独立密钥 ID，绝不复用。' }
+    ],
+
+    migration: [
+      { existing: '即时建议（快速新建 / 速记处理预填）', plan: '保留；底层改接模型适配层，共享服务商设置与密钥', status: '保留升级' },
+      { existing: 'Claudian：整理收件箱', plan: '由 8.3 PARA 归位完整覆盖后取代，侧栏移除、技能导出保留', status: 'E1 取代' },
+      { existing: 'Claudian：写周回顾', plan: '每日回顾稳定后扩展出周/月周期回顾任务取代', status: 'E1 后取代' },
+      { existing: 'Claudian：关联笔记', plan: '卡片由 8.4 卡片连接取代；非卡片笔记暂无替代，侧栏保留至引擎提供普通笔记关联任务', status: '部分取代（E2）' },
+      { existing: 'Claudian：检查未完成任务 / 项目简报 / 拆解项目', plan: '暂留 Claudian；后续视需要迁移为只读或 add-task 任务', status: '暂留可选' },
+      { existing: '库级技能导出（.claude/skills/tangrow-*）', plan: '长期保留，供高级用户在 Claude Code / Claudian 中调用', status: '长期保留' },
+      { existing: 'AI 页签', plan: '整理动作嵌入各环节上下文；AI 页签收缩为「运行记录与待确认提案」+ Claudian 入口', status: '收缩聚焦' }
+    ],
+
+    tests: {
+      deterministic: [
+        { area: 'toProposal 映射与校验', detail: '给定模型输出 → 预期变更项；越权路径、不存在的项目、上下文外目标/链接、未知关系类型一律丢弃。' },
+        { area: '白名单强制', detail: '任务 allowedChanges 之外的变更类型被拒绝；set-property 拒绝任何非 tangrow_ 键。' },
+        { area: '修订核对（TOCTOU 与脏缓冲）', detail: '选上下文之后（模型请求中或确认前）编辑目标或来源，对应项暂停、其余继续；脏编辑器在采集与核对均按编辑器内容计算不误报；同文件多项串联与 YAML 重排不误报；依赖 create-note 的项在新建未勾选或失败时不执行。' },
+        { area: '崩溃恢复与故障注入', detail: '在每个执行阶段（含已写入未登记，覆盖 create-note、追加标记、update-managed-block、set-property 列表合并、mark-processed）注入失败；覆盖崩溃后用户又改文件（后续项暂停）及读回写入读回前崩溃；正常执行中 YAML 重排、连续编辑器写正文、先存盘再属性写均不得误报（存盘失败/期间改动须暂停）；恢复后无重复、无误报、不调模型；带 HTML 注释的 add-connection 仍正确解析关系词与理由。' },
+        { area: '托管区块保护', detail: '区块外正文逐字节不变；用户改过托管区块后暂停更新并给差异。' },
+        { area: '上下文预算', detail: '超预算按优先级裁剪并在预览列出；放不下则报错，不静默截断。' }
+      ],
+      realHost: [
+        '桌面端 + 至少一台移动设备走通「速记 → 提炼卡片 → 确认 → 次日出现在回顾中」。',
+        '确认界面在浅色 / 深色主题与窄侧栏下可用；中文输入法编辑候选卡片不丢字（按 docs/NATIVE-IME-ACCEPTANCE.md）。',
+        '断网、密钥无效、限流、模型返回非法 JSON 时，均零写入且给出可操作提示。'
+      ]
+    },
+
+    roadmap: [
+      { stage: 'E0 骨架', scope: '任务注册表、可查询 KnowledgeIndex、上下文选择、Anthropic 适配、结果校验、确认界面、写入执行器与恢复、授权门禁接入（同步 PURCHASE-ACTIVATION.md）', gate: '用只读测试任务跑通全链路；白名单与恢复测试全过' },
+      { stage: 'E1 闭环', scope: '每日回顾、卡片提炼、PARA 归位；今天页「待确认」入口；移除被取代的 Claudian 工作流', gate: '新库不装 Claudian 即可走通「捕获 → 归位 / 提炼 → 回顾」' },
+      { stage: 'E2 连接', scope: '卡片连接、加入结构笔记', gate: '「待连接」卡片数可通过引擎稳定降下来' },
+      { stage: 'E3 主题百科', scope: '主题归类、托管区块、增量编译与队列；wiki 排除出素材与资源条目口径（同步 card-report-data.ts 与 REPORTING.md）', gate: '新增 10 篇素材后主题页正确增量更新，用户区逐字节不变' },
+      { stage: 'E4 服务商与移动端', scope: 'OpenAI 兼容接口（requestUrl）、移动端实测、用量统计；同步 PURCHASE-ACTIVATION.md BYOK 与多服务商说明', gate: '两种服务商在桌面端与移动端均通过真机验收' }
+    ],
+
+    decisions: [
+      { id: 'D1', title: '可直接从速记提炼卡片', body: '引擎的卡片提炼接受速记作为源，不要求先转为普通笔记；来源写入 tangrow_sources，速记处理状态不变。', synced: 'ZETTELKASTEN 5.2、7.2', why: '减少「速记 → 临时笔记 → 卡片」的机械中转步骤，同时保留手动处理区的简洁约束。' },
+      { id: 'D2', title: 'PARA 归位可指向 P/A/R 全部三类目录', body: '经确认后可新建到项目、领域或资源目录，仍只新建、不移动；手动「整理为笔记」表单不受影响（5.2 设计只用资源目录，当前实现见 8.3）。', synced: 'ZETTELKASTEN 5.2', why: 'AI 能根据目录与项目摘要判断归属，释放 PARA 完整威力；手动表单保持克制避免过度复杂。' },
+      { id: 'D3', title: 'llm-wiki 独立为 tangrow_kind: wiki', body: '在 CONTEXT.md 中定名为「主题百科（Wiki）」，区别于结构笔记（Hub），且本身不是素材。', synced: 'CONTEXT.md、ZETTELKASTEN 3.1、3.3、6.2', why: 'Hub 是「我的论证」，Wiki 是「材料说了什么」，混用会污染卡片网络和素材池。' },
+      { id: 'D4', title: 'tangrow_origin: ai 在「标记已回顾」时显式清除', body: '标记已回顾时询问是否已用自己的话改写，选「是」才清除；选「否」则保留标记，下次继续优先进入回顾队列，不猜 mtime。', synced: 'ZETTELKASTEN 6.2、8.2', why: '文件修改时间易受同步/属性更新干扰，只有用户显式确认才能代表观点已内化。' },
+      { id: 'D5', title: '每日回顾预先准备默认关闭', body: '不在用户不知情下自动消耗 API 额度或发送数据；首次使用引导中询问是否开启。', synced: 'AI-ENGINE 8.1、13', why: '尊重 BYOK 用户的隐私与费用知情权。' }
+    ],
+
+    glossaryCompare: [
+      { term: '卡片（Card）', kind: 'tangrow_kind: card', answers: '我能独立表达的一个观点是什么？', owner: '用户（AI 仅起草初稿标 tangrow_origin: ai）', material: '否', avoid: '任意短文本；用字数评判质量；把 AI 摘要直接当自己观点' },
+      { term: '结构笔记（Hub）', kind: 'tangrow_kind: hub', answers: '我怎么围绕问题组织自己的论证与阅读路径？', owner: '用户主导（引擎可提议追加收录）', material: '否', avoid: '自动生成的链接目录；把标签当结构笔记；与主题百科混用' },
+      { term: '主题百科（Wiki / llm-wiki）', kind: 'tangrow_kind: wiki（规划）', answers: '关于这个主题，我收集的材料说了什么？', owner: '托管区块由模型增量编译，区块外归用户', material: '否（排除出素材与资源条目）', avoid: '与 Hub 混用；当成自己的观点；理解为一次性摘要或 RAG' },
+      { term: '素材（Material）', kind: 'literature / clip / 资源参考', answers: '外部材料或参考资料说了什么、出处在哪？', owner: '原始素材只读不被改写', material: '是', avoid: '等同于网页剪藏；为使用而复制原件' }
+    ],
+
+    demoSteps: [
+      { step: '1', phase: '捕获', gate: '已实现', gateCls: 'badge-ok', text: '在手机或侧栏记下一条速记：一个关于「重试必须绑定操作身份」的想法和一个链接。' },
+      { step: '2', phase: '整理', gate: '依赖引擎 E1', gateCls: 'badge-warn', text: '点「整理收件箱」，AI 建议把链接归入资源目录、把想法留作提炼；逐条确认。' },
+      { step: '3', phase: '提炼', gate: '依赖引擎 E1', gateCls: 'badge-warn', text: '对这条速记点「提炼卡片」，AI 起草一张卡片并提示已有一张相近卡片；编辑标题后接受。' },
+      { step: '4', phase: '连接', gate: '依赖引擎 E2', gateCls: 'badge-warn', text: '在卡片上点「找连接」，AI 建议几条带理由的连接；接受其中一条「延伸」关系。' },
+      { step: '5', phase: '回顾 + 百科', gate: '依赖 E1 + E3', gateCls: 'badge-warn', text: '第二天打开「今日回顾」：卡片出现在队列里；有一条动作提案「把第 2 步归入资源目录的链接编入『分布式系统』主题百科」，预览托管区块差异并确认；AI 起草的回顾预览后写进日记。' },
+      { step: '6', phase: '产出', gate: '候选已实现 · 插入引用依赖 ZETTELKASTEN 5.4', gateCls: 'badge-warn', text: '在稿件里把这张卡片加入候选素材，插入引用。' }
+    ],
+
+    landingSections: [
+      { n: '1', name: '首屏', content: '一句话定位（第 1 节）+ 闭环动图（一条速记走完六步）+「免费试用」' },
+      { n: '2', name: '闭环六步', content: '每步一张截图、一句痛点、一句解法' },
+      { n: '3', name: '三个承诺', content: '零迁移，不锁定 / AI 驱动 / 开箱即用' },
+      { n: '4', name: 'AI 怎么工作', content: '确认清单截图，说明代码白名单与发送前隐私预览' },
+      { n: '5', name: '适合谁', content: '用 Obsidian 做 PARA 或卡片笔记、想写作或做内容的人；觉得「收藏很多、产出很少」的人' },
+      { n: '6', name: '定价·试用·FAQ', content: '数据在哪、离线能不能用、要不要自己 API 密钥、支持哪些模型、手机能不能用' }
+    ],
+
+    clauseIndex: [
+      { doc: 'README.md', sec: 'L1–L16', title: '首页定位、闭环图与 3 承诺（含 08d7c09）', summary: '一句话定位 + 6 步 ASCII 闭环 + 3 承诺（AI 驱动直接标即将推出；开箱即用区分未来单密钥 AI 与现有即可用能力）+ 指向 POSITIONING #4 与 AI-ENGINE。', why: '首屏既表达北极星愿景，又不让当前安装用户误以为内置引擎已上线。', tab: 'overview' },
+      { doc: 'CONTEXT.md', sec: '知识与来源', title: '主题百科（Wiki）术语定义', summary: '界定 Karpathy LLM Wiki 三层与三操作（编入/查询/体检，首批仅编入）、托管区块 + 人工确认差异、非素材属性及 Avoid 边界。', why: '在全仓术语真源中钉死 Wiki 与 Hub、Card、RAG 的语义边界。', tab: 'copy' },
+      { doc: 'DESIGN.md', sec: '顶部 & AI 边界', title: '定位入口与 AI 演进方向提示', summary: '顶部指向 POSITIONING.md（取舍看第 5 节）；「AI 功能的边界」增加引用块声明引擎演进方向，正文保持描述现行实现。', why: '严格分离「现行实现边界」与「未来提案」，不污染已上线契约。', tab: 'overview' },
+      { doc: 'ZETTELKASTEN.md', sec: '3.1 / 3.3 / 5.2 / 6.2 / 7.2 / 8.2', title: '同步 2026-11-26 5 项决策', summary: '角色表与排除表加 wiki；5.2/7.2 允许引擎直接从速记提炼与归位 P/A/R；6.2 新增 tangrow_origin 与 tangrow_ai；8.2 增加 AI 卡片最优先回顾与显式清除。', why: '消除 AI-ENGINE.md 与统一设计方案的条款冲突，保持单一事实源。', tab: 'copy' },
+      { doc: 'POSITIONING.md', sec: '§1–§2', title: '一句话定位与 6 步核心闭环', summary: '中英文定位、6 步流程图（含 产出→捕获 与 回顾→提炼 反馈环）、逐环痛点/做法/AI/用户确认矩阵。', why: '明确产品卖的不是零散工具，而是记录变观点的完整闭环。', tab: 'loop' },
+      { doc: 'POSITIONING.md', sec: '§3–§4', title: '三个承诺与当前实现状态对照', summary: '零迁移不锁定 / AI 驱动 / 开箱即用；逐环列清已实现 vs 规划中；明确 E1 前对外宣传口径。', why: '提供对外宣传红线清单，避免过度承诺。', tab: 'loop' },
+      { doc: 'POSITIONING.md', sec: '§5 & §7', title: '5 条产品取舍原则与 5 项闭环度量', summary: '功能归属检验、按闭环导航、专注/习惯退居辅助、空状态引下一步；5 项纯本地计算北极星指标。', why: '用闭环纪律约束后续功能演进，防止范围膨胀。', tab: 'loop' },
+      { doc: 'POSITIONING.md', sec: '§6', title: '对外文案、着陆页、2 分钟脚本与红线', summary: '标语、30/100 字简介、6 段着陆页、6 步演示脚本（逐项标 E1/E2/E3/5.4 门禁）、截图规范（禁原型图冒充）、3 条宣传边界。', why: '统一官网、商店与演示口径，同时确保未上线能力不得提前演。', tab: 'copy' },
+      { doc: 'AI-ENGINE.md', sec: '§1–§3', title: '架构决策、目标/非目标与内部术语', summary: '自研整理引擎但不做通用代理、Claudian 降可选后端；5 目标 + 5 非目标（不做向量库/不代付/不自动判断成熟度）；6 个引擎内部概念。', why: '以确定性结构化流水线换取高可控、跨端与低运维成本。', tab: 'engine' },
+      { doc: 'AI-ENGINE.md', sec: '§4', title: '7 阶段流水线、模块拆分与 TaskSpec', summary: 'tasks / context（含 E0 新建 KnowledgeIndex）/ providers / validate / review-view / apply / 运行记录；校验器对存在性、依赖新建与目录越界的硬过滤。', why: '每个任务隔离为单文件声明式 TaskSpec，便于单测与按期交付。', tab: 'engine' },
+      { doc: 'AI-ENGINE.md', sec: '§5', title: '7 类写白名单、当前内容与修订核对', summary: '7 种白名单操作；统一当前内容定义；读上下文时一次性采集源与目标修订；规范化 YAML 摘要；同文件串联；依赖新建联动；脏编辑器正文路径与属性先存盘再 processFrontMatter。', why: '从类型层到运行时彻底阻断 TOCTOU、YAML 误报、脏缓冲竞态与越权写入。', tab: 'recovery' },
+      { doc: 'AI-ENGINE.md', sec: '§6', title: '确认界面 7 原则', summary: '一屏规模与 token、逐项勾选与来源链接、可编辑后再接受、差异预览、键盘流、7 天整体过期与局部修订过期、单次最多 8 个新建。', why: '把「确认清单」打造成引擎最核心的可信交互体验。', tab: 'engine' },
+      { doc: 'AI-ENGINE.md', sec: '§7', title: '5 阶段执行顺序、恢复树与凭据互斥', summary: '先落盘凭据 → 新建/追加/托管区块/属性/已处理 → 清凭据；可预测 vs 读回写入；4 分支中断恢复（不调模型）；5 类去重标记；与旧速记/提炼凭据互斥。', why: '任何时刻崩溃重启都能幂等收敛，绝不重复扣费或静默错写。', tab: 'recovery' },
+      { doc: 'AI-ENGINE.md', sec: '§8.1–§8.5', title: '五大首批整理任务详细规约', summary: 'daily-review / distill-cards / para-file / connect-card / wiki-compile 的触发、输入、输出、质量与防回流约束。', why: '逐个落地闭环核心四环（整理、提炼、连接、回顾）并引入可控的 LLM Wiki。', tab: 'tasks' },
+      { doc: 'AI-ENGINE.md', sec: '§9–§10', title: '隐私 5 道防线与模型适配层', summary: '发送预览/排除/不截断/防注入/独立密钥 ID；Anthropic SDK 流式 vs OpenAI 兼容 requestUrl（逻辑取消）+ 快/强两档 + 网络/schema 各重试 1 次。', why: '兼顾桌面与移动端跨平台网络限制、隐私透明与 BYOK 多模型自由。', tab: 'ops' },
+      { doc: 'AI-ENGINE.md', sec: '§11–§12', title: '现有功能迁移路径与授权计费门禁', summary: '7 项现有能力去留与单一主入口原则；plugin.access.canUse() 统一门禁，但已开始执行的变更集无论授权状态均允许完成或恢复；E0/E4 同步 PURCHASE-ACTIVATION.md。', why: '平滑过渡不打断老用户，且绝不因租约过期把用户文件留在半写入态。', tab: 'ops' },
+      { doc: 'AI-ENGINE.md', sec: '§13–§15', title: '5 项已定决策、测试验收矩阵与 E0–E4 分期', summary: '拍板记录、6 类确定性单测 + 3 类真机/IME 验收、E0 骨架至 E4 移动端 5 期完成标志。', why: '把设计文档转化为可直接排期与写回归测试的工程契约。', tab: 'ops' }
+    ]
+  };
+
+  function loadState() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return { checked: {}, notes: {} };
+  }
+
+  const saved = loadState();
+  const state = {
+    tab: 'overview',
+    loopId: 'organize',
+    pipeId: 'context',
+    taskFilter: 'all',
+    scenarioId: 'toctou',
+    taskTab: 'wiki-compile',
+    clauseQuery: '',
+    clauseDoc: 'all',
+    checked: saved.checked || {},
+    notes: saved.notes || {}
+  };
+
+  function persist() {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ checked: state.checked, notes: state.notes })); } catch {}
+  }
+
+  function esc(str) {
+    return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  function toast(msg) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.style.opacity = '1';
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => { el.style.opacity = '0'; }, 2400);
+  }
+
+  function updateProgress() {
+    const total = DATA.checklist.length;
+    const done = DATA.checklist.filter(i => state.checked[i.id]).length;
+    document.getElementById('progress-label').textContent = `${done} / ${total}`;
+    document.getElementById('progress-bar').style.width = `${Math.round((done / total) * 100)}%`;
+  }
+
+  function setTab(tab) {
+    state.tab = tab;
+    document.querySelectorAll('#main-tabs [role="tab"]').forEach(btn => {
+      btn.setAttribute('aria-selected', btn.getAttribute('data-tab') === tab ? 'true' : 'false');
+    });
+    render();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  /* ===================== SVG DIAGRAMS ===================== */
+
+  function svgDocPrecedence() {
+    return `
+      <svg viewBox="0 0 980 265" class="w-full h-auto" role="img" aria-label="PR #12 六文件关系与契约优先级图">
+        <defs>
+          <marker id="arr-doc-p" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--primary)"/>
+          </marker>
+          <marker id="arr-doc-m" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--muted-foreground)"/>
+          </marker>
+          <marker id="arr-doc-ok" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--success)"/>
+          </marker>
+        </defs>
+
+        <!-- Zones -->
+        <rect x="12" y="12" width="295" height="240" rx="12" class="svg-zone"/>
+        <text x="26" y="33" class="svg-label">对外入口 &amp; 产品定位（已确定）</text>
+
+        <rect x="330" y="12" width="320" height="240" rx="12" class="svg-zone"/>
+        <text x="344" y="33" class="svg-label">既有权威契约（冲突时优先生效）</text>
+
+        <rect x="672" y="12" width="296" height="240" rx="12" class="svg-zone"/>
+        <text x="686" y="33" class="svg-label">新设计提案 &amp; 后续联动（规划中）</text>
+
+        <!-- Left column -->
+        <g>
+          <rect x="28" y="48" width="262" height="74" rx="10" class="svg-box-ok"/>
+          <text x="42" y="72" class="svg-title">README.md（已更新 08d7c09）</text>
+          <text x="42" y="91" class="svg-sub">一句话定位 · 6 步闭环 · 3 承诺</text>
+          <text x="42" y="108" class="svg-code">AI 驱动（整理引擎即将推出）</text>
+        </g>
+        <g>
+          <rect x="28" y="148" width="262" height="86" rx="10" class="svg-box-primary"/>
+          <text x="42" y="172" class="svg-title">docs/POSITIONING.md（新增）</text>
+          <text x="42" y="191" class="svg-sub">核心闭环 · §4 现状矩阵 · §5 取舍原则</text>
+          <text x="42" y="208" class="svg-sub">§6 对外文案/脚本红线 · §7 本地度量</text>
+        </g>
+
+        <!-- Middle column -->
+        <g>
+          <rect x="348" y="48" width="284" height="54" rx="10" class="svg-box-ok"/>
+          <text x="362" y="71" class="svg-title">CONTEXT.md（术语唯一真源）</text>
+          <text x="362" y="89" class="svg-sub">新增：主题百科（Wiki）+ Avoid 边界</text>
+        </g>
+        <g>
+          <rect x="348" y="114" width="284" height="54" rx="10" class="svg-box"/>
+          <text x="362" y="137" class="svg-title">docs/DESIGN.md（现行边界）</text>
+          <text x="362" y="155" class="svg-sub">入口链 POSITIONING · AI 节注演进方向</text>
+        </g>
+        <g>
+          <rect x="348" y="180" width="284" height="56" rx="10" class="svg-box"/>
+          <text x="362" y="203" class="svg-title">docs/ZETTELKASTEN.md（已同步）</text>
+          <text x="362" y="221" class="svg-sub">同步 6 处：3.1/3.3/5.2/6.2/7.2/8.2</text>
+        </g>
+
+        <!-- Right column -->
+        <g>
+          <rect x="690" y="48" width="260" height="96" rx="10" class="svg-box-warn"/>
+          <text x="704" y="72" class="svg-title">docs/AI-ENGINE.md（新增提案）</text>
+          <text x="704" y="91" class="svg-sub">7 阶段流水线 · 7 类写白名单 · 确认 UI</text>
+          <text x="704" y="108" class="svg-sub">修订链/恢复 · 5 任务 · 隐私/授权/E0–E4</text>
+          <text x="704" y="127" class="svg-code">§13 五项决策已同步至中栏</text>
+        </g>
+        <g>
+          <rect x="690" y="166" width="260" height="70" rx="10" class="svg-box-soft"/>
+          <text x="704" y="189" class="svg-title">延后联动契约（本 PR 未改）</text>
+          <text x="704" y="207" class="svg-sub">E0/E4 → PURCHASE-ACTIVATION.md</text>
+          <text x="704" y="223" class="svg-sub">E3 → REPORTING.md + card-report-data</text>
+        </g>
+
+        <!-- Arrows -->
+        <path d="M 159 122 L 159 144" class="svg-arrow-primary" marker-end="url(#arr-doc-p)"/>
+        <path d="M 290 191 L 344 191" class="svg-arrow" marker-end="url(#arr-doc-m)"/>
+        <path d="M 290 85 L 344 134" class="svg-arrow" stroke-dasharray="4 3" marker-end="url(#arr-doc-m)"/>
+        <path d="M 690 92 L 636 75" class="svg-arrow-ok" marker-end="url(#arr-doc-ok)"/>
+        <path d="M 690 112 L 636 205" class="svg-arrow-ok" marker-end="url(#arr-doc-ok)"/>
+        <path d="M 632 141 L 686 105" class="svg-arrow" stroke-dasharray="4 3" marker-end="url(#arr-doc-m)"/>
+        <path d="M 820 144 L 820 162" class="svg-arrow" stroke-dasharray="4 3" marker-end="url(#arr-doc-m)"/>
+      </svg>
+    `;
+  }
+
+  function svgCoreLoop(activeId) {
+    const nodes = [
+      { id: 'capture', x: 20, label: '01 捕获', sub: '速记·剪藏·Journal', badge: '已实现', cls: 'svg-box-ok' },
+      { id: 'organize', x: 184, label: '02 整理', sub: 'PARA 归位', badge: '手√ · AI E1', cls: 'svg-box-warn' },
+      { id: 'distill', x: 348, label: '03 提炼', sub: 'Zettel 卡片', badge: '手√ · AI E1', cls: 'svg-box-warn' },
+      { id: 'connect', x: 512, label: '04 连接', sub: '主题结构·百科', badge: '基√ · E2/E3', cls: 'svg-box-warn' },
+      { id: 'review', x: 676, label: '05 回顾', sub: '每日回顾', badge: '手√ · AI E1', cls: 'svg-box-warn' },
+      { id: 'produce', x: 840, label: '06 产出', sub: '稿件 · 项目', badge: '基√ · 5.4', cls: 'svg-box-primary' }
+    ];
+    return `
+      <svg viewBox="0 0 1000 225" class="w-full h-auto" role="img" aria-label="Tangrow 六步核心闭环流程图">
+        <defs>
+          <marker id="arr-loop-m" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--muted-foreground)"/>
+          </marker>
+          <marker id="arr-loop-p" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--primary)"/>
+          </marker>
+          <marker id="arr-loop-ok" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--success)"/>
+          </marker>
+        </defs>
+
+        <!-- AI organizing engine scope bracket -->
+        <rect x="174" y="14" width="654" height="122" rx="14" class="svg-zone"/>
+        <text x="190" y="34" class="svg-label">AI 整理引擎核心发力区（整理 · 提炼 · 连接 · 回顾：AI 起草，用户逐项确认）</text>
+
+        <!-- Feedback arc 1: 回顾 -> 提炼 -->
+        <path d="M 746 122 L 746 160 Q 746 170 736 170 L 428 170 Q 418 170 418 160 L 418 126" class="svg-arrow-primary" stroke-dasharray="5 3" marker-end="url(#arr-loop-p)"/>
+        <rect x="526" y="158" width="112" height="22" rx="11" class="svg-box-primary"/>
+        <text x="582" y="173" text-anchor="middle" class="svg-sub" style="fill: var(--primary); font-weight: 600;">值得展开 → 提炼</text>
+
+        <!-- Feedback arc 2: 产出 -> 捕获 -->
+        <path d="M 910 122 L 910 198 Q 910 208 900 208 L 100 208 Q 90 208 90 198 L 90 126" class="svg-arrow-ok" marker-end="url(#arr-loop-ok)"/>
+        <rect x="404" y="196" width="192" height="22" rx="11" class="svg-box-ok"/>
+        <text x="500" y="211" text-anchor="middle" class="svg-sub" style="fill: var(--success); font-weight: 600;">产出中的新想法再次进入闭环</text>
+
+        <!-- Forward arrows -->
+        ${nodes.slice(0, -1).map(n => `
+          <line x1="${n.x + 140}" y1="84" x2="${n.x + 160}" y2="84" class="svg-arrow" marker-end="url(#arr-loop-m)"/>
+        `).join('')}
+
+        <!-- Nodes -->
+        ${nodes.map(n => `
+          <g class="svg-node ${n.id === activeId ? 'is-active' : ''}" data-loop="${n.id}" tabindex="0" role="button" aria-label="${n.label}">
+            <rect x="${n.x}" y="46" width="140" height="76" rx="12" class="${n.cls}"/>
+            <text x="${n.x + 70}" y="70" text-anchor="middle" class="svg-title">${n.label}</text>
+            <text x="${n.x + 70}" y="90" text-anchor="middle" class="svg-sub">${n.sub}</text>
+            <text x="${n.x + 70}" y="110" text-anchor="middle" class="svg-code">${n.badge}</text>
+          </g>
+        `).join('')}
+      </svg>
+    `;
+  }
+
+  function svgLogicalArchitecture() {
+    return `
+      <svg viewBox="0 0 1000 470" class="w-full h-auto" role="img" aria-label="Tangrow AI 整理引擎分层逻辑架构图">
+        <defs>
+          <marker id="arr-arch-m" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--muted-foreground)"/>
+          </marker>
+          <marker id="arr-arch-p" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--primary)"/>
+          </marker>
+          <marker id="arr-arch-ok" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--success)"/>
+          </marker>
+          <marker id="arr-arch-w" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--warning)"/>
+          </marker>
+        </defs>
+
+        <!-- Layer 1: UI / Trigger Layer -->
+        <rect x="14" y="14" width="736" height="82" rx="12" class="svg-zone"/>
+        <text x="28" y="34" class="svg-label">入口与交互层（桌面端 + 移动端共用）</text>
+        <rect x="28" y="44" width="166" height="42" rx="8" class="svg-box"/>
+        <text x="111" y="63" text-anchor="middle" class="svg-title">闭环上下文触发</text>
+        <text x="111" y="79" text-anchor="middle" class="svg-sub">速记/卡片/今天页/命令</text>
+
+        <rect x="208" y="44" width="162" height="42" rx="8" class="svg-box-warn"/>
+        <text x="289" y="63" text-anchor="middle" class="svg-title">发送前隐私预览</text>
+        <text x="289" y="79" text-anchor="middle" class="svg-sub">笔记清单·Token·勾除</text>
+
+        <rect x="384" y="44" width="194" height="42" rx="8" class="svg-box-primary"/>
+        <text x="481" y="63" text-anchor="middle" class="svg-title">提案确认界面 review-view</text>
+        <text x="481" y="79" text-anchor="middle" class="svg-sub">勾选·编辑·差异·≤8新建·7天</text>
+
+        <rect x="592" y="44" width="144" height="42" rx="8" class="svg-box-soft"/>
+        <text x="664" y="63" text-anchor="middle" class="svg-title">AI 页签（收缩）</text>
+        <text x="664" y="79" text-anchor="middle" class="svg-sub">运行记录·待确认提案</text>
+
+        <!-- Right Sidebar: Access Gate & Claudian -->
+        <rect x="766" y="14" width="220" height="222" rx="12" class="svg-zone"/>
+        <text x="780" y="34" class="svg-label">门禁与可选外部后端</text>
+
+        <rect x="780" y="46" width="192" height="78" rx="9" class="svg-box-warn"/>
+        <text x="876" y="68" text-anchor="middle" class="svg-title">授权门禁 canUse()</text>
+        <text x="876" y="86" text-anchor="middle" class="svg-sub">限制发起新运行与应用提案</text>
+        <text x="876" y="103" text-anchor="middle" class="svg-code">在途变更集始终放行恢复</text>
+        <text x="876" y="117" text-anchor="middle" class="svg-sub">BYOK 本地统计 Token</text>
+
+        <rect x="780" y="138" width="192" height="84" rx="9" class="svg-box-soft"/>
+        <text x="876" y="160" text-anchor="middle" class="svg-title">Claudian（降级可选）</text>
+        <text x="876" y="178" text-anchor="middle" class="svg-sub">开放对话 · 未迁移工作流</text>
+        <text x="876" y="195" text-anchor="middle" class="svg-sub">仅桌面端 · 权限由代理控</text>
+        <text x="876" y="212" text-anchor="middle" class="svg-code">保留 .claude/skills/*</text>
+
+        <!-- Layer 2: Engine Core -->
+        <rect x="14" y="114" width="736" height="122" rx="12" class="svg-zone"/>
+        <text x="28" y="134" class="svg-label">引擎编排层 src/engine/（结构化流水线，不做通用代理）</text>
+
+        <rect x="28" y="146" width="154" height="76" rx="9" class="svg-box"/>
+        <text x="105" y="168" text-anchor="middle" class="svg-title">任务注册表</text>
+        <text x="105" y="185" text-anchor="middle" class="svg-code">tasks/*.ts</text>
+        <text x="105" y="201" text-anchor="middle" class="svg-sub">5 任务 TaskSpec</text>
+        <text x="105" y="215" text-anchor="middle" class="svg-sub">version / allowedChanges</text>
+
+        <rect x="198" y="146" width="174" height="76" rx="9" class="svg-box-primary"/>
+        <text x="285" y="168" text-anchor="middle" class="svg-title">上下文选择 &amp; 修订采集</text>
+        <text x="285" y="185" text-anchor="middle" class="svg-code">context.ts</text>
+        <text x="285" y="201" text-anchor="middle" class="svg-sub">读当前内容 · 采源/目标摘要</text>
+        <text x="285" y="215" text-anchor="middle" class="svg-sub">排除规则 · 预算裁剪</text>
+
+        <rect x="388" y="146" width="164" height="76" rx="9" class="svg-box"/>
+        <text x="470" y="168" text-anchor="middle" class="svg-title">模型适配层</text>
+        <text x="470" y="185" text-anchor="middle" class="svg-code">providers/*.ts</text>
+        <text x="470" y="201" text-anchor="middle" class="svg-sub">Anthropic SDK 流式</text>
+        <text x="470" y="215" text-anchor="middle" class="svg-sub">OpenAI requestUrl</text>
+
+        <rect x="568" y="146" width="168" height="76" rx="9" class="svg-box-ok"/>
+        <text x="652" y="168" text-anchor="middle" class="svg-title">结果校验器</text>
+        <text x="652" y="185" text-anchor="middle" class="svg-code">validate.ts</text>
+        <text x="652" y="201" text-anchor="middle" class="svg-sub">JSON Schema · 目标校验</text>
+        <text x="652" y="215" text-anchor="middle" class="svg-sub">依赖 create-note · 丢越权</text>
+
+        <!-- Layer 3: Controlled Execution & Persistence -->
+        <rect x="14" y="254" width="972" height="106" rx="12" class="svg-zone"/>
+        <text x="28" y="274" class="svg-label">受控写入、恢复与索引层（代码强制 7 类白名单 · 串行队列 · 凭据互斥）</text>
+
+        <rect x="28" y="286" width="224" height="60" rx="9" class="svg-box-warn"/>
+        <text x="140" y="308" text-anchor="middle" class="svg-title">独立版本化运行记录</text>
+        <text x="140" y="325" text-anchor="middle" class="svg-sub">提案 · 固定内容快照 · 预期修订</text>
+        <text x="140" y="340" text-anchor="middle" class="svg-code">Wiki 编译摘要 · 完成后清除</text>
+
+        <rect x="272" y="286" width="246" height="60" rx="9" class="svg-box-primary"/>
+        <text x="395" y="308" text-anchor="middle" class="svg-title">写入执行器 apply.ts</text>
+        <text x="395" y="325" text-anchor="middle" class="svg-sub">7 类白名单 · 5 阶段顺序 · 修订串联</text>
+        <text x="395" y="340" text-anchor="middle" class="svg-code">与 capture/derivation 凭据互斥</text>
+
+        <rect x="538" y="286" width="206" height="60" rx="9" class="svg-box-ok"/>
+        <text x="641" y="308" text-anchor="middle" class="svg-title">KnowledgeIndex（E0 新建）</text>
+        <text x="641" y="325" text-anchor="middle" class="svg-sub">链接邻近 · 共同来源 · 关键词</text>
+        <text x="641" y="340" text-anchor="middle" class="svg-code">无向量库 · 写入后增量更新</text>
+
+        <rect x="764" y="286" width="208" height="60" rx="9" class="svg-box-soft"/>
+        <text x="868" y="308" text-anchor="middle" class="svg-title">现有即时建议（复用适配层）</text>
+        <text x="868" y="325" text-anchor="middle" class="svg-sub">快速新建/速记预填 · 共享密钥</text>
+        <text x="868" y="340" text-anchor="middle" class="svg-code">各服务商独立密钥 ID</text>
+
+        <!-- Layer 4: Obsidian Host & Vault -->
+        <rect x="14" y="378" width="972" height="78" rx="12" class="svg-zone"/>
+        <text x="28" y="398" class="svg-label">Obsidian 宿主接口与原生 Markdown 笔记库（零迁移 · 随时可带走）</text>
+
+        <rect x="28" y="408" width="224" height="36" rx="8" class="svg-box"/>
+        <text x="140" y="430" text-anchor="middle" class="svg-sub" style="fill: var(--foreground);">原生编辑器缓冲（脏文件正文写入）</text>
+
+        <rect x="272" y="408" width="246" height="36" rx="8" class="svg-box"/>
+        <text x="395" y="430" text-anchor="middle" class="svg-sub" style="fill: var(--foreground);">Vault API &amp; processFrontMatter</text>
+
+        <rect x="538" y="408" width="206" height="36" rx="8" class="svg-box"/>
+        <text x="641" y="430" text-anchor="middle" class="svg-sub" style="fill: var(--foreground);">SecretStorage（宿主密钥存储）</text>
+
+        <rect x="764" y="408" width="208" height="36" rx="8" class="svg-box"/>
+        <text x="868" y="430" text-anchor="middle" class="svg-sub" style="fill: var(--foreground);">原生 Markdown + tangrow_* 属性</text>
+
+        <!-- Connectors -->
+        <path d="M 111 86 L 111 142" class="svg-arrow-p" marker-end="url(#arr-arch-p)"/>
+        <path d="M 182 184 L 194 184" class="svg-arrow" marker-end="url(#arr-arch-m)"/>
+        <path d="M 285 146 L 285 90" class="svg-arrow-w" marker-end="url(#arr-arch-w)"/>
+        <path d="M 372 184 L 384 184" class="svg-arrow" marker-end="url(#arr-arch-m)"/>
+        <path d="M 552 184 L 564 184" class="svg-arrow" marker-end="url(#arr-arch-m)"/>
+        <path d="M 652 146 L 652 118 L 481 118 L 481 90" class="svg-arrow-ok" marker-end="url(#arr-arch-ok)"/>
+        <path d="M 420 86 L 420 104 L 140 104 L 140 282" class="svg-arrow-p" stroke-dasharray="4 3" marker-end="url(#arr-arch-p)"/>
+        <path d="M 252 316 L 268 316" class="svg-arrow-p" marker-end="url(#arr-arch-p)"/>
+        <path d="M 518 316 L 534 316" class="svg-arrow-ok" marker-end="url(#arr-arch-ok)"/>
+        <path d="M 641 286 L 641 244 L 315 244 L 315 226" class="svg-arrow-ok" stroke-dasharray="4 3" marker-end="url(#arr-arch-ok)"/>
+        <path d="M 330 346 L 180 404" class="svg-arrow-p" marker-end="url(#arr-arch-p)"/>
+        <path d="M 395 346 L 395 404" class="svg-arrow-p" marker-end="url(#arr-arch-p)"/>
+        <path d="M 470 222 L 470 244 L 868 244 L 868 282" class="svg-arrow" stroke-dasharray="4 3" marker-end="url(#arr-arch-m)"/>
+        <path d="M 780 85 L 754 85" class="svg-arrow-w" stroke-dasharray="4 3" marker-end="url(#arr-arch-w)"/>
+      </svg>
+    `;
+  }
+
+  function svgPipelineFlow(activeId) {
+    const stages = [
+      { id: 'trigger', x: 14, label: '1. 触发', sub: '按钮/今天页/预准备' },
+      { id: 'context', x: 154, label: '2. 上下文', sub: '读当前内容·采修订' },
+      { id: 'provider', x: 294, label: '3. 模型层', sub: 'JSON Schema 生成' },
+      { id: 'validate', x: 434, label: '4. 结果校验', sub: '白名单/路径/依赖' },
+      { id: 'review', x: 574, label: '5. 确认界面', sub: '勾选/编辑/差异' },
+      { id: 'credential', x: 714, label: '6. 凭据落盘', sub: '固定变更集快照' },
+      { id: 'apply', x: 854, label: '7. 写入+索引', sub: '核对修订·增量更新' }
+    ];
+    return `
+      <svg viewBox="0 0 994 148" class="w-full h-auto" role="img" aria-label="整理引擎 7 阶段端到端流水线图">
+        <defs>
+          <marker id="arr-pipe-m" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--muted-foreground)"/>
+          </marker>
+          <marker id="arr-pipe-err" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--error)"/>
+          </marker>
+        </defs>
+
+        <!-- Validation failure dashed bypass -->
+        <path d="M 497 86 L 497 122 Q 497 132 507 132 L 627 132 Q 637 132 637 122 L 637 90" class="svg-arrow-err" stroke-dasharray="5 3" marker-end="url(#arr-pipe-err)"/>
+        <text x="567" y="126" text-anchor="middle" class="svg-sub" style="fill: var(--error);">校验失败 → 展示原始输出，零写入</text>
+
+        <!-- Forward arrows -->
+        ${stages.slice(0, -1).map(s => `
+          <line x1="${s.x + 126}" y1="52" x2="${s.x + 138}" y2="52" class="svg-arrow" marker-end="url(#arr-pipe-m)"/>
+        `).join('')}
+
+        <!-- Stage nodes -->
+        ${stages.map(s => `
+          <g class="svg-node ${s.id === activeId ? 'is-active' : ''}" data-pipe="${s.id}" tabindex="0" role="button" aria-label="${s.label}">
+            <rect x="${s.x}" y="18" width="126" height="68" rx="11" class="svg-box"/>
+            <text x="${s.x + 63}" y="46" text-anchor="middle" class="svg-title">${s.label}</text>
+            <text x="${s.x + 63}" y="66" text-anchor="middle" class="svg-sub">${s.sub}</text>
+          </g>
+        `).join('')}
+      </svg>
+    `;
+  }
+
+  function svgExecutionAndPaths() {
+    return `
+      <svg viewBox="0 0 990 296" class="w-full h-auto" role="img" aria-label="5 阶段执行顺序与双写入路径流程图">
+        <defs>
+          <marker id="arr-exec-m" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--muted-foreground)"/>
+          </marker>
+          <marker id="arr-exec-p" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--primary)"/>
+          </marker>
+          <marker id="arr-exec-ok" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--success)"/>
+          </marker>
+          <marker id="arr-exec-w" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--warning)"/>
+          </marker>
+        </defs>
+
+        <!-- Row 1: 5-stage deterministic apply order -->
+        <rect x="12" y="10" width="966" height="96" rx="12" class="svg-zone"/>
+        <text x="26" y="30" class="svg-label">严格 5 阶段执行顺序（每项前均检查旧凭据互斥与目标/来源预期修订；失败不回滚已完成项，凭据负责断点续跑）</text>
+
+        <rect x="24" y="42" width="118" height="50" rx="8" class="svg-box-warn"/>
+        <text x="83" y="63" text-anchor="middle" class="svg-title">0. 持久化凭据</text>
+        <text x="83" y="80" text-anchor="middle" class="svg-sub">失败即止 · 零写入</text>
+
+        <rect x="158" y="42" width="116" height="50" rx="8" class="svg-box-primary"/>
+        <text x="216" y="63" text-anchor="middle" class="svg-title">1. 新建</text>
+        <text x="216" y="80" text-anchor="middle" class="svg-code">create-note</text>
+
+        <rect x="290" y="42" width="150" height="50" rx="8" class="svg-box"/>
+        <text x="365" y="63" text-anchor="middle" class="svg-title">2. 追加类</text>
+        <text x="365" y="80" text-anchor="middle" class="svg-code">append/conn/task</text>
+
+        <rect x="456" y="42" width="136" height="50" rx="8" class="svg-box"/>
+        <text x="524" y="63" text-anchor="middle" class="svg-title">3. 托管区块</text>
+        <text x="524" y="80" text-anchor="middle" class="svg-code">managed-block</text>
+
+        <rect x="608" y="42" width="114" height="50" rx="8" class="svg-box"/>
+        <text x="665" y="63" text-anchor="middle" class="svg-title">4. 属性</text>
+        <text x="665" y="80" text-anchor="middle" class="svg-code">set-property</text>
+
+        <rect x="738" y="42" width="114" height="50" rx="8" class="svg-box"/>
+        <text x="795" y="63" text-anchor="middle" class="svg-title">5. 标已处理</text>
+        <text x="795" y="80" text-anchor="middle" class="svg-code">mark-processed</text>
+
+        <rect x="868" y="42" width="98" height="50" rx="8" class="svg-box-ok"/>
+        <text x="917" y="63" text-anchor="middle" class="svg-title">6. 收尾</text>
+        <text x="917" y="80" text-anchor="middle" class="svg-sub">清凭据+索引</text>
+
+        <line x1="142" y1="67" x2="155" y2="67" class="svg-arrow" marker-end="url(#arr-exec-m)"/>
+        <line x1="274" y1="67" x2="287" y2="67" class="svg-arrow" marker-end="url(#arr-exec-m)"/>
+        <line x1="440" y1="67" x2="453" y2="67" class="svg-arrow" marker-end="url(#arr-exec-m)"/>
+        <line x1="592" y1="67" x2="605" y2="67" class="svg-arrow" marker-end="url(#arr-exec-m)"/>
+        <line x1="722" y1="67" x2="735" y2="67" class="svg-arrow" marker-end="url(#arr-exec-m)"/>
+        <line x1="852" y1="67" x2="865" y2="67" class="svg-arrow-ok" marker-end="url(#arr-exec-ok)"/>
+
+        <!-- Row 2: Two Write Paths -->
+        <rect x="12" y="120" width="474" height="164" rx="12" class="svg-zone"/>
+        <text x="26" y="140" class="svg-label">路径 A：可预测写入（新建 / 无脏缓冲正文 / 已落盘属性写）</text>
+
+        <rect x="26" y="154" width="136" height="58" rx="8" class="svg-box-ok"/>
+        <text x="94" y="176" text-anchor="middle" class="svg-title">预计算写后修订</text>
+        <text x="94" y="194" text-anchor="middle" class="svg-sub">规范化 YAML + 正文</text>
+        <text x="94" y="207" text-anchor="middle" class="svg-sub">写入运行记录</text>
+
+        <rect x="182" y="154" width="134" height="58" rx="8" class="svg-box"/>
+        <text x="249" y="176" text-anchor="middle" class="svg-title">写磁盘 / 属性 API</text>
+        <text x="249" y="194" text-anchor="middle" class="svg-code">Vault / processFM</text>
+        <text x="249" y="207" text-anchor="middle" class="svg-sub">YAML 重排不破摘要</text>
+
+        <rect x="336" y="154" width="136" height="58" rx="8" class="svg-box-primary"/>
+        <text x="404" y="176" text-anchor="middle" class="svg-title">登记完成并推进</text>
+        <text x="404" y="194" text-anchor="middle" class="svg-sub">R_next 变为该文件</text>
+        <text x="404" y="207" text-anchor="middle" class="svg-sub">下一项的预期修订</text>
+
+        <line x1="162" y1="183" x2="178" y2="183" class="svg-arrow-ok" marker-end="url(#arr-exec-ok)"/>
+        <line x1="316" y1="183" x2="332" y2="183" class="svg-arrow-p" marker-end="url(#arr-exec-p)"/>
+
+        <rect x="26" y="226" width="446" height="44" rx="8" class="svg-box-soft"/>
+        <text x="40" y="246" class="svg-sub" style="fill: var(--foreground);">优势：即使「写完但未登记」崩溃，重启也能靠比对「预期写后修订」</text>
+        <text x="40" y="262" class="svg-sub">精准判定无人改动并自动续跑后续项。</text>
+
+        <!-- Path B: Dirty Editor Read-back -->
+        <rect x="504" y="120" width="474" height="164" rx="12" class="svg-zone"/>
+        <text x="518" y="140" class="svg-label">路径 B：读回写入（目标在编辑器打开且有未保存编辑）</text>
+
+        <rect x="518" y="154" width="134" height="58" rx="8" class="svg-box-warn"/>
+        <text x="585" y="176" text-anchor="middle" class="svg-title">登记「写入中」</text>
+        <text x="585" y="194" text-anchor="middle" class="svg-sub">原生编辑器写正文</text>
+        <text x="585" y="207" text-anchor="middle" class="svg-sub">不读旧 vault.read</text>
+
+        <rect x="672" y="154" width="136" height="58" rx="8" class="svg-box-primary"/>
+        <text x="740" y="176" text-anchor="middle" class="svg-title">读回编辑器缓冲</text>
+        <text x="740" y="194" text-anchor="middle" class="svg-sub">按缓冲算实际修订</text>
+        <text x="740" y="207" text-anchor="middle" class="svg-sub">（不读磁盘文件）</text>
+
+        <rect x="828" y="154" width="136" height="58" rx="8" class="svg-box-ok"/>
+        <text x="896" y="176" text-anchor="middle" class="svg-title">遇属性项先存盘</text>
+        <text x="896" y="194" text-anchor="middle" class="svg-sub">落盘→重核修订→</text>
+        <text x="896" y="207" text-anchor="middle" class="svg-code">processFrontMatter</text>
+
+        <line x1="652" y1="183" x2="668" y2="183" class="svg-arrow-w" marker-end="url(#arr-exec-w)"/>
+        <line x1="808" y1="183" x2="824" y2="183" class="svg-arrow-ok" marker-end="url(#arr-exec-ok)"/>
+
+        <rect x="518" y="226" width="446" height="44" rx="8" class="svg-box-soft"/>
+        <text x="532" y="246" class="svg-sub" style="fill: var(--foreground);">保护：若期间用户继续输入、无法存盘或存盘后修订漂移 → 立即暂停</text>
+        <text x="532" y="262" class="svg-sub">后续项，绝不与未保存编辑器缓冲竞态。</text>
+      </svg>
+    `;
+  }
+
+  function svgRecoveryTree() {
+    return `
+      <svg viewBox="0 0 990 286" class="w-full h-auto" role="img" aria-label="崩溃恢复 4 分支判定流程图">
+        <defs>
+          <marker id="arr-rec-m" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--muted-foreground)"/>
+          </marker>
+          <marker id="arr-rec-ok" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--success)"/>
+          </marker>
+          <marker id="arr-rec-p" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--primary)"/>
+          </marker>
+          <marker id="arr-rec-w" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--warning)"/>
+          </marker>
+          <marker id="arr-rec-e" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--error)"/>
+          </marker>
+        </defs>
+
+        <!-- Start -->
+        <rect x="24" y="108" width="180" height="72" rx="12" class="svg-box-primary"/>
+        <text x="114" y="132" text-anchor="middle" class="svg-title">中断后重启恢复</text>
+        <text x="114" y="151" text-anchor="middle" class="svg-sub">读运行记录（固定快照）</text>
+        <text x="114" y="168" text-anchor="middle" class="svg-code">不调模型 · 不重读源文</text>
+
+        <!-- Decision box -->
+        <rect x="234" y="108" width="176" height="72" rx="12" class="svg-box-warn"/>
+        <text x="322" y="132" text-anchor="middle" class="svg-title">核对磁盘实际修订</text>
+        <text x="322" y="151" text-anchor="middle" class="svg-sub">比对：写后预期 / 写前预期</text>
+        <text x="322" y="168" text-anchor="middle" class="svg-sub">+ 5 类幂等去重标记</text>
+
+        <line x1="204" y1="144" x2="230" y2="144" class="svg-arrow-p" marker-end="url(#arr-rec-p)"/>
+
+        <!-- Branch 1 -->
+        <path d="M 410 124 L 446 124 L 446 42 L 480 42" class="svg-arrow-ok" marker-end="url(#arr-rec-ok)"/>
+        <rect x="484" y="14" width="490" height="56" rx="10" class="svg-box-ok"/>
+        <text x="500" y="37" class="svg-title">分支 1：实际修订 == 预期写入后修订（仅可预测写入）</text>
+        <text x="500" y="56" class="svg-sub">判定：已完整写入且之后无人修改 → 补登完成，照常推进修订链继续后续项。</text>
+
+        <!-- Branch 2 -->
+        <path d="M 410 137 L 458 137 L 458 108 L 480 108" class="svg-arrow-p" marker-end="url(#arr-rec-p)"/>
+        <rect x="484" y="80" width="490" height="56" rx="10" class="svg-box-primary"/>
+        <text x="500" y="103" class="svg-title">分支 2：实际修订 == 写入前预期修订</text>
+        <text x="500" y="122" class="svg-sub">判定：本项尚未写入且无外部冲突 → 使用凭据内固定内容照常执行本项。</text>
+
+        <!-- Branch 3 -->
+        <path d="M 410 151 L 458 151 L 458 176 L 480 176" class="svg-arrow-w" marker-end="url(#arr-rec-w)"/>
+        <rect x="484" y="146" width="490" height="60" rx="10" class="svg-box-warn"/>
+        <text x="500" y="169" class="svg-title">分支 3：修订均不匹配，但识别到本项标记 / ID / 属性 / 摘要</text>
+        <text x="500" y="188" class="svg-sub">可能写入后又被改过，或读回写入读回前中断（无法区分，一律保守）→</text>
+        <text x="500" y="201" class="svg-code">本项记完成不重复写，但该文件修订链在此中断，后续项按冲突暂停。</text>
+
+        <!-- Branch 4 -->
+        <path d="M 410 164 L 446 164 L 446 244 L 480 244" class="svg-arrow-e" marker-end="url(#arr-rec-e)"/>
+        <rect x="484" y="216" width="490" height="56" rx="10" class="svg-box-err"/>
+        <text x="500" y="239" class="svg-title">分支 4：修订不匹配，且识别不到本项写入结果</text>
+        <text x="500" y="258" class="svg-sub">判定：文件已被外部修改或重启丢失脏缓冲 → 按冲突暂停，提示重新生成或手动处理。</text>
+      </svg>
+    `;
+  }
+
+  function svgWikiArchitecture() {
+    return `
+      <svg viewBox="0 0 990 292" class="w-full h-auto" role="img" aria-label="Karpathy LLM Wiki 三层与 Tangrow 增量编译架构图">
+        <defs>
+          <marker id="arr-w-m" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--muted-foreground)"/>
+          </marker>
+          <marker id="arr-w-p" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--primary)"/>
+          </marker>
+          <marker id="arr-w-ok" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--success)"/>
+          </marker>
+          <marker id="arr-w-e" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--error)"/>
+          </marker>
+        </defs>
+
+        <!-- Layer 1: Raw Sources -->
+        <rect x="14" y="14" width="218" height="206" rx="12" class="svg-zone"/>
+        <text x="28" y="34" class="svg-label">第 1 层：原始素材（只读）</text>
+        <rect x="28" y="48" width="190" height="72" rx="9" class="svg-box-ok"/>
+        <text x="123" y="70" text-anchor="middle" class="svg-title">剪藏 / 文献 / 资源参考</text>
+        <text x="123" y="88" text-anchor="middle" class="svg-sub">只读不改写 · 本地内容摘要</text>
+        <text x="123" y="105" text-anchor="middle" class="svg-code">今天页本地计数不调模型</text>
+
+        <rect x="28" y="136" width="190" height="68" rx="9" class="svg-box-err"/>
+        <text x="123" y="158" text-anchor="middle" class="svg-title">防回流硬隔离</text>
+        <text x="123" y="176" text-anchor="middle" class="svg-sub">排除 tangrow_kind: wiki</text>
+        <text x="123" y="192" text-anchor="middle" class="svg-code">NON_MATERIAL_KINDS</text>
+
+        <!-- Layer 2: Incremental Compile Pipeline -->
+        <rect x="256" y="14" width="446" height="206" rx="12" class="svg-zone"/>
+        <text x="270" y="34" class="svg-label">第 2 层：编写约定固定 · wiki-compile 两步增量流水线（单次 ≤10 素材 / ≤5 页）</text>
+
+        <rect x="272" y="48" width="192" height="68" rx="9" class="svg-box"/>
+        <text x="368" y="70" text-anchor="middle" class="svg-title">Step 1：主题归类提案</text>
+        <text x="368" y="88" text-anchor="middle" class="svg-sub">变动素材 + 已有百科标题</text>
+        <text x="368" y="104" text-anchor="middle" class="svg-sub">→ 编入已有页或新建主题页</text>
+
+        <rect x="494" y="48" width="192" height="68" rx="9" class="svg-box-primary"/>
+        <text x="590" y="70" text-anchor="middle" class="svg-title">Step 2：逐页重新生成</text>
+        <text x="590" y="88" text-anchor="middle" class="svg-sub">登记页路径与完整修订摘要</text>
+        <text x="590" y="104" text-anchor="middle" class="svg-code">只发托管区块，不发用户笔记</text>
+
+        <rect x="272" y="136" width="414" height="68" rx="9" class="svg-box-warn"/>
+        <text x="479" y="158" text-anchor="middle" class="svg-title">人工确认门禁 + 用户编辑保护</text>
+        <text x="479" y="176" text-anchor="middle" class="svg-sub">发送前预览 → 差异预览确认 → update-managed-block</text>
+        <text x="479" y="193" text-anchor="middle" class="svg-code">若用户手改过托管区块（rev= 不符）→ 暂停并给新旧差异供选</text>
+
+        <!-- Layer 3: Wiki Page -->
+        <rect x="726" y="14" width="250" height="206" rx="12" class="svg-zone"/>
+        <text x="740" y="34" class="svg-label">第 3 层：主题百科页 &lt;资源&gt;/Wiki</text>
+
+        <rect x="740" y="48" width="222" height="34" rx="7" class="svg-box-warn"/>
+        <text x="851" y="70" text-anchor="middle" class="svg-code">tangrow_kind: wiki + sources</text>
+
+        <rect x="740" y="90" width="222" height="58" rx="7" class="svg-box-primary"/>
+        <text x="851" y="112" text-anchor="middle" class="svg-title">托管区块（模型维护）</text>
+        <text x="851" y="129" text-anchor="middle" class="svg-sub">摘要·要点·分歧·来源标注</text>
+        <text x="851" y="142" text-anchor="middle" class="svg-code">tangrow:wiki:start rev=…</text>
+
+        <rect x="740" y="156" width="222" height="48" rx="7" class="svg-box-ok"/>
+        <text x="851" y="177" text-anchor="middle" class="svg-title">## 我的笔记（用户领地）</text>
+        <text x="851" y="194" text-anchor="middle" class="svg-sub">逐字节不动 · 从不发给模型</text>
+
+        <!-- Bottom bar: Karpathy 3 ops scope -->
+        <rect x="14" y="234" width="962" height="46" rx="10" class="svg-box-soft"/>
+        <text x="30" y="262" class="svg-title">LLM Wiki 三种操作落地范围：</text>
+        <rect x="236" y="244" width="218" height="26" rx="13" class="svg-box-ok"/>
+        <text x="345" y="261" text-anchor="middle" class="svg-sub" style="fill: var(--success); font-weight: 600;">① 编入 Ingest（首批 E3 实现）</text>
+        <rect x="470" y="244" width="234" height="26" rx="13" class="svg-box-warn"/>
+        <text x="587" y="261" text-anchor="middle" class="svg-sub" style="fill: var(--warning); font-weight: 600;">② 查询 Query（E3 后扩展评估）</text>
+        <rect x="720" y="244" width="242" height="26" rx="13" class="svg-box-warn"/>
+        <text x="841" y="261" text-anchor="middle" class="svg-sub" style="fill: var(--warning); font-weight: 600;">③ 体检 Lint（矛盾/断链，E3 后评估）</text>
+
+        <!-- Arrows -->
+        <line x1="218" y1="82" x2="268" y2="82" class="svg-arrow-ok" marker-end="url(#arr-w-ok)"/>
+        <line x1="464" y1="82" x2="490" y2="82" class="svg-arrow-p" marker-end="url(#arr-w-p)"/>
+        <line x1="590" y1="116" x2="590" y2="132" class="svg-arrow-p" marker-end="url(#arr-w-p)"/>
+        <path d="M 686 168 L 712 168 L 712 119 L 736 119" class="svg-arrow-p" marker-end="url(#arr-w-p)"/>
+        <!-- Blocked feedback line -->
+        <path d="M 740 132 L 716 132 L 716 212 L 222 212 L 222 174" class="svg-arrow-err" stroke-dasharray="4 3" marker-end="url(#arr-w-e)"/>
+      </svg>
+    `;
+  }
+
+  /* ===================== TAB RENDERERS ===================== */
+
+  function renderOverview() {
+    const done = DATA.checklist.filter(i => state.checked[i.id]).length;
+    return `
+      <!-- Positioning Hero & 3 Promises -->
+      <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h2 class="text-base font-semibold">一句话定位 &amp; 三个核心承诺（含 08d7c09 README 对比）</h2>
+          <span class="soft-badge badge-primary">README.md + POSITIONING.md §1/§3</span>
+        </div>
+        <div class="p-4 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] space-y-2">
+          <p class="text-sm sm:text-base font-medium leading-relaxed">${esc(DATA.positioning.zh)}</p>
+          <p class="text-xs text-[var(--muted-foreground)] italic leading-relaxed">${esc(DATA.positioning.en)}</p>
+          <p class="text-xs text-[var(--primary)] font-medium pt-1">核心主张：${esc(DATA.positioning.coreClaim)}</p>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+          ${DATA.positioning.promises.map(p => `
+            <div class="p-4 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] flex flex-col justify-between gap-3">
+              <div class="space-y-2">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <h3 class="text-sm font-semibold">${esc(p.title)}</h3>
+                  <span class="soft-badge ${p.badgeCls}">${esc(p.badge)}</span>
+                </div>
+                <div class="space-y-1.5 text-xs leading-relaxed">
+                  <div>
+                    <span class="font-medium text-[var(--foreground)]">README（08d7c09）：</span>
+                    <span class="text-[var(--muted-foreground)]">${esc(p.readmeText)}</span>
+                  </div>
+                  <div class="pt-1 border-t border-[var(--card-border)]">
+                    <span class="font-medium text-[var(--foreground)]">POSITIONING §3：</span>
+                    <span class="text-[var(--muted-foreground)]">${esc(p.posText)}</span>
+                  </div>
+                </div>
+              </div>
+              <div class="why-box text-xs leading-relaxed">
+                <strong class="text-[var(--primary)]">设计思路：</strong><span class="text-[var(--muted-foreground)]">${esc(p.why)}</span>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </section>
+
+      <!-- Document Precedence SVG -->
+      <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h2 class="text-base font-semibold">图 1 · 六份变更文档关系与契约优先级图</h2>
+          <span class="soft-badge">冲突以 DESIGN / ZETTELKASTEN / CONTEXT 为准</span>
+        </div>
+        <div class="diagram-frame scroll-thin">
+          ${svgDocPrecedence()}
+        </div>
+      </section>
+
+      <!-- Interactive 16-Item Review Checklist -->
+      <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 class="text-base font-semibold">16 项全条款人工审核清单（自动保存本地，支持导出 Markdown）</h2>
+            <p class="text-xs text-[var(--muted-foreground)] mt-0.5">每条对应一个高风险审查点，可一键跳转到对应图表与细节页，逐项勾选并留备注。</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="soft-badge ${done === DATA.checklist.length ? 'badge-ok' : 'badge-primary'}">已确认 ${done}/${DATA.checklist.length}</span>
+            <button id="btn-check-all" type="button" class="text-xs px-2.5 py-1 rounded-lg border border-[var(--border)] bg-[var(--sidebar)] hover:border-[var(--primary)] cursor-pointer">
+              ${done === DATA.checklist.length ? '全部取消' : '全部勾选'}
+            </button>
+          </div>
+        </div>
+        <div class="space-y-2">
+          ${DATA.checklist.map(item => {
+            const isChecked = !!state.checked[item.id];
+            const note = state.notes[item.id] || '';
+            return `
+              <div class="check-row p-3 rounded-xl border ${isChecked ? 'border-[color-mix(in_srgb,var(--success)_45%,var(--border))] bg-[color-mix(in_srgb,var(--success)_6%,var(--sidebar))]' : 'border-[var(--card-border)] bg-[var(--sidebar)]'} flex flex-col sm:flex-row sm:items-center gap-2.5">
+                <label class="flex items-start gap-2.5 flex-1 cursor-pointer">
+                  <input type="checkbox" data-check="${item.id}" ${isChecked ? 'checked' : ''} class="mt-0.5 shrink-0" />
+                  <span class="text-xs sm:text-sm leading-relaxed">
+                    <span class="soft-badge mr-1.5">${esc(item.cat)}</span>
+                    <span class="${isChecked ? 'line-through text-[var(--muted-foreground)]' : ''}">${esc(item.text)}</span>
+                  </span>
+                </label>
+                <div class="flex items-center gap-2 sm:w-[295px] shrink-0">
+                  <input type="text" data-note="${item.id}" value="${esc(note)}" placeholder="记录疑问或修改意见…" class="flex-1 text-xs px-2.5 py-1.5 rounded-lg bg-[var(--background)] border border-[var(--card-border)] text-[var(--foreground)] placeholder:text-[var(--placeholder)] focus:outline-none focus:border-[var(--primary)]" />
+                  <button type="button" data-jump="${item.tab}" class="text-xs px-2.5 py-1.5 rounded-lg border border-[var(--border)] hover:border-[var(--primary)] text-[var(--link)] shrink-0 cursor-pointer">
+                    去核对 →
+                  </button>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </section>
+
+      <!-- Changed Files & Deferred/Pre-existing Notes -->
+      <section class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div class="lg:col-span-2 bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-3">
+          <h2 class="text-base font-semibold">PR #12 变更的 6 个文件（HEAD 08d7c09）</h2>
+          <div class="overflow-x-auto scroll-thin">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr class="border-b border-[var(--border)] text-[var(--muted-foreground)]">
+                  <th class="py-2 pr-3 font-medium">文件</th>
+                  <th class="py-2 pr-3 font-medium">改动</th>
+                  <th class="py-2 pr-3 font-medium">角色与涵盖内容</th>
+                  <th class="py-2 font-medium">定位</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-[var(--card-border)]">
+                ${DATA.files.map(f => `
+                  <tr>
+                    <td class="py-2.5 pr-3 font-mono text-[var(--code-foreground)] whitespace-nowrap">${esc(f.path)}</td>
+                    <td class="py-2.5 pr-3 whitespace-nowrap"><span class="soft-badge">${esc(f.change)}</span></td>
+                    <td class="py-2.5 pr-3 text-[var(--muted-foreground)] leading-relaxed">${esc(f.role)}</td>
+                    <td class="py-2.5 whitespace-nowrap text-[var(--foreground)]">${esc(f.status)}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-3">
+          <h2 class="text-base font-semibold">刻意留白 &amp; 非本 PR 既有备注</h2>
+          <div class="space-y-2.5">
+            ${DATA.deferred.map(d => `
+              <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] space-y-1">
+                <div class="flex flex-wrap items-center justify-between gap-1">
+                  <span class="font-mono text-xs text-[var(--code-foreground)]">${esc(d.item)}</span>
+                  <span class="soft-badge ${d.kind === '刻意留白' ? 'badge-ok' : 'badge-warn'}">${esc(d.kind)}</span>
+                </div>
+                <div class="text-xs text-[var(--muted-foreground)] leading-relaxed">${esc(d.reason)}</div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </section>
+    `;
+  }
+
+  function renderLoop() {
+    const active = DATA.loop.find(x => x.id === state.loopId) || DATA.loop[0];
+    return `
+      <!-- Interactive 6-Step Core Loop Flowchart -->
+      <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 class="text-base font-semibold">图 2 · 核心闭环流程图（点击任意节点查看条款与设计思路）</h2>
+            <p class="text-xs text-[var(--muted-foreground)] mt-0.5">完整还原 POSITIONING.md §2 的 6 步主链路与两条反馈闭环（回顾→提炼、产出→捕获）。</p>
+          </div>
+          <span class="soft-badge badge-warn">E1 完成前以手动闭环 + AI 即将推出为主</span>
+        </div>
+
+        <div class="diagram-frame scroll-thin">
+          ${svgCoreLoop(active.id)}
+        </div>
+
+        <!-- Detail Card for Active Step -->
+        <div class="p-4 sm:p-5 rounded-2xl bg-[var(--sidebar)] border border-[var(--border)] space-y-4">
+          <div class="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[var(--card-border)]">
+            <div class="flex items-center gap-2.5">
+              <span class="text-sm font-mono px-2.5 py-1 rounded-lg bg-[var(--card)] border border-[var(--border)] text-[var(--primary)]">${active.step}</span>
+              <div>
+                <h3 class="text-base font-semibold">${esc(active.name)} <span class="text-xs font-normal text-[var(--muted-foreground)]">· ${esc(active.sub)}</span></h3>
+              </div>
+            </div>
+            <span class="soft-badge ${active.statusCls}">${esc(active.status)}</span>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+            <div class="p-3 rounded-xl bg-[var(--card)] border border-[var(--card-border)] space-y-1">
+              <div class="font-semibold text-[var(--muted-foreground)]">用户痛点</div>
+              <p class="leading-relaxed">${esc(active.pain)}</p>
+            </div>
+            <div class="p-3 rounded-xl bg-[var(--card)] border border-[var(--card-border)] space-y-1">
+              <div class="font-semibold text-[var(--muted-foreground)]">Tangrow 怎么做</div>
+              <p class="leading-relaxed">${esc(active.how)}</p>
+            </div>
+            <div class="p-3 rounded-xl bg-[var(--card)] border border-[var(--card-border)] space-y-1">
+              <div class="font-semibold text-[var(--primary)]">AI 做什么</div>
+              <p class="leading-relaxed">${esc(active.ai)}</p>
+            </div>
+            <div class="p-3 rounded-xl bg-[var(--card)] border border-[var(--card-border)] space-y-1">
+              <div class="font-semibold text-[var(--success)]">用户确认什么</div>
+              <p class="leading-relaxed">${esc(active.confirm)}</p>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+            <div class="p-3.5 rounded-xl bg-[var(--card)] border border-[color-mix(in_srgb,var(--success)_38%,var(--card-border))] space-y-1">
+              <div class="font-semibold text-[var(--success)]">当前已实现（可对外宣传）</div>
+              <p class="leading-relaxed text-[var(--muted-foreground)]">${esc(active.shipped)}</p>
+            </div>
+            <div class="p-3.5 rounded-xl bg-[var(--card)] border border-[color-mix(in_srgb,var(--warning)_38%,var(--card-border))] space-y-1">
+              <div class="font-semibold text-[var(--warning)]">规划中（对外须标「即将推出」）</div>
+              <p class="leading-relaxed text-[var(--muted-foreground)]">${esc(active.planned)}</p>
+            </div>
+          </div>
+
+          <div class="why-box text-xs leading-relaxed">
+            <strong class="text-[var(--primary)]">关键设计思路：</strong><span class="text-[var(--muted-foreground)]">${esc(active.why)}</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Full Shipped vs Planned Matrix -->
+      <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h2 class="text-base font-semibold">全闭环实现现状对照表（POSITIONING.md §4）</h2>
+          <span class="soft-badge">对外宣传只能写左列；右列须标「即将推出」</span>
+        </div>
+        <div class="overflow-x-auto scroll-thin">
+          <table class="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr class="border-b border-[var(--border)] text-[var(--muted-foreground)]">
+                <th class="py-2 pr-3 font-medium w-20">环节</th>
+                <th class="py-2 pr-3 font-medium">已实现（已对照实码）</th>
+                <th class="py-2 font-medium">规划中（含对应设计章节）</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-[var(--card-border)]">
+              ${DATA.loop.map(l => `
+                <tr class="${l.id === active.id ? 'bg-[color-mix(in_srgb,var(--primary)_8%,transparent)]' : ''}">
+                  <td class="py-2.5 pr-3 font-semibold whitespace-nowrap">${esc(l.name)}</td>
+                  <td class="py-2.5 pr-3 text-[var(--muted-foreground)] leading-relaxed">${esc(l.shipped)}</td>
+                  <td class="py-2.5 text-[var(--muted-foreground)] leading-relaxed">${esc(l.planned)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Principles & Loop Metrics -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-3">
+          <h2 class="text-base font-semibold">5 条产品取舍原则（POSITIONING.md §5）</h2>
+          <div class="space-y-2.5">
+            ${DATA.principles.map(p => `
+              <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] space-y-1 text-xs">
+                <div class="font-semibold">${p.n}. ${esc(p.title)}</div>
+                <p class="text-[var(--muted-foreground)] leading-relaxed">${esc(p.body)}</p>
+                <div class="text-[var(--primary)]">思路：${esc(p.why)}</div>
+              </div>
+            `).join('')}
+          </div>
+        </section>
+
+        <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-3">
+          <div class="flex items-center justify-between gap-2">
+            <h2 class="text-base font-semibold">5 项本地闭环健康度量（POSITIONING.md §7）</h2>
+            <span class="soft-badge badge-ok">纯本地 · 不上报</span>
+          </div>
+          <p class="text-xs text-[var(--muted-foreground)]">判断产品是否兑现承诺的北极星，后续并入 REPORTING.md 时细化口径。</p>
+          <div class="space-y-2.5">
+            ${DATA.metrics.map(m => `
+              <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] space-y-1 text-xs">
+                <div class="flex items-center justify-between gap-2">
+                  <strong class="text-sm">${esc(m.name)}</strong>
+                  <span class="soft-badge">${esc(m.stage)}</span>
+                </div>
+                <p class="text-[var(--muted-foreground)] leading-relaxed">${esc(m.def)}</p>
+                <div class="text-[var(--muted-foreground)]">防偏设计：${esc(m.note)}</div>
+              </div>
+            `).join('')}
+          </div>
+        </section>
+      </div>
+    `;
+  }
+
+  function renderEngine() {
+    const activeStage = DATA.pipeline.find(s => s.id === state.pipeId) || DATA.pipeline[1];
+    const filteredAllowlist = state.taskFilter === 'all'
+      ? DATA.allowlist
+      : DATA.allowlist.filter(a => a.tasks.includes(state.taskFilter));
+
+    return `
+      <!-- Logical Architecture Diagram -->
+      <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 class="text-base font-semibold">图 3 · 整理引擎分层逻辑架构图（AI-ENGINE.md §1–§7, §9–§12）</h2>
+            <p class="text-xs text-[var(--muted-foreground)] mt-0.5">展示入口层、引擎编排层、受控写入/凭据/索引层、Obsidian 宿主接口层，以及授权门禁与 Claudian 退居可选的位置关系。</p>
+          </div>
+          <span class="soft-badge badge-primary">自研整理引擎 · 不自研通用代理</span>
+        </div>
+        <div class="diagram-frame scroll-thin">
+          ${svgLogicalArchitecture()}
+        </div>
+      </section>
+
+      <!-- Interactive 7-Stage Pipeline SVG -->
+      <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h2 class="text-base font-semibold">图 4 · 端到端 7 阶段处理流水线（点击节点查模块文件与设计思路）</h2>
+          <span class="soft-badge">含「校验失败 → 提案界面」安全回退分支</span>
+        </div>
+        <div class="diagram-frame scroll-thin">
+          ${svgPipelineFlow(activeStage.id)}
+        </div>
+        <div class="p-4 rounded-xl bg-[var(--sidebar)] border border-[var(--border)] space-y-2.5 text-xs">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <strong class="text-sm">阶段 ${activeStage.step} · ${esc(activeStage.name)}</strong>
+            <code class="px-2 py-0.5 rounded bg-[var(--card)] border border-[var(--card-border)] text-[var(--code-foreground)]">${esc(activeStage.file)}</code>
+          </div>
+          <p class="leading-relaxed text-[var(--muted-foreground)]">${esc(activeStage.detail)}</p>
+          <div class="why-box leading-relaxed">
+            <strong class="text-[var(--primary)]">为什么这样设计：</strong><span class="text-[var(--muted-foreground)]">${esc(activeStage.why)}</span>
+          </div>
+        </div>
+
+        <!-- TaskSpec Contract -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div class="space-y-2">
+            <div class="text-xs font-semibold">TaskSpec&lt;Output&gt; 声明式任务契约（AI-ENGINE.md §4）</div>
+            <div class="code-box text-[var(--foreground)]">interface TaskSpec&lt;Output&gt; {
+  id: 'daily-review' | 'distill-cards' | 'para-file' | 'connect-card' | 'wiki-compile';
+  version: number;                       // 提示词或 schema 变化时递增，写入凭据
+  allowedChanges: readonly ChangeKind[]; // 本任务能产生的写操作子集
+  selectContext(input: TaskInput, index: KnowledgeIndex, budget: TokenBudget): ContextPlan;
+  buildPrompt(plan: ContextPlan, locale: Locale): EnginePrompt; // 含 JSON schema
+  toProposal(output: Output, plan: ContextPlan): Proposal;      // 纯映射，不读写文件
+}</div>
+          </div>
+          <div class="space-y-2">
+            <div class="text-xs font-semibold">目标（5）vs 非目标（5）（AI-ENGINE.md §2）</div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+              <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[color-mix(in_srgb,var(--success)_35%,var(--card-border))] space-y-1.5">
+                <div class="font-semibold text-[var(--success)]">明确目标</div>
+                <ul class="list-disc pl-4 space-y-1 text-[var(--muted-foreground)]">
+                  <li>首批 5 项整理任务</li>
+                  <li>发前预览笔记与约 token；写前清单</li>
+                  <li>可预览、部分接受、可恢复，零删除/移动</li>
+                  <li>服务商可替换（Anthropic → OpenAI 兼容）</li>
+                  <li>移动端支持每日回顾与卡片提炼</li>
+                </ul>
+              </div>
+              <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[color-mix(in_srgb,var(--error)_35%,var(--card-border))] space-y-1.5">
+                <div class="font-semibold text-[var(--error)]">明确非目标</div>
+                <ul class="list-disc pl-4 space-y-1 text-[var(--muted-foreground)]">
+                  <li>不做通用聊天 / Shell / 任意工具代理</li>
+                  <li>不做未经确认的后台写入</li>
+                  <li>不用 AI 判成熟度 tangrow_stage</li>
+                  <li>首期不上向量库 / Embedding</li>
+                  <li>不代付模型费用（纯 BYOK）</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Comparison & Engine Concepts -->
+      <div class="grid grid-cols-1 lg:grid-cols-5 gap-4">
+        <section class="lg:col-span-3 bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-3">
+          <h2 class="text-base font-semibold">为什么自研：Claudian 工作流 vs 内置整理引擎（§1）</h2>
+          <div class="overflow-x-auto scroll-thin">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr class="border-b border-[var(--border)] text-[var(--muted-foreground)]">
+                  <th class="py-2 pr-2 font-medium">维度</th>
+                  <th class="py-2 pr-2 font-medium">当前（Claudian）</th>
+                  <th class="py-2 pr-2 font-medium text-[var(--primary)]">内置整理引擎</th>
+                  <th class="py-2 font-medium">演进原因</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-[var(--card-border)]">
+                ${DATA.comparison.map(c => `
+                  <tr>
+                    <td class="py-2 pr-2 font-semibold whitespace-nowrap">${esc(c.dim)}</td>
+                    <td class="py-2 pr-2 text-[var(--muted-foreground)]">${esc(c.old)}</td>
+                    <td class="py-2 pr-2 text-[var(--foreground)]">${esc(c.next)}</td>
+                    <td class="py-2 text-[var(--muted-foreground)]">${esc(c.why)}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="lg:col-span-2 bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-3">
+          <h2 class="text-base font-semibold">引擎内部 6 大概念（§3，确定后补入 CONTEXT）</h2>
+          <div class="space-y-2 text-xs">
+            ${DATA.concepts.map(c => `
+              <div class="p-2.5 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] space-y-1">
+                <div class="font-semibold">${esc(c.term)}</div>
+                <div class="text-[var(--muted-foreground)] leading-relaxed">${esc(c.def)}</div>
+                <div class="text-[var(--error)]">勿混用：${esc(c.avoid)}</div>
+              </div>
+            `).join('')}
+          </div>
+        </section>
+      </div>
+
+      <!-- Write Allowlist & Confirmation UI -->
+      <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 class="text-base font-semibold">7 类写操作代码白名单（§5）与明确禁止操作</h2>
+            <p class="text-xs text-[var(--muted-foreground)] mt-0.5">按任务筛选可观察每个 TaskSpec 的最小权限子集。</p>
+          </div>
+          <div class="flex flex-wrap gap-1.5">
+            ${[
+              ['all', '全部 (7)'],
+              ['daily-review', 'daily-review'],
+              ['distill-cards', 'distill-cards'],
+              ['para-file', 'para-file'],
+              ['connect-card', 'connect-card'],
+              ['wiki-compile', 'wiki-compile']
+            ].map(([id, label]) => `
+              <button type="button" data-tfilter="${id}" aria-pressed="${state.taskFilter === id}" class="pill-btn text-xs px-2.5 py-1 rounded-lg border border-[var(--border)] bg-[var(--sidebar)] text-[var(--muted-foreground)] cursor-pointer">
+                ${esc(label)}
+              </button>
+            `).join('')}
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div class="lg:col-span-2 overflow-x-auto scroll-thin">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr class="border-b border-[var(--border)] text-[var(--muted-foreground)]">
+                  <th class="py-2 pr-3 font-medium">变更项</th>
+                  <th class="py-2 pr-3 font-medium">受控行为</th>
+                  <th class="py-2 font-medium">对应契约</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-[var(--card-border)]">
+                ${filteredAllowlist.map(a => `
+                  <tr>
+                    <td class="py-2.5 pr-3 font-mono text-[var(--code-foreground)] whitespace-nowrap">${esc(a.kind)}</td>
+                    <td class="py-2.5 pr-3 text-[var(--muted-foreground)] leading-relaxed">${esc(a.action)}</td>
+                    <td class="py-2.5 whitespace-nowrap"><span class="soft-badge">${esc(a.contract)}</span></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+          <div class="p-4 rounded-xl bg-[color-mix(in_srgb,var(--error)_7%,var(--sidebar))] border border-[color-mix(in_srgb,var(--error)_35%,var(--card-border))] space-y-2 text-xs">
+            <div class="font-semibold text-[var(--error)]">类型层无法表达（绝对禁止）</div>
+            <ul class="space-y-1.5 text-[var(--muted-foreground)] list-disc pl-4">
+              ${DATA.forbidden.map(f => `<li>${esc(f)}</li>`).join('')}
+            </ul>
+          </div>
+        </div>
+
+        <!-- Confirmation UI 7 Principles -->
+        <div class="pt-3 border-t border-[var(--card-border)] space-y-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <h3 class="text-sm font-semibold">提案确认界面 7 原则（AI-ENGINE.md §6 · 招牌体验）</h3>
+            <div class="flex flex-wrap items-center gap-1.5 text-xs">
+              <span class="kbd">J / K</span><span class="text-[var(--muted-foreground)]">移动</span>
+              <span class="kbd">Space</span><span class="text-[var(--muted-foreground)]">勾选</span>
+              <span class="kbd">E</span><span class="text-[var(--muted-foreground)]">编辑</span>
+              <span class="kbd">⌘Enter</span><span class="text-[var(--muted-foreground)]">应用</span>
+              <span class="kbd">Esc</span><span class="text-[var(--muted-foreground)]">收起保留</span>
+            </div>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 text-xs">
+            <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)]"><strong>1. 一屏看清规模</strong><p class="text-[var(--muted-foreground)] mt-1">顶部显示「将新建 N 篇、修改 M 篇」与本次运行 token 用量。</p></div>
+            <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)]"><strong>2. 逐项可控可溯源</strong><p class="text-[var(--muted-foreground)] mt-1">每项带勾选、目标、类型、理由和可点击的来源原文链接。</p></div>
+            <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)]"><strong>3. 先编辑再接受</strong><p class="text-[var(--muted-foreground)] mt-1">候选卡片与回顾草稿直接改标题和正文，接受后固定编辑稿。</p></div>
+            <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)]"><strong>4. 差异预览</strong><p class="text-[var(--muted-foreground)] mt-1">append-section 与 update-managed-block 显示插入位与前后 diff。</p></div>
+            <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)]"><strong>5. 键盘优先</strong><p class="text-[var(--muted-foreground)] mt-1">全程免鼠标审核，Esc 收起但不丢提案。</p></div>
+            <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)]"><strong>6. 过期粒度分离</strong><p class="text-[var(--muted-foreground)] mt-1">今天页显示「待确认 N 条」；超 7 天整体过期；单文件修订变化仅对应项暂停。</p></div>
+            <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] sm:col-span-2"><strong>7. 批量新建上限（≤ 8）</strong><p class="text-[var(--muted-foreground)] mt-1">单次应用最多 8 个新建产物（对齐 ZETTELKASTEN 7.2），超出留在提案中分批应用，控制单次变更爆炸半径。</p></div>
+          </div>
+        </div>
+      </section>
+    `;
+  }
+
+  function renderRecovery() {
+    const active = DATA.scenarios.find(s => s.id === state.scenarioId) || DATA.scenarios[0];
+    return `
+      <!-- Execution Order & Dual Write Paths SVG -->
+      <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h2 class="text-base font-semibold">图 5 · 5 阶段执行顺序与双写入路径图（AI-ENGINE.md §5 &amp; §7）</h2>
+          <span class="soft-badge badge-primary">核心工程不变量 · 多轮 Review 重点打磨区</span>
+        </div>
+        <div class="diagram-frame scroll-thin">
+          ${svgExecutionAndPaths()}
+        </div>
+
+        <!-- 6 Core Invariants -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 text-xs pt-1">
+          <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] space-y-1">
+            <strong class="text-[var(--primary)]">不变量 1：当前内容统一定义</strong>
+            <p class="text-[var(--muted-foreground)] leading-relaxed">脏编辑器取缓冲，否则取磁盘。发送给模型、采修订摘要、执行核对三处完全一致，绝不混用两版。</p>
+          </div>
+          <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] space-y-1">
+            <strong class="text-[var(--primary)]">不变量 2：读上下文时一次性采集修订</strong>
+            <p class="text-[var(--muted-foreground)] leading-relaxed">所有来源与写入目标（含 8.3 任务目标、8.5 百科页等不发正文目标）在读上下文时即刻算摘要，提案后绝不重算。</p>
+          </div>
+          <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] space-y-1">
+            <strong class="text-[var(--primary)]">不变量 3：规范化属性 + 原始正文摘要</strong>
+            <p class="text-[var(--muted-foreground)] leading-relaxed">忽略 YAML 排版与键顺序（无属性或不可解析回退原文摘要），宿主 processFrontMatter 重排 YAML 不误报冲突。</p>
+          </div>
+          <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] space-y-1">
+            <strong class="text-[var(--primary)]">不变量 4：脏编辑器属性先存盘</strong>
+            <p class="text-[var(--muted-foreground)] leading-relaxed">processFrontMatter 改磁盘，若目标在编辑器有未保存改动（含同批前序正文项刚写完），必须先存盘再核对写入，失败即暂停。</p>
+          </div>
+          <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] space-y-1">
+            <strong class="text-[var(--primary)]">不变量 5：快照与产物属性边界</strong>
+            <p class="text-[var(--muted-foreground)] leading-relaxed">确认正文/属性暂存运行记录（完成后清除）供离线恢复；落盘产物仅带 tangrow_id / tangrow_sources / tangrow_derivation_id（AI 卡片另加 tangrow_origin: ai）。</p>
+          </div>
+          <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] space-y-1">
+            <strong class="text-[var(--primary)]">不变量 6：新旧凭据严格互斥</strong>
+            <p class="text-[var(--muted-foreground)] leading-relaxed">同一源文件存在未完成的 tangrow_capture_processing 或 tangrow_derivation 时，涉及该源的引擎项暂停，先收尾旧操作。</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Recovery 4-Branch Decision Tree SVG -->
+      <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h2 class="text-base font-semibold">图 6 · 中断重启 4 分支崩溃恢复判定流程图（AI-ENGINE.md §7.3）</h2>
+          <span class="soft-badge badge-ok">恢复零模型调用 · 零重读源文</span>
+        </div>
+        <div class="diagram-frame scroll-thin">
+          ${svgRecoveryTree()}
+        </div>
+      </section>
+
+      <!-- Interactive 7-Scenario Simulator -->
+      <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 class="text-base font-semibold">交互式边界情景推演器（7 个核心并发 / 脏缓冲 / 崩溃场景）</h2>
+            <p class="text-xs text-[var(--muted-foreground)] mt-0.5">点击左侧情景，逐步走读执行器与恢复机制如何处理，检查是否存在逻辑漏洞。</p>
+          </div>
+          <span class="soft-badge badge-warn">对应 AI-ENGINE §14 测试要求</span>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+          <div class="lg:col-span-5 space-y-2">
+            ${DATA.scenarios.map(s => `
+              <button type="button" data-scenario="${s.id}" class="node-card ${s.id === active.id ? 'is-active' : ''} w-full text-left p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] cursor-pointer space-y-1">
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-xs font-semibold">${esc(s.title)}</span>
+                  <span class="soft-badge ${s.tagCls} shrink-0">${esc(s.tag)}</span>
+                </div>
+              </button>
+            `).join('')}
+          </div>
+
+          <div class="lg:col-span-7 p-4 sm:p-5 rounded-2xl bg-[var(--sidebar)] border border-[var(--border)] space-y-4 text-xs">
+            <div class="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-[var(--card-border)]">
+              <h3 class="text-sm font-semibold">${esc(active.title)}</h3>
+              <span class="soft-badge ${active.tagCls}">${esc(active.tag)}</span>
+            </div>
+            <div class="p-3 rounded-xl bg-[var(--card)] border border-[var(--card-border)] space-y-1">
+              <div class="font-semibold text-[var(--muted-foreground)]">初始条件</div>
+              <p class="leading-relaxed">${esc(active.setup)}</p>
+            </div>
+            <div class="space-y-2">
+              <div class="font-semibold text-[var(--muted-foreground)]">系统按条款逐步执行</div>
+              ${active.steps.map((st, idx) => `
+                <div class="flex items-start gap-2.5 p-2.5 rounded-xl bg-[var(--card)] border border-[var(--card-border)]">
+                  <span class="font-mono px-1.5 py-0.5 rounded bg-[var(--sidebar)] border border-[var(--border)] text-[var(--primary)] shrink-0">${idx + 1}</span>
+                  <p class="leading-relaxed">${esc(st)}</p>
+                </div>
+              `).join('')}
+            </div>
+            <div class="why-box leading-relaxed">
+              <strong class="text-[var(--success)]">最终保证：</strong><span class="text-[var(--foreground)]">${esc(active.outcome)}</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 5-Group Idempotent Dedupe Rules -->
+      <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-3">
+        <h2 class="text-base font-semibold">5 类写操作的幂等识别与既有模块兼容规则（§7.3）</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+          ${DATA.dedupeRules.map(r => `
+            <div class="p-3.5 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] space-y-1.5">
+              <code class="text-[var(--code-foreground)] font-semibold">${esc(r.kind)}</code>
+              <p class="text-[var(--muted-foreground)] leading-relaxed">${esc(r.how)}</p>
+            </div>
+          `).join('')}
+        </div>
+      </section>
+    `;
+  }
+
+  function renderTasks() {
+    const active = DATA.tasks.find(t => t.id === state.taskTab) || DATA.tasks[0];
+    return `
+      <!-- Karpathy LLM Wiki Architecture SVG -->
+      <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 class="text-base font-semibold">图 7 · Karpathy LLM Wiki 三层模型与 Tangrow 增量编译架构图</h2>
+            <p class="text-xs text-[var(--muted-foreground)] mt-0.5">体现「只读原始素材 → 两步编译 + 人工确认 → 托管区块/用户领地隔离」及「非素材防回流红线」。</p>
+          </div>
+          <span class="soft-badge badge-primary">CONTEXT.md + AI-ENGINE.md §8.5</span>
+        </div>
+        <div class="diagram-frame scroll-thin">
+          ${svgWikiArchitecture()}
+        </div>
+      </section>
+
+      <!-- 5-Task Interactive Inspector -->
+      <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h2 class="text-base font-semibold">首批 5 大整理任务逐条规约（AI-ENGINE.md §8.1–§8.5）</h2>
+          <div class="flex flex-wrap gap-1.5">
+            ${DATA.tasks.map(t => `
+              <button type="button" data-tasktab="${t.id}" aria-pressed="${t.id === active.id}" class="pill-btn text-xs px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--sidebar)] text-[var(--muted-foreground)] cursor-pointer font-medium">
+                ${esc(t.id)}
+              </button>
+            `).join('')}
+          </div>
+        </div>
+
+        <div class="p-4 sm:p-5 rounded-2xl bg-[var(--sidebar)] border border-[var(--border)] space-y-4 text-xs">
+          <div class="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[var(--card-border)]">
+            <h3 class="text-base font-semibold">${esc(active.title)}</h3>
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="soft-badge ${active.phaseCls}">${esc(active.phase)}</span>
+              ${active.allowed.map(a => `<span class="soft-badge font-mono text-[var(--code-foreground)]">${esc(a)}</span>`).join('')}
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div class="p-3.5 rounded-xl bg-[var(--card)] border border-[var(--card-border)] space-y-1.5">
+              <div class="font-semibold text-[var(--primary)]">触发入口</div>
+              <ul class="list-disc pl-4 space-y-1 text-[var(--muted-foreground)] leading-relaxed">
+                ${active.triggers.map(x => `<li>${esc(x)}</li>`).join('')}
+              </ul>
+            </div>
+            <div class="p-3.5 rounded-xl bg-[var(--card)] border border-[var(--card-border)] space-y-1.5">
+              <div class="font-semibold text-[var(--foreground)]">上下文输入</div>
+              <ul class="list-disc pl-4 space-y-1 text-[var(--muted-foreground)] leading-relaxed">
+                ${active.inputs.map(x => `<li>${esc(x)}</li>`).join('')}
+              </ul>
+            </div>
+            <div class="p-3.5 rounded-xl bg-[var(--card)] border border-[var(--card-border)] space-y-1.5">
+              <div class="font-semibold text-[var(--success)]">产出提案</div>
+              <ul class="list-disc pl-4 space-y-1 text-[var(--muted-foreground)] leading-relaxed">
+                ${active.outputs.map(x => `<li>${esc(x)}</li>`).join('')}
+              </ul>
+            </div>
+            <div class="p-3.5 rounded-xl bg-[var(--card)] border border-[color-mix(in_srgb,var(--warning)_40%,var(--card-border))] space-y-1.5">
+              <div class="font-semibold text-[var(--warning)]">硬性约束与质量防线</div>
+              <ul class="list-disc pl-4 space-y-1 text-[var(--muted-foreground)] leading-relaxed">
+                ${active.constraints.map(x => `<li>${esc(x)}</li>`).join('')}
+              </ul>
+            </div>
+          </div>
+
+          <div class="why-box leading-relaxed">
+            <strong class="text-[var(--primary)]">关键设计思路：</strong><span class="text-[var(--muted-foreground)]">${esc(active.why)}</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Wiki Markdown Anatomy -->
+      <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h2 class="text-base font-semibold">主题百科（llm-wiki）Markdown 结构解剖与所有权分区</h2>
+          <div class="flex flex-wrap gap-2 text-xs">
+            <span class="soft-badge badge-warn">属性区：合法 YAML · 非素材类型</span>
+            <span class="soft-badge badge-primary">托管区块：模型增量编译 + rev= 防覆盖</span>
+            <span class="soft-badge badge-ok">用户区：逐字节不动 · 不发送模型</span>
+          </div>
+        </div>
+        <div class="code-box"><span class="highlight-meta">---
+tangrow_kind: wiki
+tangrow_id: "550e8400-e29b-41d4-a716-446655440000"
+created: "2026-11-26"
+tangrow_sources:
+  - "[[素材 A]]"
+  - "[[素材 B]]"
+---</span>
+# 分布式系统 · 重试与幂等
+<span class="highlight-managed">&lt;!-- tangrow:wiki:start rev=a9f3c2 --&gt;
+## 综合摘要
+- 所有收集的资料一致指出：跨网络重试必须绑定操作身份，否则在确认丢失时必然产生重复写入（见 [[素材 A]]）。
+## 观点分歧
+- [[素材 A]] 建议客户端生成幂等键，[[素材 B]] 则强调持久化状态机先行落盘。
+## 相关主题
+- [[本地优先存储]] · [[崩溃恢复协议]]
+&lt;!-- tangrow:wiki:end --&gt;</span>
+<span class="highlight-user">## 我的笔记
+（用户自由编辑，Tangrow 从不改动、也不在重新生成托管区块时发送给模型）</span></div>
+      </section>
+    `;
+  }
+
+  function renderOps() {
+    return `
+      <!-- Privacy + Provider -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-3">
+          <h2 class="text-base font-semibold">隐私与安全 5 道防线（AI-ENGINE.md §9）</h2>
+          <div class="space-y-2.5 text-xs">
+            ${DATA.privacy.map(p => `
+              <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] space-y-1">
+                <div class="font-semibold">${p.n}. ${esc(p.title)}</div>
+                <p class="text-[var(--muted-foreground)] leading-relaxed">${esc(p.body)}</p>
+              </div>
+            `).join('')}
+          </div>
+        </section>
+
+        <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-3 text-xs">
+          <h2 class="text-base font-semibold">模型适配层与失败策略（AI-ENGINE.md §10）</h2>
+          <div class="code-box text-[var(--foreground)]">interface Provider {
+  id: 'anthropic' | 'openai-compatible';
+  generate(req: {
+    system: string; messages: EngineMessage[]; schema: JsonSchema;
+    maxTokens: number; signal: AbortSignal; onProgress?(chars: number): void;
+  }): Promise&lt;{ json: unknown; usage: { input: number; output: number } }&gt;;
+}</div>
+          <div class="space-y-2">
+            <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] space-y-1">
+              <strong>Anthropic（首发）</strong>
+              <p class="text-[var(--muted-foreground)] leading-relaxed">沿用 src/ai-client.ts 官方 SDK + 流式 + JSON schema；移动端实测 fetch 行为，若不可用则回退 Obsidian requestUrl。</p>
+            </div>
+            <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] space-y-1">
+              <strong>OpenAI 兼容接口（E4，含自建/本地服务）</strong>
+              <p class="text-[var(--muted-foreground)] leading-relaxed">走 Obsidian requestUrl 绕开移动端 CORS；不支持流式（结构化任务显示「生成中」即可）；不支持 AbortSignal，取消为<strong>逻辑取消</strong>（丢弃结果不进提案，但用量仍计入）。</p>
+            </div>
+            <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] space-y-1">
+              <strong>模型档位 &amp; 重试兜底</strong>
+              <p class="text-[var(--muted-foreground)] leading-relaxed">下拉预设 + 高级自定义模型 ID；每任务选「快速」或「强」两档。网络错重试 1 次；schema 错带校验错误重试 1 次；仍失败展示原始输出，零写入。</p>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <!-- Existing Migration & Licensing -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <section class="lg:col-span-2 bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <h2 class="text-base font-semibold">与现有功能的迁移关系（AI-ENGINE.md §11）</h2>
+            <span class="soft-badge">原则：同一能力只保留一个主入口</span>
+          </div>
+          <div class="overflow-x-auto scroll-thin">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr class="border-b border-[var(--border)] text-[var(--muted-foreground)]">
+                  <th class="py-2 pr-3 font-medium">现有能力</th>
+                  <th class="py-2 pr-3 font-medium">处理方式</th>
+                  <th class="py-2 font-medium">阶段</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-[var(--card-border)]">
+                ${DATA.migration.map(m => `
+                  <tr>
+                    <td class="py-2 pr-3 font-medium">${esc(m.existing)}</td>
+                    <td class="py-2 pr-3 text-[var(--muted-foreground)] leading-relaxed">${esc(m.plan)}</td>
+                    <td class="py-2 whitespace-nowrap"><span class="soft-badge">${esc(m.status)}</span></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-3 text-xs">
+          <h2 class="text-base font-semibold">授权与计费边界（§12）</h2>
+          <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] space-y-1.5">
+            <div class="font-semibold text-[var(--primary)]">统一门禁：plugin.access.canUse()</div>
+            <p class="text-[var(--muted-foreground)] leading-relaxed">返回 false 时（expired / not_started / needs_network）禁止发起新运行、禁止应用新提案。</p>
+          </div>
+          <div class="p-3 rounded-xl bg-[color-mix(in_srgb,var(--success)_10%,var(--sidebar))] border border-[color-mix(in_srgb,var(--success)_40%,var(--card-border))] space-y-1.5">
+            <div class="font-semibold text-[var(--success)]">关键安全网：在途收尾始终放行</div>
+            <p class="text-[var(--muted-foreground)] leading-relaxed">已经开始执行的变更集，无论授权状态都允许完成或恢复，杜绝半写入文件。</p>
+          </div>
+          <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] space-y-1.5">
+            <div class="font-semibold">BYOK 与契约同步义务</div>
+            <p class="text-[var(--muted-foreground)] leading-relaxed">模型费由用户密钥承担，本地统计单次/当月 token 不上报。E0 与 E4 落地时同步更新 PURCHASE-ACTIVATION.md（付费范围、BYOK 多服务商、将引擎在途变更集加入「始终放行边界与草稿保护 → 在途操作收尾」）。</p>
+          </div>
+        </section>
+      </div>
+
+      <!-- Testing Matrix (§14) & Roadmap (§15) -->
+      <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-4">
+        <h2 class="text-base font-semibold">测试矩阵与真实宿主验收标准（AI-ENGINE.md §14）</h2>
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 text-xs">
+          <div class="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            ${DATA.tests.deterministic.map(t => `
+              <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] space-y-1">
+                <div class="font-semibold text-[var(--primary)]">${esc(t.area)}</div>
+                <p class="text-[var(--muted-foreground)] leading-relaxed">${esc(t.detail)}</p>
+              </div>
+            `).join('')}
+          </div>
+          <div class="p-4 rounded-xl bg-[color-mix(in_srgb,var(--warning)_8%,var(--sidebar))] border border-[color-mix(in_srgb,var(--warning)_35%,var(--card-border))] space-y-2">
+            <div class="font-semibold text-[var(--warning)]">真实宿主验收（3 项必过）</div>
+            <ul class="list-disc pl-4 space-y-2 text-[var(--muted-foreground)] leading-relaxed">
+              ${DATA.tests.realHost.map(x => `<li>${esc(x)}</li>`).join('')}
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-3">
+        <h2 class="text-base font-semibold">E0–E4 分期路线图与完成标志（AI-ENGINE.md §15）</h2>
+        <div class="grid grid-cols-1 md:grid-cols-5 gap-3 text-xs">
+          ${DATA.roadmap.map((r, i) => `
+            <div class="p-3.5 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] flex flex-col justify-between gap-2.5">
+              <div class="space-y-1.5">
+                <span class="soft-badge ${i <= 1 ? 'badge-primary' : 'badge-warn'}">${esc(r.stage)}</span>
+                <p class="text-[var(--muted-foreground)] leading-relaxed">${esc(r.scope)}</p>
+              </div>
+              <div class="pt-2 border-t border-[var(--card-border)]">
+                <div class="text-[var(--success)] font-medium">完成标志：</div>
+                <p class="text-[var(--muted-foreground)] leading-relaxed mt-0.5">${esc(r.gate)}</p>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </section>
+    `;
+  }
+
+  function renderCopy() {
+    const q = state.clauseQuery.trim().toLowerCase();
+    const filteredClauses = DATA.clauseIndex.filter(c => {
+      if (state.clauseDoc !== 'all' && c.doc !== state.clauseDoc) return false;
+      if (!q) return true;
+      return `${c.doc} ${c.sec} ${c.title} ${c.summary} ${c.why}`.toLowerCase().includes(q);
+    });
+
+    return `
+      <!-- 5 Settled Decisions -->
+      <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h2 class="text-base font-semibold">2026-11-26 已定 5 项决策与跨文档同步追踪（AI-ENGINE.md §13）</h2>
+          <span class="soft-badge badge-ok">全部 6 处 ZETTELKASTEN + CONTEXT 已验证同步</span>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
+          ${DATA.decisions.map(d => `
+            <div class="p-3.5 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] flex flex-col justify-between gap-2">
+              <div class="space-y-1.5">
+                <div class="flex items-center justify-between gap-2">
+                  <span class="font-mono font-semibold text-[var(--primary)]">${esc(d.id)}</span>
+                  <span class="soft-badge">${esc(d.synced)}</span>
+                </div>
+                <div class="font-semibold text-sm">${esc(d.title)}</div>
+                <p class="text-[var(--muted-foreground)] leading-relaxed">${esc(d.body)}</p>
+              </div>
+              <div class="why-box leading-relaxed">
+                <strong class="text-[var(--primary)]">拍板依据：</strong><span class="text-[var(--muted-foreground)]">${esc(d.why)}</span>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </section>
+
+      <!-- Glossary Comparison -->
+      <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-3">
+        <h2 class="text-base font-semibold">核心概念对照：卡片 / 结构笔记 / 主题百科 / 素材（CONTEXT.md）</h2>
+        <div class="overflow-x-auto scroll-thin">
+          <table class="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr class="border-b border-[var(--border)] text-[var(--muted-foreground)]">
+                <th class="py-2 pr-3 font-medium">术语</th>
+                <th class="py-2 pr-3 font-medium">属性标识</th>
+                <th class="py-2 pr-3 font-medium">回答的问题</th>
+                <th class="py-2 pr-3 font-medium">写入所有权</th>
+                <th class="py-2 pr-3 font-medium">算素材？</th>
+                <th class="py-2 font-medium text-[var(--error)]">Avoid 边界</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-[var(--card-border)]">
+              ${DATA.glossaryCompare.map(g => `
+                <tr>
+                  <td class="py-2.5 pr-3 font-semibold whitespace-nowrap">${esc(g.term)}</td>
+                  <td class="py-2.5 pr-3 font-mono text-[var(--code-foreground)] whitespace-nowrap">${esc(g.kind)}</td>
+                  <td class="py-2.5 pr-3 text-[var(--muted-foreground)]">${esc(g.answers)}</td>
+                  <td class="py-2.5 pr-3 text-[var(--muted-foreground)]">${esc(g.owner)}</td>
+                  <td class="py-2.5 pr-3 whitespace-nowrap"><span class="soft-badge ${g.material === '是' ? 'badge-ok' : 'badge-warn'}">${esc(g.material)}</span></td>
+                  <td class="py-2.5 text-[var(--muted-foreground)]">${esc(g.avoid)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Marketing Copy, Landing Page, Demo Script & Red Lines -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-3 text-xs">
+          <h2 class="text-base font-semibold">对外文案、着陆页结构与 3 条宣传红线（POSITIONING §6）</h2>
+          <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] space-y-1">
+            <div class="font-semibold text-[var(--primary)]">标语</div>
+            <p class="leading-relaxed">${esc(DATA.positioning.tagline)}</p>
+          </div>
+          <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] space-y-1">
+            <div class="font-semibold">30 字简介</div>
+            <p class="leading-relaxed text-[var(--muted-foreground)]">${esc(DATA.positioning.short30)}</p>
+          </div>
+          <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] space-y-1">
+            <div class="font-semibold">100 字简介</div>
+            <p class="leading-relaxed text-[var(--muted-foreground)]">${esc(DATA.positioning.short100)}</p>
+          </div>
+          <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] space-y-1.5">
+            <div class="flex items-center justify-between gap-2">
+              <strong class="text-[var(--foreground)]">着陆页 6 段结构 &amp; 截图规范</strong>
+              <span class="soft-badge badge-warn">E3 前未实现须删去或标即将推出</span>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+              ${DATA.landingSections.map(s => `
+                <div class="p-2 rounded-lg bg-[var(--card)] border border-[var(--card-border)]">
+                  <strong>${s.n}. ${esc(s.name)}：</strong><span class="text-[var(--muted-foreground)]">${esc(s.content)}</span>
+                </div>
+              `).join('')}
+            </div>
+            <p class="text-[var(--muted-foreground)] pt-1">截图：每环 1 张主图（浅色主题、宽侧栏、示例库）+ 深色与手机端各 1 张；规划中环节仅用「即将推出」占位，绝不用原型图冒充。</p>
+          </div>
+          <div class="p-3.5 rounded-xl bg-[color-mix(in_srgb,var(--error)_7%,var(--sidebar))] border border-[color-mix(in_srgb,var(--error)_35%,var(--card-border))] space-y-1.5">
+            <div class="font-semibold text-[var(--error)]">3 条不可触碰的宣传红线</div>
+            <ul class="list-disc pl-4 space-y-1 text-[var(--muted-foreground)]">
+              <li>不写「AI 帮你思考」「自动生成知识体系」，写「AI 整理和回顾，你来判断与产出」。</li>
+              <li>不宣称未实现的能力（严格以第 4 节为准）。</li>
+              <li>不与其他产品做功能对比，不使用其他产品的名称和商标。</li>
+            </ul>
+          </div>
+        </section>
+
+        <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-3 text-xs">
+          <div class="flex items-center justify-between gap-2">
+            <h2 class="text-base font-semibold">2 分钟演示脚本（含阶段门禁标注）</h2>
+            <span class="soft-badge badge-warn">对应阶段完成前不得用于对外演示</span>
+          </div>
+          <p class="text-[var(--muted-foreground)]">使用示例库、固定演示日期；未完成阶段改用第 4 节「已实现」列中的手动流程。</p>
+          <div class="space-y-2">
+            ${DATA.demoSteps.map(s => `
+              <div class="p-3 rounded-xl bg-[var(--sidebar)] border border-[var(--card-border)] space-y-1">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <strong>第 ${s.step} 步 · ${esc(s.phase)}</strong>
+                  <span class="soft-badge ${s.gateCls}">${esc(s.gate)}</span>
+                </div>
+                <p class="leading-relaxed text-[var(--muted-foreground)]">${esc(s.text)}</p>
+              </div>
+            `).join('')}
+          </div>
+        </section>
+      </div>
+
+      <!-- Searchable Full Clause Index -->
+      <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 class="text-base font-semibold">PR #12 全条款索引与设计思路速查（<span id="clause-count">${filteredClauses.length} / ${DATA.clauseIndex.length}</span>）</h2>
+            <p class="text-xs text-[var(--muted-foreground)] mt-0.5">输入任意关键词（如 TOCTOU、processFrontMatter、canUse、wiki、tangrow_origin、requestUrl、08d7c09）快速定位条款。</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <input id="clause-search" type="search" value="${esc(state.clauseQuery)}" placeholder="搜索条款、符号或设计思路…" class="text-xs px-3 py-1.5 rounded-lg bg-[var(--sidebar)] border border-[var(--border)] text-[var(--foreground)] placeholder:text-[var(--placeholder)] focus:outline-none focus:border-[var(--primary)] w-56" />
+            <select id="clause-doc" class="text-xs px-2.5 py-1.5 rounded-lg bg-[var(--sidebar)] border border-[var(--border)] text-[var(--foreground)] focus:outline-none focus:border-[var(--primary)]">
+              <option value="all" ${state.clauseDoc === 'all' ? 'selected' : ''}>全部文档</option>
+              <option value="README.md" ${state.clauseDoc === 'README.md' ? 'selected' : ''}>README.md</option>
+              <option value="CONTEXT.md" ${state.clauseDoc === 'CONTEXT.md' ? 'selected' : ''}>CONTEXT.md</option>
+              <option value="DESIGN.md" ${state.clauseDoc === 'DESIGN.md' ? 'selected' : ''}>DESIGN.md</option>
+              <option value="ZETTELKASTEN.md" ${state.clauseDoc === 'ZETTELKASTEN.md' ? 'selected' : ''}>ZETTELKASTEN.md</option>
+              <option value="POSITIONING.md" ${state.clauseDoc === 'POSITIONING.md' ? 'selected' : ''}>POSITIONING.md</option>
+              <option value="AI-ENGINE.md" ${state.clauseDoc === 'AI-ENGINE.md' ? 'selected' : ''}>AI-ENGINE.md</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="overflow-x-auto scroll-thin">
+          <table class="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr class="border-b border-[var(--border)] text-[var(--muted-foreground)]">
+                <th class="py-2 pr-3 font-medium whitespace-nowrap">文档 / 节</th>
+                <th class="py-2 pr-3 font-medium">条款主题与内容要点</th>
+                <th class="py-2 pr-3 font-medium">关键设计思路（Why）</th>
+                <th class="py-2 font-medium whitespace-nowrap">跳转</th>
+              </tr>
+            </thead>
+            <tbody id="clause-tbody" class="divide-y divide-[var(--card-border)]">
+              ${renderClauseRows(filteredClauses)}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    `;
+  }
+
+  function renderClauseRows(list) {
+    if (!list.length) {
+      return '<tr><td colspan="4" class="py-6 text-center text-[var(--muted-foreground)]">没有匹配的条款，请更换关键词。</td></tr>';
+    }
+    return list.map(c => `
+      <tr>
+        <td class="py-2.5 pr-3 align-top whitespace-nowrap">
+          <div class="font-mono text-[var(--code-foreground)]">${esc(c.doc)}</div>
+          <div class="text-[var(--muted-foreground)]">${esc(c.sec)}</div>
+        </td>
+        <td class="py-2.5 pr-3 align-top leading-relaxed">
+          <div class="font-semibold text-[var(--foreground)]">${esc(c.title)}</div>
+          <div class="text-[var(--muted-foreground)] mt-0.5">${esc(c.summary)}</div>
+        </td>
+        <td class="py-2.5 pr-3 align-top text-[var(--muted-foreground)] leading-relaxed">${esc(c.why)}</td>
+        <td class="py-2.5 align-top whitespace-nowrap">
+          <button type="button" data-jump="${c.tab}" class="text-xs px-2 py-1 rounded-lg border border-[var(--border)] hover:border-[var(--primary)] text-[var(--link)] cursor-pointer">查看 →</button>
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  function updateClauseTable() {
+    const tbody = document.getElementById('clause-tbody');
+    const countEl = document.getElementById('clause-count');
+    if (!tbody || !countEl) return;
+    const q = state.clauseQuery.trim().toLowerCase();
+    const list = DATA.clauseIndex.filter(c => {
+      if (state.clauseDoc !== 'all' && c.doc !== state.clauseDoc) return false;
+      if (!q) return true;
+      return `${c.doc} ${c.sec} ${c.title} ${c.summary} ${c.why}`.toLowerCase().includes(q);
+    });
+    tbody.innerHTML = renderClauseRows(list);
+    countEl.textContent = `${list.length} / ${DATA.clauseIndex.length}`;
+    tbody.querySelectorAll('[data-jump]').forEach(btn => {
+      btn.addEventListener('click', () => setTab(btn.getAttribute('data-jump')));
+    });
+  }
+
+  function render() {
+    const host = document.getElementById('panel-host');
+    const views = {
+      overview: renderOverview,
+      loop: renderLoop,
+      engine: renderEngine,
+      recovery: renderRecovery,
+      tasks: renderTasks,
+      ops: renderOps,
+      copy: renderCopy
+    };
+    host.innerHTML = (views[state.tab] || renderOverview)();
+    bindPanelEvents();
+    updateProgress();
+  }
+
+  function bindPanelEvents() {
+    document.querySelectorAll('[data-loop]').forEach(el => {
+      const go = () => { state.loopId = el.getAttribute('data-loop'); render(); };
+      el.addEventListener('click', go);
+      el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+    });
+    document.querySelectorAll('[data-pipe]').forEach(el => {
+      const go = () => { state.pipeId = el.getAttribute('data-pipe'); render(); };
+      el.addEventListener('click', go);
+      el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+    });
+    document.querySelectorAll('[data-tfilter]').forEach(btn => {
+      btn.addEventListener('click', () => { state.taskFilter = btn.getAttribute('data-tfilter'); render(); });
+    });
+    document.querySelectorAll('[data-scenario]').forEach(btn => {
+      btn.addEventListener('click', () => { state.scenarioId = btn.getAttribute('data-scenario'); render(); });
+    });
+    document.querySelectorAll('[data-tasktab]').forEach(btn => {
+      btn.addEventListener('click', () => { state.taskTab = btn.getAttribute('data-tasktab'); render(); });
+    });
+    document.querySelectorAll('[data-jump]').forEach(btn => {
+      btn.addEventListener('click', () => setTab(btn.getAttribute('data-jump')));
+    });
+    document.querySelectorAll('[data-check]').forEach(box => {
+      box.addEventListener('change', () => {
+        state.checked[box.getAttribute('data-check')] = box.checked;
+        persist();
+        render();
+      });
+    });
+    document.querySelectorAll('[data-note]').forEach(input => {
+      input.addEventListener('input', () => {
+        state.notes[input.getAttribute('data-note')] = input.value;
+        persist();
+      });
+    });
+    const checkAll = document.getElementById('btn-check-all');
+    if (checkAll) {
+      checkAll.addEventListener('click', () => {
+        const allDone = DATA.checklist.every(i => state.checked[i.id]);
+        DATA.checklist.forEach(i => { state.checked[i.id] = !allDone; });
+        persist();
+        render();
+      });
+    }
+    const searchInput = document.getElementById('clause-search');
+    if (searchInput) {
+      searchInput.addEventListener('input', () => {
+        state.clauseQuery = searchInput.value;
+        updateClauseTable();
+      });
+    }
+    const docSelect = document.getElementById('clause-doc');
+    if (docSelect) {
+      docSelect.addEventListener('change', () => {
+        state.clauseDoc = docSelect.value;
+        updateClauseTable();
+      });
+    }
+  }
+
+  document.querySelectorAll('#main-tabs [role="tab"]').forEach(btn => {
+    btn.addEventListener('click', () => setTab(btn.getAttribute('data-tab')));
+  });
+
+  document.getElementById('btn-export').addEventListener('click', async () => {
+    const lines = [
+      '## PR #12 全条款人工走读确认记录（HEAD `08d7c09`）',
+      '',
+      ...DATA.checklist.map(i => {
+        const mark = state.checked[i.id] ? 'x' : ' ';
+        const note = (state.notes[i.id] || '').trim();
+        return `- [${mark}] [${i.cat}] ${i.text}${note ? ` —— 备注：${note}` : ''}`;
+      })
+    ].join('\n');
+    try {
+      await navigator.clipboard.writeText(lines);
+      toast('已复制 Markdown 审核记录到剪贴板');
+    } catch {
+      toast('剪贴板不可用，请手动复制');
+    }
+  });
+
+  document.getElementById('btn-reset').addEventListener('click', () => {
+    state.checked = {};
+    state.notes = {};
+    persist();
+    render();
+    toast('已重置勾选与备注');
+  });
+
+  const THEME_KEY = "tangrow.pr12.walkthrough.theme";
+  function applyTheme(theme) {
+    const isLight = theme === "light";
+    if (isLight) {
+      document.documentElement.setAttribute("data-theme", "light");
+    } else {
+      document.documentElement.removeAttribute("data-theme");
+    }
+    const btn = document.getElementById("btn-theme");
+    if (btn) btn.textContent = isLight ? "深色模式" : "浅色模式";
+  }
+  const savedTheme = (() => { try { return localStorage.getItem(THEME_KEY); } catch { return null; } })();
+  applyTheme(savedTheme === "light" ? "light" : "dark");
+  const themeBtn = document.getElementById("btn-theme");
+  if (themeBtn) {
+    themeBtn.addEventListener("click", () => {
+      const next = document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light";
+      applyTheme(next);
+      try { localStorage.setItem(THEME_KEY, next); } catch {}
+    });
+  }
+
+  render();
+})();
+</script>
+</body>
+</html>

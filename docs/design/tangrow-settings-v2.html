@@ -1,0 +1,1414 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Tangrow Settings</title>
+  <style>
+    :root {
+      --back: #090a0c;
+      --page: #111215;
+      --side: #151619;
+      --surface: #191a1e;
+      --line: #303136;
+      --soft-line: #28292e;
+      --text: #f0f0f2;
+      --sub: #b3b4bd;
+      --muted: #95969f;
+      --lavender: #c6bcff;
+      --green: #99d6b3;
+      --amber: #edc58a;
+      --red: #ffabab;
+      --sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+      color-scheme: dark;
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    html { min-width: 280px; background: var(--back); }
+    body {
+      margin: 0; min-height: 100vh; min-height: 100svh; color: var(--text); font: 14px/1.55 var(--sans);
+      -webkit-font-smoothing: antialiased; display: grid; place-items: center;
+      padding: clamp(18px, 4vh, 48px) clamp(20px, 4.2vw, 76px);
+      background: radial-gradient(ellipse at 74% -14%, #1a1b22 0%, transparent 56%), var(--back);
+    }
+    button, input, select { font: inherit; }
+    button, a, input, select { -webkit-tap-highlight-color: transparent; }
+    button, select { cursor: pointer; }
+    button { color: inherit; background: none; border: 0; }
+    button:disabled { cursor: default; opacity: .53; }
+    a { color: inherit; }
+    button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible {
+      outline: 2px solid var(--lavender); outline-offset: 3px;
+    }
+    h1, h2, h3, p { margin: 0; }
+    .icon { width: 17px; height: 17px; flex: 0 0 auto; display: inline-block; vertical-align: middle; }
+    .frame {
+      width: min(1200px, 100%); overflow: clip; border: 1px solid #34353c; border-radius: 15px;
+      background: var(--page); box-shadow: 0 28px 85px #0008, 0 1px 0 #ffffff08 inset;
+    }
+    .titlebar {
+      height: 43px; display: flex; align-items: center; gap: 17px; padding: 0 17px;
+      background: #17181b; border-bottom: 1px solid var(--line);
+    }
+    .lights { display: inline-flex; align-items: center; gap: 6px; }
+    .lights i { width: 9px; height: 9px; border-radius: 50%; background: #a16869; }
+    .lights i:nth-child(2) { background: #a38c62; } .lights i:nth-child(3) { background: #6d8e77; }
+    .crumbs { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 11px; }
+    .crumbs b { font-weight: 500; color: #d6d6dc; }
+    .crumbs .icon { width: 10px; height: 10px; color: #6d6e78; }
+    .crumb-link { padding: 2px 0; color: inherit; font: inherit; }
+    .crumb-link:hover { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
+    .chrome-btn {
+      margin-left: auto; display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px;
+      font-size: 11px; border: 1px solid #38393e; border-radius: 5px; color: #c1c2ca; background: #202125;
+    }
+    .chrome-btn .icon { width: 13px; height: 13px; }
+    .chrome-btn:hover, .secondary:hover, .icon-btn:hover { background: #2a2b31; border-color: #52535d; }
+    .mobile-nav { display: none; }
+    .workspace { display: grid; grid-template-columns: 221px minmax(0, 1fr); min-height: min(790px, calc(100svh - 110px)); }
+    aside { background: var(--side); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
+    .brand { display: flex; align-items: center; gap: 10px; padding: 25px 19px 22px; }
+    .brand-mark { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; background: #d8d4f3; color: #2e2b41; }
+    .brand-mark .icon { width: 23px; height: 23px; }
+    .brand-name { font-size: 21px; font-weight: 640; line-height: 1.15; letter-spacing: -1.1px; }
+    .version { margin-left: auto; font: 10px/1 var(--mono); color: #a9a9b4; }
+    .search-btn {
+      margin: 0 13px 8px; min-height: 33px; padding: 0 9px; border: 1px solid #33343a; border-radius: 6px;
+      color: var(--muted); background: #1b1c20; display: flex; align-items: center; gap: 8px;
+      text-align: start; font-size: 12px;
+    }
+    .search-btn .icon { width: 14px; height: 14px; }
+    .search-btn:hover { border-color: #51525b; color: var(--text); }
+    kbd { margin-left: auto; font: 10px/1.1 var(--mono); color: #b2b3be; border: 1px solid #3a3b44; border-radius: 4px; padding: 2px 4px; }
+    .side-nav { padding: 0 12px; }
+    .nav-group { margin-top: 21px; }
+    .group-label { font-size: 11px; font-weight: 550; color: var(--muted); padding: 0 10px; margin-bottom: 6px; }
+    .nav-item {
+      width: 100%; min-height: 34px; display: flex; align-items: center; gap: 10px; padding: 6px 11px;
+      border: 1px solid transparent; border-radius: 6px; color: #b1b2bc; text-align: start; font-size: 13px;
+    }
+    .nav-item + .nav-item { margin-top: 2px; }
+    .nav-item .icon { width: 16px; height: 16px; }
+    .nav-item:hover { color: #eeeeef; background: #202126; }
+    .nav-item[aria-current="page"] { background: #292831; border-color: #383640; color: #f3f0ff; }
+    .nav-item[aria-current="page"] .icon { color: var(--lavender); }
+    .side-foot { margin-top: auto; padding: 23px 12px 13px; }
+    .profile {
+      display: flex; align-items: center; gap: 9px; text-align: start; width: 100%;
+      border-top: 1px solid var(--line); padding: 15px 6px 4px; margin-top: 12px;
+    }
+    .profile strong, .profile small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .profile strong { font-size: 12px; font-weight: 550; color: #d8d8df; }
+    .profile small { font-size: 10px; color: var(--muted); }
+    .profile .arrow { margin-left: auto; }
+    .avatar { width: 31px; height: 31px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 50%; background: #25262d; border: 1px solid #37383f; color: #b9bac6; }
+    .truncate { min-width: 0; }
+    main { min-width: 0; }
+    .content { max-width: 930px; margin: 0 auto; padding: clamp(29px, 3.4vw, 49px) clamp(25px, 4.05vw, 62px) 31px; }
+    .page-head { margin-bottom: 23px; }
+    h1 { font-size: clamp(27px, 2.45vw, 36px); line-height: 1.24; font-weight: 610; letter-spacing: -.055em; }
+    .page-lead { font-size: 13px; line-height: 1.65; color: var(--muted); margin-top: 8px; }
+    .pass {
+      isolation: isolate; position: relative; overflow: hidden; min-height: 159px; padding: 21px 24px 18px;
+      border: 1px solid #3c3b48; border-radius: 10px;
+      background: linear-gradient(110deg, #201f27, #1c1b24 53%, #20202c);
+    }
+    .art { position: absolute; z-index: -1; inset: 0 0 0 auto; width: 47%; height: 100%; pointer-events: none; mask-image: linear-gradient(to right, transparent, #000 13%); }
+    .pass-copy { width: 60%; }
+    .status { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #46444f; border-radius: 20px; padding: 2px 8px; font-size: 10px; color: #d4d1df; background: #24232d; }
+    .status::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: #aaa6bd; }
+    .status[data-tone="ok"] { color: #bce8ca; background: #202e27; border-color: #385443; }
+    .status[data-tone="ok"]::before { background: var(--green); }
+    .status[data-tone="warn"] { color: #e6ccaa; background: #322a21; border-color: #514231; }
+    .status[data-tone="warn"]::before { background: var(--amber); }
+    .pass h2 { margin-top: 10px; font-size: clamp(22px, 2.13vw, 30px); line-height: 1.25; font-weight: 580; letter-spacing: -.045em; }
+    .pass p { font-size: 12px; color: #b5b3c0; margin-top: 5px; }
+    .perks { display: flex; flex-wrap: wrap; gap: 6px 15px; margin-top: 16px; font-size: 11px; color: #d2cedf; }
+    .perks span { display: inline-flex; align-items: center; gap: 5px; }
+    .perks .icon { width: 14px; height: 14px; color: #aba4cb; }
+    .sector { margin-top: 26px; }
+    .sector-head, .row, .row-start, .button-line { display: flex; align-items: center; }
+    .sector-head { justify-content: space-between; gap: 12px; margin-bottom: 11px; }
+    .sector-head h2 { font-size: 16px; font-weight: 590; line-height: 1.5; letter-spacing: -.025em; }
+    .sector-head .link { font-size: 12px; }
+    .link { color: var(--lavender); display: inline-flex; align-items: center; gap: 5px; padding: 3px 0; text-decoration: none; }
+    .link:hover { color: #ebe5ff; text-decoration: underline; text-underline-offset: 3px; }
+    .link .icon { width: 14px; height: 14px; }
+    .form-panel, .row-list { border: 1px solid var(--line); background: #17181c; border-radius: 8px; }
+    .form-panel { padding: 17px 19px 15px; }
+    label.field-label { display: block; font-size: 12px; font-weight: 540; color: #dcdae3; margin-bottom: 7px; }
+    .field { display: flex; flex: 1; min-width: 0; align-items: center; min-height: 38px; gap: 8px; padding: 0 11px; border: 1px solid #3a3b43; border-radius: 6px; background: #101115; color: var(--muted); }
+    .field:focus-within { border-color: #a49acf; outline: 2px solid #746da32c; }
+    .field .icon { width: 15px; height: 15px; }
+    .field input { background: none; width: 100%; min-width: 0; height: 36px; border: 0; outline: 0; color: var(--text); font-size: 13px; }
+    .field input:focus-visible { outline: none; }
+    input::placeholder { color: #84858e; opacity: 1; }
+    .field:has([aria-invalid="true"]) { border-color: var(--red); }
+    .input-line { display: flex; gap: 9px; align-items: stretch; }
+    .primary, .secondary, .icon-btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid; border-radius: 6px; font-size: 12px; font-weight: 560; white-space: nowrap; }
+    .primary { padding: 0 14px; min-height: 37px; color: #151419; background: #ebe9ef; border-color: #f2f0f4; }
+    .primary:not(:disabled):hover { background: #fff; }
+    .primary .icon, .secondary .icon { width: 14px; height: 14px; }
+    .secondary, .icon-btn { min-height: 30px; padding: 3px 10px; color: #e1e0e6; background: #24252a; border-color: #3c3d44; }
+    .field-hint, .result { font-size: 11.5px; line-height: 1.65; color: var(--muted); margin-top: 8px; }
+    .result { color: var(--lavender); } .result.error { color: var(--red); }
+    .mono, .code-input { font-family: var(--mono) !important; }
+    .code-input { letter-spacing: .2em; }
+    .button-line { justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+    .button-line .link { font-size: 11px; }
+    .row-list { overflow: hidden; }
+    .row { justify-content: space-between; padding: 14px 16px; gap: 14px; }
+    .row + .row { border-top: 1px solid var(--soft-line); }
+    .row-start { gap: 11px; min-width: 0; }
+    .row-icon { width: 32px; height: 32px; display: grid; place-items: center; flex: 0 0 auto; border: 1px solid #36373e; border-radius: 7px; background: #212227; color: #c4c3cf; }
+    .row-name { font-size: 13px; font-weight: 540; color: #e4e3ea; overflow-wrap: anywhere; }
+    .row-desc { font-size: 11.5px; line-height: 1.55; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
+    .row-link { width: 100%; text-align: start; }
+    .row-link:hover { background: #1e1f24; }
+    .arrow { color: var(--muted); width: 14px; height: 14px; }
+    .support-row { min-height: 49px; }
+    .support-row .row-icon { width: 26px; height: 26px; border-color: transparent; background: transparent; }
+    .support-row .row-start { gap: 14px; }
+    .support-row .row-name { color: #c1c1ca; font-size: 12px; }
+    .value { font: 11px/1.4 var(--mono); color: var(--sub); text-align: end; }
+    .audit { display: flex; align-items: center; gap: 6px; margin-top: 16px; color: var(--muted); font-size: 11px; }
+    .audit .icon { width: 13px; height: 13px; }
+    .setting-field { min-height: 34px; max-width: min(230px, 44%); padding: 5px 9px; border: 1px solid #3c3d45; border-radius: 5px; color: var(--text); background: #101115; }
+    input.setting-field { font: 12px/1.5 var(--mono); width: 210px; }
+    input[type="number"].setting-field { width: 74px; }
+    select.setting-field { font-size: 12px; }
+    .toggle { width: 31px; height: 18px; border-radius: 18px; padding: 2px; border: 1px solid #494a52; background: #34353b; flex: 0 0 auto; }
+    .toggle::before { content: ""; display: block; width: 12px; height: 12px; border-radius: 50%; background: #d2d1d9; }
+    .toggle[aria-checked="true"] { background: #b4a8eb; border-color: #c7bcf5; }
+    .toggle[aria-checked="true"]::before { transform: translateX(12px); background: #302b42; }
+    .form-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+    .details { border-top: 1px solid var(--soft-line); padding: 12px 0; }
+    .details summary { cursor: pointer; color: var(--text); font-weight: 530; }
+    .details p { margin-top: 6px; font-size: 13px; color: var(--sub); }
+    dialog { color: var(--text); background: #1b1c20; border: 1px solid #464650; border-radius: 11px; box-shadow: 0 24px 80px #000b; padding: 0; width: min(440px, calc(100% - 28px)); max-height: 86svh; }
+    dialog::backdrop { background: #07070baf; }
+    .dialog-body { padding: 20px; }
+    .dialog-head { display: flex; justify-content: space-between; gap: 14px; align-items: center; margin-bottom: 12px; }
+    .dialog-head h2 { font-size: 17px; letter-spacing: -.03em; }
+    .icon-btn { width: 29px; height: 29px; min-height: 29px; padding: 0; }
+    .icon-btn .icon { width: 15px; height: 15px; }
+    .dialog-copy { font-size: 12px; color: var(--sub); line-height: 1.7; }
+    .dialog-body .field { margin: 8px 0 10px; }
+    .menu-list { display: grid; gap: 2px; margin: 9px 0; }
+    .menu-item { display: flex; gap: 9px; align-items: center; padding: 8px 10px; width: 100%; text-align: start; border-radius: 5px; color: var(--sub); }
+    .menu-item:hover, .menu-item:focus-visible, .menu-item[aria-current="true"] { background: #303039; color: var(--text); }
+    .menu-item .trail { margin-left: auto; }
+    .dialog-foot { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+    .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+    .toast { position: fixed; z-index: 5; bottom: 20px; left: 50%; transform: translateX(-50%); background: #303037; color: var(--text); border: 1px solid #55535e; border-radius: 7px; padding: 7px 14px; max-width: calc(100% - 24px); font-size: 12px; box-shadow: 0 6px 22px #0007; }
+    @media (min-width: 1450px) { .workspace { min-height: 790px; } }
+    @media (max-width: 950px) {
+      body { padding: 16px; } .workspace { grid-template-columns: 190px minmax(0, 1fr); }
+      .brand { padding-inline: 15px; } .content { padding: 32px 27px 28px; }
+    }
+    @media (max-width: 700px) {
+      body { display: block; padding: 0; background: var(--page); }
+      .frame { width: 100%; min-height: 100svh; border: 0; border-radius: 0; }
+      .titlebar { position: sticky; z-index: 2; top: 0; height: 46px; gap: 10px; padding: 0 15px; }
+      .lights, aside { display: none; }
+      .mobile-nav { display: inline-flex; align-items: center; gap: 5px; color: var(--sub); padding: 5px 4px 5px 0; font-size: 12px; }
+      .mobile-nav .icon { width: 17px; height: 17px; }
+      .crumbs { border-left: 1px solid var(--line); padding-left: 10px; }
+      .crumbs > :not(b) { display: none; }
+      .workspace { display: block; min-height: 0; }
+      .content { max-width: 560px; padding: 27px clamp(17px, 4vw, 26px) 32px; }
+      .page-head { margin-bottom: 20px; } .pass { padding: 17px 16px; min-height: 151px; }
+      .pass-copy { width: 68%; } .art { width: 43%; } .pass h2 { font-size: 23px; }
+      .perks { gap: 5px 9px; } .sector { margin-top: 21px; }
+      .form-panel { padding: 14px; } .row { padding: 12px; gap: 8px; }
+      .input-line .primary, .field input, .row .secondary, .menu-item { min-height: 42px; }
+      .field input, input.setting-field, select.setting-field { font-size: 16px; }
+      .sector-head .link, .button-line .link { min-height: 32px; }
+    }
+    @media (max-width: 410px) {
+      .pass-copy { width: 76%; } .art { width: 38%; opacity: .86; } .perks { font-size: 10px; }
+      .input-line { flex-wrap: wrap; } .input-line .field { flex: 1 1 146px; } .primary { padding-inline: 10px; }
+      .row-icon { width: 28px; height: 28px; } .row-start { gap: 8px; }
+      .settings-form .row { flex-wrap: wrap; }
+      .settings-form input.setting-field:not([type="number"]) { width: 100%; max-width: 100%; }
+    }
+    @media (max-width: 340px) { .art { opacity: .4; } .pass-copy { width: 90%; } .input-line .primary { width: 100%; } }
+    .frame[data-view="entry"] .workspace { display: block; }
+    h1[tabindex="-1"]:focus { outline: none; }
+    .frame[data-view="entry"] aside, .frame[data-view="entry"] .mobile-nav { display: none; }
+    .frame[data-view="entry"] .content { max-width: 850px; padding-top: 35px; }
+    .entry-head { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-bottom: 20px; }
+    .entry-brand { display: flex; gap: 14px; align-items: center; }
+    .entry-brand .brand-mark { width: 44px; height: 44px; border-radius: 11px; }
+    .entry-brand .brand-mark .icon { width: 29px; height: 29px; }
+    .entry-head .page-lead { margin-top: 2px; }
+    .entry-group { margin-top: 17px; }
+    .entry-group h2 { margin-bottom: 6px; font-size: 12px; font-weight: 550; color: var(--sub); }
+    .entry-line { min-height: 48px; padding-block: 8px; text-decoration: none; }
+    .entry-line .row-icon { width: 28px; height: 28px; }
+    .entry-line .row-desc { margin-top: 0; }
+    .account-state { width: 8px; height: 8px; border-radius: 50%; background: #a59fae; box-shadow: 0 0 0 3px #a59fae17; }
+    .account-state[data-tone="ok"] { background: var(--green); box-shadow: 0 0 0 3px #99d6b313; }
+    .account-state[data-tone="warn"] { background: var(--amber); box-shadow: 0 0 0 3px #edc58a15; }
+    .status-nav { gap: 13px; min-height: 44px; }
+    .status-nav .truncate { display: grid; }
+    .status-nav strong { font-size: 13px; font-weight: 540; }
+    .status-nav small { color: var(--muted); font-size: 10px; }
+    a.nav-item { text-decoration: none; }
+    .nav-item > .arrow { margin-left: auto; width: 12px; height: 12px; color: var(--muted); }
+    .side-foot .nav-item { border-top: 1px solid var(--line); border-radius: 0; padding-top: 12px; min-height: 40px; }
+    .setting-search { position: relative; margin: 0 13px 4px; }
+    .setting-search .field { min-height: 33px; padding-inline: 8px; gap: 6px; background: #1b1c20; }
+    .setting-search .field input { height: 31px; font-size: 12px; }
+    .setting-search kbd { white-space: nowrap; }
+    .search-menu { position: absolute; z-index: 4; top: calc(100% + 5px); left: 0; width: min(340px, 80vw); max-height: min(420px, 55vh); overflow-y: auto; padding: 5px; border: 1px solid #46464e; border-radius: 7px; background: #202125; box-shadow: 0 10px 26px #0008; }
+    .search-match { display: flex; align-items: center; gap: 7px; width: 100%; padding: 8px 9px; text-align: start; color: var(--text); border-radius: 4px; font-size: 12px; }
+    .search-match .context { color: var(--muted); font-size: 11px; }
+    .search-match .icon { width: 10px; height: 10px; color: var(--muted); }
+    .search-match:hover, .search-match:focus-visible { background: #33333d; }
+    .search-menu p { padding: 7px 8px; }
+    .mobile-search { display: none; } .page-lead { text-wrap: pretty; }
+    .zone { margin-top: 12px; border: 1px solid var(--line); border-radius: 8px; background: #17181c; }
+    .zone > summary { padding: 14px 16px; display: flex; align-items: center; gap: 9px; list-style: none; cursor: pointer; min-height: 48px; }
+    .zone > summary::-webkit-details-marker { display: none; }
+    .zone > summary > .icon:first-child { color: #b6b1cb; width: 16px; height: 16px; }
+    .zone > summary strong { font-size: 14px; font-weight: 550; }
+    .zone-value { margin-left: auto; font-size: 11px; color: var(--muted); text-align: end; }
+    .zone > summary > .arrow { width: 12px; height: 12px; }
+    .zone[open] > summary > .arrow { transform: rotate(90deg); }
+    .zone[open] > summary { border-bottom: 1px solid var(--soft-line); }
+    .zone-body { padding: 2px 15px 9px; }
+    .zone-body .row-list, .zone-body .form-panel { border: 0; border-radius: 0; background: transparent; }
+    .zone-body .row { padding-inline: 1px; }
+    .zone-body .form-panel { padding: 8px 0 5px; }
+    .zone-tools { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 34px; color: var(--muted); font-size: 12px; }
+    .zone-tools .link { font-size: 12px; }
+    .pass + .zone { margin-top: 21px; }
+    .located { outline: 2px solid var(--lavender) !important; outline-offset: 2px; border-radius: 4px; }
+    .settings-form textarea.setting-field { font: 12px/1.5 var(--mono); resize: vertical; width: 210px; min-height: 56px; }
+    .settings-form .form-actions { margin-top: 14px; }
+    @media (max-width: 700px) {
+      .frame[data-view="entry"] .content { padding-top: 24px; }
+      .frame[data-view="entry"] .crumbs { border: 0; padding-left: 0; }
+      .frame[data-view="entry"] .crumbs > :first-child, .frame[data-view="entry"] .crumbs > :nth-child(2) { display: inline-block; }
+      .entry-head { align-items: flex-start; flex-wrap: wrap; gap: 12px; }
+      .mobile-search { display: block; margin: 12px 0 0; }
+      .mobile-search .field input { font-size: 16px; }
+      .search-menu { width: 100%; max-height: 45svh; }
+      .search-match { min-height: 42px; }
+      .zone > summary { padding: 12px; flex-wrap: wrap; gap: 7px; }
+      .zone-body { padding-inline: 11px; }
+      .zone-value { max-width: 55%; overflow-wrap: anywhere; }
+      .entry-line .row-desc { font-size: 11px; }
+    }
+    @media (max-width: 410px) {
+      .settings-form textarea.setting-field { width: 100%; max-width: 100%; font-size: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <header class="titlebar">
+      <span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
+      <button type="button" class="mobile-nav" data-action="entry"></button>
+      <span class="crumbs" id="crumbs"></span>
+      <button type="button" class="chrome-btn" data-action="preview"></button>
+    </header>
+    <div class="workspace">
+      <aside id="sidebar"></aside>
+      <main id="main"><div id="content" class="content"></div></main>
+    </div>
+  </div>
+  <dialog id="dialog" aria-labelledby="dialogTitle"><div id="dialogBody" class="dialog-body"></div></dialog>
+  <div id="notice" class="toast" role="status" hidden></div>
+  <script type="application/json" id="messages">{
+  "Account & license": "\u8d26\u53f7\u4e0e\u6388\u6743",
+  "Sign in with your purchase email to activate or restore access on this device.": "\u7528\u8d2d\u4e70\u65f6\u767b\u8bb0\u7684\u90ae\u7bb1\uff0c\u5728\u8fd9\u53f0\u8bbe\u5907\u4e0a\u6fc0\u6d3b\u6216\u6062\u590d\u4e70\u65ad\u6743\u76ca\u3002",
+  "General": "\u901a\u7528\u8bbe\u7f6e",
+  "Choose the interface language and how the sidebar opens.": "\u8bbe\u7f6e\u754c\u9762\u8bed\u8a00\uff0c\u4ee5\u53ca\u6253\u5f00\u7b14\u8bb0\u5e93\u65f6\u4fa7\u680f\u7684\u884c\u4e3a\u3002",
+  "Folders & notes": "\u76ee\u5f55\u4e0e\u7b14\u8bb0",
+  "Choose where Tangrow reads and writes inside your vault.": "\u9009\u62e9 Tangrow \u5728\u7b14\u8bb0\u5e93\u4e2d\u8bfb\u53d6\u7b14\u8bb0\u548c\u4fdd\u5b58\u65b0\u5185\u5bb9\u7684\u4f4d\u7f6e\u3002",
+  "Periodic notes": "\u5468\u671f\u7b14\u8bb0",
+  "Set the location, naming and template for your journals.": "\u8bbe\u7f6e\u65e5\u8bb0\u3001\u5468\u8bb0\u548c\u5176\u4ed6\u5468\u671f\u7b14\u8bb0\u7684\u76ee\u5f55\u3001\u547d\u540d\u683c\u5f0f\u4e0e\u6a21\u677f\u3002",
+  "Knowledge cards": "\u77e5\u8bc6\u5361\u7247",
+  "Manage card navigation, reviews and the card folder.": "\u7ba1\u7406\u77e5\u8bc6\u5bfc\u822a\u3001\u5361\u7247\u56de\u987e\u548c\u5361\u7247\u5b58\u653e\u76ee\u5f55\u3002",
+  "Focus timer": "\u4e13\u6ce8\u8ba1\u65f6",
+  "Set the starting duration of a focus session.": "\u8bbe\u7f6e\u6bcf\u6b21\u4e13\u6ce8\u5f00\u59cb\u65f6\u7684\u9ed8\u8ba4\u65f6\u957f\u3002",
+  "AI suggestions": "AI \u5efa\u8bae",
+  "Configure suggestions for quick capture and sorting.": "\u914d\u7f6e\u901f\u8bb0\u4e0e\u6574\u7406\u65f6\u4f7f\u7528\u7684 AI \u6a21\u578b\u3002",
+  "Help & updates": "\u5e2e\u52a9\u4e0e\u66f4\u65b0",
+  "Find purchase information, offline usage details and official releases.": "\u67e5\u770b\u8d2d\u4e70\u4e0e\u552e\u540e\u8bf4\u660e\uff0c\u4ee5\u53ca\u5b98\u65b9\u5b89\u88c5\u5305\u548c\u66f4\u65b0\u8bb0\u5f55\u3002",
+  "Personal": "\u4e2a\u4eba\u8bbe\u7f6e",
+  "Vault": "\u7b14\u8bb0\u5e93",
+  "Support": "\u5e2e\u52a9",
+  "Email sign-in": "\u90ae\u7bb1\u767b\u5f55",
+  "Redemption code": "\u5151\u6362\u7801",
+  "Free trial": "\u514d\u8d39\u8bd5\u7528",
+  "Refresh access": "\u5237\u65b0\u6743\u76ca",
+  "Interface language": "\u754c\u9762\u8bed\u8a00",
+  "Open sidebar on startup": "\u542f\u52a8\u65f6\u6253\u5f00\u4fa7\u680f",
+  "Inbox": "\u6536\u4ef6\u7bb1",
+  "Projects": "\u9879\u76ee",
+  "Task overview": "\u4efb\u52a1\u603b\u89c8\u7b14\u8bb0",
+  "Companion folder": "\u8f85\u52a9\u76ee\u5f55",
+  "Daily note": "\u65e5\u8bb0",
+  "Weekly note": "\u5468\u8bb0",
+  "Monthly note": "\u6708\u8bb0",
+  "Journal folder": "\u65e5\u8bb0\u76ee\u5f55",
+  "Journal template": "\u7b14\u8bb0\u6a21\u677f",
+  "Knowledge features": "\u542f\u7528\u77e5\u8bc6\u529f\u80fd",
+  "Card folder": "\u5361\u7247\u76ee\u5f55",
+  "Default duration": "\u9ed8\u8ba4\u4e13\u6ce8\u65f6\u957f",
+  "Minutes": "\u5206\u949f",
+  "Model": "\u6a21\u578b",
+  "API key": "API \u5bc6\u94a5",
+  "Refunds": "\u9000\u6b3e",
+  "Offline use": "\u652f\u6301\u79bb\u7ebf",
+  "Purchase & support": "\u8d2d\u4e70\u4e0e\u552e\u540e",
+  "Activated": "\u5df2\u6fc0\u6d3b",
+  "Trial in progress": "\u8bd5\u7528\u4e2d",
+  "Trial ended": "\u8bd5\u7528\u5df2\u7ed3\u675f",
+  "Awaiting activation": "\u5f85\u6fc0\u6d3b",
+  "Not activated": "\u672a\u6fc0\u6d3b",
+  "Local lifetime license": "\u672c\u5730\u529f\u80fd\u4e70\u65ad",
+  "One purchase includes every future local feature update.": "\u4e00\u6b21\u8d2d\u4e70\uff0c\u540e\u7eed\u6240\u6709\u672c\u5730\u529f\u80fd\u514d\u8d39\u66f4\u65b0\u3002",
+  "Restore on any device": "\u652f\u6301\u6362\u673a\u6062\u590d",
+  "Use purchase email": "\u4f7f\u7528\u8d2d\u4e70\u90ae\u7bb1",
+  "I have a redemption code": "\u6211\u6709\u5151\u6362\u7801",
+  "Sign out": "\u9000\u51fa\u767b\u5f55",
+  "Change email": "\u66f4\u6362\u90ae\u7bb1",
+  "Login account": "\u767b\u5f55\u8d26\u53f7",
+  "Email verified": "\u90ae\u7bb1\u5df2\u9a8c\u8bc1",
+  "Bind & activate": "\u7ed1\u5b9a\u5e76\u6fc0\u6d3b",
+  "Demo card: {card}": "\u6f14\u793a\u5151\u6362\u7801\u4e3a {card}",
+  "Back to order status": "\u8fd4\u56de\u8ba2\u5355\u72b6\u6001",
+  "No matching purchase yet": "\u6682\u672a\u67e5\u5230\u8d2d\u4e70\u8bb0\u5f55",
+  "If you have paid, refresh after your order has synced.": "\u5982\u5df2\u4ed8\u6b3e\uff0c\u8bf7\u5728\u8ba2\u5355\u540c\u6b65\u540e\u5237\u65b0\u6743\u76ca\u3002",
+  "Email verification code": "\u90ae\u7bb1\u9a8c\u8bc1\u7801",
+  "Verify email": "\u9a8c\u8bc1\u90ae\u7bb1",
+  "Local demo code {code} for {email}.": "\u672c\u5730\u6f14\u793a\u9a8c\u8bc1\u7801\u4e3a {code}\uff0c\u5f53\u524d\u90ae\u7bb1\u4e3a {email}\u3002",
+  "Resend code": "\u91cd\u65b0\u83b7\u53d6\u9a8c\u8bc1\u7801",
+  "Email to bind": "\u7528\u4e8e\u7ed1\u5b9a\u7684\u90ae\u7bb1",
+  "Purchase email": "\u8d2d\u4e70\u90ae\u7bb1",
+  "Get code": "\u83b7\u53d6\u9a8c\u8bc1\u7801",
+  "Verify your email first, then enter the code from your shop order.": "\u5148\u9a8c\u8bc1\u5e38\u7528\u90ae\u7bb1\uff0c\u518d\u8f93\u5165\u5e97\u94fa\u53d1\u653e\u7684\u5151\u6362\u7801\u3002",
+  "Device access": "\u672c\u673a\u6388\u6743",
+  "Trial & purchase": "\u8bd5\u7528\u4e0e\u8d2d\u4e70",
+  "Offline access is ready": "\u672c\u673a\u5df2\u53ef\u79bb\u7ebf\u4f7f\u7528",
+  "Last checked {time}": "\u4e0a\u6b21\u786e\u8ba4\u6743\u76ca\u65f6\u95f4\u4e3a {time}",
+  "24-hour free trial": "\u514d\u767b\u5f55\u8bd5\u7528 24 \u5c0f\u65f6",
+  "Ends {time} in this vault.": "\u5f53\u524d\u7b14\u8bb0\u5e93\u7684\u8bd5\u7528\u5c06\u4e8e {time} \u7ed3\u675f\u3002",
+  "Your notes remain available. You can still save or export existing drafts.": "\u5df2\u6709\u7b14\u8bb0\u7167\u5e38\u8bbf\u95ee\uff0c\u672a\u5b8c\u6210\u7684\u8349\u7a3f\u4ecd\u53ef\u4fdd\u5b58\u6216\u5bfc\u51fa\u3002",
+  "Starts when you click. Explore all local features without signing in.": "\u4ece\u70b9\u51fb\u65f6\u5f00\u59cb\u8ba1\u65f6\uff0c\u8bd5\u7528\u671f\u95f4\u53ef\u4f7f\u7528\u5168\u90e8\u672c\u5730\u529f\u80fd\u3002",
+  "Start trial": "\u5f00\u59cb\u8bd5\u7528",
+  "Activate": "\u524d\u5f80\u6fc0\u6d3b",
+  "Previewing settings": "\u6b63\u5728\u9884\u89c8\u8bbe\u7f6e",
+  "Start a trial or activate to edit local features. Language is always available.": "\u5f00\u59cb\u8bd5\u7528\u6216\u6fc0\u6d3b\u540e\u5373\u53ef\u8c03\u6574\u672c\u5730\u529f\u80fd\u3002\u754c\u9762\u8bed\u8a00\u968f\u65f6\u53ef\u6539\u3002",
+  "Preferences": "\u504f\u597d\u8bbe\u7f6e",
+  "Vault paths": "\u5e93\u5185\u8def\u5f84",
+  "Journal settings": "\u5468\u671f\u7b14\u8bb0\u8bbe\u7f6e",
+  "Card settings": "\u5361\u7247\u8bbe\u7f6e",
+  "Session settings": "\u4e13\u6ce8\u8bbe\u7f6e",
+  "Suggestion settings": "\u5efa\u8bae\u8bbe\u7f6e",
+  "Changes labels in this settings window.": "\u9009\u62e9\u63d2\u4ef6\u754c\u9762\u663e\u793a\u7684\u8bed\u8a00\u3002",
+  "Simplified Chinese": "\u7b80\u4f53\u4e2d\u6587",
+  "Show Tangrow when this vault opens.": "\u6253\u5f00\u5f53\u524d\u7b14\u8bb0\u5e93\u65f6\u663e\u793a Tangrow \u4fa7\u680f\u3002",
+  "Areas": "\u9886\u57df",
+  "Resources": "\u8d44\u6e90",
+  "Archive": "\u5f52\u6863",
+  "Quarterly note": "\u5b63\u8bb0",
+  "Yearly note": "\u5e74\u8bb0",
+  "Daily journal template": "\u65e5\u8bb0\u6a21\u677f",
+  "Show knowledge navigation, card reviews and reports.": "\u663e\u793a\u77e5\u8bc6\u5bfc\u822a\u3001\u5361\u7247\u56de\u987e\u548c\u5361\u7247\u62a5\u8868\u3002",
+  "Minutes per session, from 1 to 240.": "\u5355\u4f4d\u4e3a\u5206\u949f\uff0c\u53ef\u8bbe\u4e3a 1 \u81f3 240\u3002",
+  "Enable AI suggestions": "\u542f\u7528 AI \u5efa\u8bae",
+  "Suggestions use your Anthropic account when requested.": "\u624b\u52a8\u8bf7\u6c42\u5efa\u8bae\u65f6\u4f7f\u7528\u4f60\u7684 Anthropic \u8d26\u53f7\u3002",
+  "Applies to quick capture and sorting.": "\u7528\u4e8e\u5feb\u901f\u8bb0\u5f55\u4e0e\u6574\u7406\u3002",
+  "Key setup": "\u5bc6\u94a5\u8bbe\u7f6e",
+  "Your Anthropic usage is billed separately.": "Anthropic \u7684\u4f7f\u7528\u8d39\u7531\u670d\u52a1\u5546\u5355\u72ec\u6536\u53d6\u3002",
+  "Apply": "\u5e94\u7528",
+  "Optional": "\u9009\u586b",
+  "What does the purchase include?": "\u4e00\u6b21\u4e70\u65ad\u5305\u542b\u54ea\u4e9b\u529f\u80fd\uff1f",
+  "All current and future local features, including major versions. Third-party AI and API fees are separate.": "\u5305\u542b\u5f53\u524d\u548c\u672a\u6765\u7684\u5168\u90e8\u672c\u5730\u529f\u80fd\uff0c\u5305\u62ec\u8de8\u5927\u7248\u672c\u66f4\u65b0\u3002\u7b2c\u4e09\u65b9 AI \u548c API \u8d39\u7528\u7531\u5bf9\u5e94\u670d\u52a1\u5546\u6536\u53d6\u3002",
+  "Where can I purchase or request a refund?": "\u5728\u54ea\u91cc\u8d2d\u4e70\u6216\u529e\u7406\u552e\u540e\uff1f",
+  "Tangrow is sold through Xiaohongshu and Douyin. For a receipt, refund or email correction, contact the seller in the original order conversation.": "\u9996\u7248\u8d2d\u4e70\u6e20\u9053\u4e3a\u5c0f\u7ea2\u4e66\u548c\u6296\u97f3\u3002\u9000\u6b3e\u3001\u8ba2\u5355\u6838\u5bf9\u6216\u66f4\u6b63\u6fc0\u6d3b\u90ae\u7bb1\u65f6\uff0c\u53ef\u5728\u539f\u8ba2\u5355\u4f1a\u8bdd\u8054\u7cfb\u5e97\u94fa\u3002",
+  "Why is my email verified but access is pending?": "\u90ae\u7bb1\u5df2\u9a8c\u8bc1\uff0c\u4e3a\u4ec0\u4e48\u8fd8\u6ca1\u6fc0\u6d3b\uff1f",
+  "Use the email you registered with the shop. A new account may have to wait for the next order sync. Then choose Refresh access. If you received a redemption code, bind it here instead.": "\u8bf7\u6838\u5bf9\u5e97\u94fa\u767b\u8bb0\u7684\u90ae\u7bb1\u3002\u9996\u6b21\u9a8c\u8bc1\u53ef\u80fd\u9700\u8981\u7b49\u5f85\u4e0b\u4e00\u6b21\u8ba2\u5355\u540c\u6b65\uff0c\u4e4b\u540e\u70b9\u300c\u5237\u65b0\u6743\u76ca\u300d\u5373\u53ef\u3002\u6536\u5230\u5151\u6362\u7801\u7684\u8ba2\u5355\u53ef\u76f4\u63a5\u5728\u8d26\u53f7\u9875\u7ed1\u5b9a\u3002",
+  "Can I work offline or change devices?": "\u53ef\u4ee5\u79bb\u7ebf\u4f7f\u7528\u6216\u6362\u8bbe\u5907\u5417\uff1f",
+  "An activated vault works offline. On a new device or in a new vault, verify the original purchase email once to restore access.": "\u5f53\u524d\u7b14\u8bb0\u5e93\u6fc0\u6d3b\u540e\u53ef\u79bb\u7ebf\u4f7f\u7528\u3002\u6362\u8bbe\u5907\u3001\u91cd\u88c5\u6216\u65b0\u5efa\u7b14\u8bb0\u5e93\u65f6\uff0c\u8054\u7f51\u9a8c\u8bc1\u539f\u8d2d\u4e70\u90ae\u7bb1\u5373\u53ef\u6062\u590d\u3002",
+  "Official releases": "\u5b98\u65b9\u7248\u672c",
+  "Download the official ZIP and view release notes.": "\u4e0b\u8f7d\u5b98\u65b9 ZIP \u5b89\u88c5\u5305\uff0c\u67e5\u770b\u7248\u672c\u66f4\u65b0\u8bb0\u5f55\u3002",
+  "Settings sections": "\u8bbe\u7f6e\u5206\u533a",
+  "Search settings": "\u641c\u7d22\u8bbe\u7f6e",
+  "Not signed in": "\u672a\u767b\u5f55",
+  "Sign in or activate": "\u767b\u5f55\u6216\u6fc0\u6d3b",
+  "Plugin settings": "\u63d2\u4ef6\u8bbe\u7f6e",
+  "Settings": "\u8bbe\u7f6e",
+  "Preview states": "\u72b6\u6001\u9884\u89c8",
+  "First visit": "\u9996\u6b21\u6253\u5f00",
+  "Email verified, order pending": "\u5df2\u9a8c\u8bc1\uff0c\u8ba2\u5355\u5f85\u540c\u6b65",
+  "Lifetime access": "\u4e70\u65ad\u5df2\u6fc0\u6d3b",
+  "Close": "\u5173\u95ed",
+  "Find a setting or section": "\u641c\u7d22\u8bbe\u7f6e\u540d\u79f0\u6216\u5173\u952e\u8bcd",
+  "No matching settings.": "\u6ca1\u6709\u627e\u5230\u5339\u914d\u7684\u8bbe\u7f6e\u3002",
+  "This local prototype simulates verification and orders. No email is sent.": "\u6b64\u8bbe\u8ba1\u7a3f\u5728\u672c\u5730\u6a21\u62df\u767b\u5f55\u548c\u8ba2\u5355\u3002\u9a8c\u8bc1\u7801\u76f4\u63a5\u663e\u793a\u5728\u9875\u9762\u4e2d\u3002",
+  "Try {email} with code {code} for a paid order. Other emails start without a purchase.": "\u5df2\u8d2d\u793a\u4f8b\u90ae\u7bb1\u4e3a {email}\uff0c\u6f14\u793a\u9a8c\u8bc1\u7801\u4e3a {code}\u3002\u5176\u4ed6\u90ae\u7bb1\u53ef\u4f53\u9a8c\u5f85\u5f00\u901a\u6216\u5151\u6362\u7801\u7ed1\u5b9a\u3002",
+  "Simulate order sync": "\u6a21\u62df\u8fd9\u7b14\u8ba2\u5355\u5df2\u540c\u6b65",
+  "Sign out on this device?": "\u9000\u51fa\u8fd9\u53f0\u8bbe\u5907\u4e0a\u7684\u8d26\u53f7\uff1f",
+  "To restore purchased access here, you will need to verify your email online. Your original trial period is kept.": "\u518d\u6b21\u4f7f\u7528\u4e70\u65ad\u6743\u76ca\u65f6\uff0c\u9700\u8981\u8054\u7f51\u9a8c\u8bc1\u90ae\u7bb1\u3002\u8bd5\u7528\u6cbf\u7528\u539f\u6765\u7684\u622a\u6b62\u65f6\u95f4\u3002",
+  "Set your Anthropic key in the installed plugin. This design preview uses sample settings only.": "\u8bf7\u5728\u6b63\u5f0f\u63d2\u4ef6\u4e2d\u8bbe\u7f6e Anthropic \u5bc6\u94a5\u3002\u8bbe\u8ba1\u7a3f\u4f7f\u7528\u793a\u4f8b\u8bbe\u7f6e\u3002",
+  "Cancel": "\u53d6\u6d88",
+  "Done": "\u5b8c\u6210",
+  "Enter a valid email address.": "\u8bf7\u8f93\u5165\u6709\u6548\u7684\u90ae\u7bb1\u5730\u5740\u3002",
+  "The code has expired. Request another code.": "\u9a8c\u8bc1\u7801\u5df2\u8fc7\u671f\uff0c\u8bf7\u91cd\u65b0\u83b7\u53d6\u3002",
+  "Incorrect code. Check the six-digit demo code below the field.": "\u9a8c\u8bc1\u7801\u6709\u8bef\uff0c\u8bf7\u6838\u5bf9\u8f93\u5165\u6846\u4e0b\u65b9\u7684\u516d\u4f4d\u6f14\u793a\u7801\u3002",
+  "Purchase restored on this device.": "\u4e70\u65ad\u6743\u76ca\u5df2\u5728\u8fd9\u53f0\u8bbe\u5907\u4e0a\u6fc0\u6d3b\u3002",
+  "Email verified.": "\u90ae\u7bb1\u5df2\u9a8c\u8bc1\u3002",
+  "Check the demo redemption code and try again.": "\u5151\u6362\u7801\u6709\u8bef\uff0c\u8bf7\u6838\u5bf9\u6f14\u793a\u5151\u6362\u7801\u3002",
+  "This code is already bound to another email.": "\u8fd9\u4e2a\u5151\u6362\u7801\u5df2\u7ed1\u5b9a\u5176\u4ed6\u90ae\u7bb1\u3002",
+  "Enter a duration between 1 and 240.": "\u8bf7\u8f93\u5165 1 \u81f3 240 \u4e4b\u95f4\u7684\u6574\u6570\u5206\u949f\u3002",
+  "Enter a path or format relative to the vault.": "\u8bf7\u8f93\u5165\u5e93\u5185\u76f8\u5bf9\u8def\u5f84\u6216\u6709\u6548\u7684\u547d\u540d\u683c\u5f0f\u3002",
+  "Saved in this preview.": "\u5df2\u4fdd\u5b58\u5230\u672c\u6b21\u9884\u89c8\u3002",
+  "Signed out on this device.": "\u5df2\u9000\u51fa\u672c\u673a\u8d26\u53f7\u3002",
+  "Your 24-hour trial has started.": "24 \u5c0f\u65f6\u8bd5\u7528\u5df2\u5f00\u59cb\u3002",
+  "New demo code available.": "\u5df2\u91cd\u65b0\u751f\u6210\u6f14\u793a\u9a8c\u8bc1\u7801\u3002",
+  "Access is up to date.": "\u5df2\u786e\u8ba4\u672c\u673a\u4e70\u65ad\u6743\u76ca\u3002",
+  "No matching purchase yet. Check your email or wait for order sync.": "\u6682\u672a\u5339\u914d\u5230\u8ba2\u5355\uff0c\u8bf7\u6838\u5bf9\u90ae\u7bb1\u6216\u7a0d\u540e\u518d\u5237\u65b0\u3002",
+  "Sample order synced. Choose Refresh access.": "\u793a\u4f8b\u8ba2\u5355\u5df2\u540c\u6b65\uff0c\u53ef\u70b9\u51fb\u300c\u5237\u65b0\u6743\u76ca\u300d\u3002",
+  "Resend in {n}s": "{n} \u79d2\u540e\u53ef\u91cd\u53d1",
+  "{h}h {m}m left": "\u5269\u4f59 {h} \u5c0f\u65f6 {m} \u5206\u949f",
+  "Your email is used to verify identity and find purchase records.": "\u90ae\u7bb1\u7528\u4e8e\u9a8c\u8bc1\u8eab\u4efd\u548c\u627e\u56de\u8d2d\u4e70\u8bb0\u5f55\u3002",
+  "Obsidian plugin entry": "Obsidian \u63d2\u4ef6\u5165\u53e3",
+  "Tangrow plugin settings": "Tangrow \u63d2\u4ef6\u8bbe\u7f6e",
+  "Open the settings window or jump straight to a section from Obsidian.": "\u5728 Obsidian \u63d2\u4ef6\u5165\u53e3\u53ef\u76f4\u63a5\u9009\u62e9\u5206\u533a\uff0c\u4e5f\u53ef\u4ee5\u6253\u5f00\u5b8c\u6574\u7684\u8bbe\u7f6e\u7a97\u53e3\u3002",
+  "Open settings window": "\u6253\u5f00\u8bbe\u7f6e\u7a97\u53e3",
+  "Sign-in & updates": "\u767b\u5f55\u66f4\u65b0",
+  "Account & help": "\u8d26\u53f7\u4e0e\u5e2e\u52a9",
+  "Feature settings": "\u529f\u80fd\u8bbe\u7f6e",
+  "System settings": "\u7cfb\u7edf\u8bbe\u7f6e",
+  "Default settings": "\u9ed8\u8ba4\u8bbe\u7f6e",
+  "Language, startup behavior and periodic note defaults.": "\u8bbe\u7f6e\u754c\u9762\u8bed\u8a00\u3001\u542f\u52a8\u884c\u4e3a\u4e0e\u5468\u671f\u7b14\u8bb0\u7684\u9ed8\u8ba4\u683c\u5f0f\u3002",
+  "Sidebar widgets": "\u4fa7\u8fb9\u7ec4\u4ef6",
+  "Manage the focus timer and quick capture suggestions.": "\u8c03\u6574\u4fa7\u680f\u91cc\u7684\u4e13\u6ce8\u8ba1\u65f6\u548c\u901f\u8bb0 AI \u5efa\u8bae\u3002",
+  "View settings": "\u89c6\u56fe\u589e\u5f3a",
+  "Set note width, knowledge navigation and the card folder.": "\u8bbe\u7f6e\u7b14\u8bb0\u884c\u5bbd\u3001\u77e5\u8bc6\u5bfc\u822a\u548c\u5361\u7247\u76ee\u5f55\u3002",
+  "Report settings": "\u62a5\u8868\u8bbe\u7f6e",
+  "Adjust local editing activity, daily targets and excluded folders.": "\u8bbe\u7f6e\u672c\u5730\u7f16\u8f91\u7edf\u8ba1\u3001\u6bcf\u65e5\u6d3b\u8dc3\u76ee\u6807\u548c\u62a5\u8868\u6392\u9664\u76ee\u5f55\u3002",
+  "System maintenance": "\u7cfb\u7edf\u7ef4\u62a4",
+  "Manage companion files and tools for this vault.": "\u67e5\u770b\u8f85\u52a9\u76ee\u5f55\u3001\u6570\u636e\u5e93\u89c6\u56fe\u548c\u4ee3\u7406\u6307\u5357\u7684\u7ef4\u62a4\u64cd\u4f5c\u3002",
+  "Language & startup": "\u754c\u9762\u4e0e\u542f\u52a8",
+  "Periodic note formats": "\u5468\u671f\u7b14\u8bb0\u683c\u5f0f",
+  "Journal templates": "\u5468\u671f\u7b14\u8bb0\u6a21\u677f",
+  "Weekly journal template": "\u5468\u8bb0\u6a21\u677f",
+  "Monthly journal template": "\u6708\u8bb0\u6a21\u677f",
+  "Quarterly journal template": "\u5b63\u8bb0\u6a21\u677f",
+  "Yearly journal template": "\u5e74\u8bb0\u6a21\u677f",
+  "Task navigation": "\u4efb\u52a1\u5bfc\u822a",
+  "Reading layout": "\u9605\u8bfb\u884c\u5bbd",
+  "Wide notes by default": "\u9ed8\u8ba4\u52a0\u5bbd\u7b14\u8bb0",
+  "Use a wider reading column for notes in this vault.": "\u4e3a\u5f53\u524d\u5e93\u4e2d\u7684\u7b14\u8bb0\u4f7f\u7528\u8f83\u5bbd\u7684\u9605\u8bfb\u533a\u57df\u3002",
+  "Editing activity": "\u7f16\u8f91\u6d3b\u8dc3\u7edf\u8ba1",
+  "Track editing activity": "\u8bb0\u5f55\u7f16\u8f91\u6d3b\u8dc3\u65f6\u957f",
+  "Count active editing time on this device.": "\u7d2f\u79ef\u672c\u673a\u7f16\u8f91\u7b14\u8bb0\u7684\u6d3b\u8dc3\u65f6\u957f\u3002",
+  "Daily activity target": "\u6bcf\u65e5\u6d3b\u8dc3\u76ee\u6807",
+  "Whole minutes per day, from 1 to 1440.": "\u6bcf\u5929 1 \u81f3 1440 \u5206\u949f\uff0c\u4f7f\u7528\u6574\u6570\u3002",
+  "Report scope": "\u7edf\u8ba1\u8303\u56f4",
+  "Excluded folders": "\u6392\u9664\u76ee\u5f55",
+  "One vault-relative folder per line.": "\u6bcf\u884c\u4e00\u4e2a\u76f8\u5bf9\u4e8e\u7b14\u8bb0\u5e93\u7684\u76ee\u5f55\u3002",
+  "Companion files": "\u8f85\u52a9\u6587\u4ef6",
+  "Set up companion Bases": "\u521d\u59cb\u5316\u8f85\u52a9\u6570\u636e\u5e93",
+  "Create only missing companion views.": "\u8865\u9f50\u5f53\u524d\u8f85\u52a9\u76ee\u5f55\u4e2d\u7f3a\u5c11\u7684\u6570\u636e\u5e93\u89c6\u56fe\u3002",
+  "View setup details": "\u67e5\u770b\u521d\u59cb\u5316\u8bf4\u660e",
+  "Move companion folder": "\u8fc1\u79fb\u8f85\u52a9\u76ee\u5f55",
+  "Move the companion folder to 99-Tangrow after checking the destination.": "\u68c0\u67e5\u76ee\u6807\u76ee\u5f55\u540e\uff0c\u5c06\u8f85\u52a9\u76ee\u5f55\u8fc1\u79fb\u5230 99-Tangrow\u3002",
+  "View migration details": "\u67e5\u770b\u8fc1\u79fb\u8bf4\u660e",
+  "Agent guide": "\u4ee3\u7406\u6307\u5357",
+  "Open the companion guide for Claudian and other agents.": "\u6253\u5f00\u4f9b Claudian \u7b49\u4ee3\u7406\u4f7f\u7528\u7684\u5f53\u524d\u5e93\u6307\u5357\u3002",
+  "View guide details": "\u67e5\u770b\u6307\u5357\u8bf4\u660e",
+  "Account & device": "\u8d26\u53f7\u4e0e\u8bbe\u5907",
+  "Plugin updates": "\u63d2\u4ef6\u66f4\u65b0",
+  "View releases": "\u67e5\u770b\u53d1\u5e03\u7248\u672c",
+  "{n} configured": "\u5df2\u914d\u7f6e {n} \u9879",
+  "Five periods": "\u65e5\u3001\u5468\u3001\u6708\u3001\u5b63\u3001\u5e74",
+  "{n} min": "{n} \u5206\u949f",
+  "Enabled": "\u5df2\u5f00\u542f",
+  "Off": "\u5df2\u5173\u95ed",
+  "Wide": "\u52a0\u5bbd",
+  "Standard width": "\u6807\u51c6\u884c\u5bbd",
+  "{n} min / day": "\u6bcf\u65e5 {n} \u5206\u949f",
+  "{n} folders": "{n} \u4e2a\u76ee\u5f55",
+  "{n} settings": "{n} \u9879\u8bbe\u7f6e",
+  "User guide": "\u4f7f\u7528\u6559\u7a0b",
+  "Read the Tangrow guide on GitHub.": "\u6253\u5f00 GitHub \u4e0a\u7684 Tangrow \u4f7f\u7528\u8bf4\u660e\u3002",
+  "Back to plugin settings": "\u8fd4\u56de\u63d2\u4ef6\u8bbe\u7f6e",
+  "Community plugins": "\u7b2c\u4e09\u65b9\u63d2\u4ef6",
+  "Back to settings": "\u8fd4\u56de\u8bbe\u7f6e",
+  "Choose a section to open it in the settings window.": "\u9009\u62e9\u5206\u533a\uff0c\u8fdb\u5165 Tangrow \u8bbe\u7f6e\u4e2d\u5fc3\u3002",
+  "Pomodoro": "\u756a\u8304\u949f",
+  "Version": "\u7248\u672c",
+  "In the plugin this creates missing views in your companion folder and keeps existing views and notes.": "\u6b63\u5f0f\u63d2\u4ef6\u4f1a\u8865\u9f50\u8f85\u52a9\u76ee\u5f55\u4e2d\u7f3a\u5c11\u7684\u89c6\u56fe\uff0c\u5e76\u4fdd\u7559\u5df2\u6709\u89c6\u56fe\u4e0e\u7b14\u8bb0\u3002",
+  "The plugin checks that 99-Tangrow is available before moving files. This preview only shows the operation.": "\u6b63\u5f0f\u63d2\u4ef6\u4f1a\u5728\u8fc1\u79fb\u524d\u68c0\u67e5 99-Tangrow \u662f\u5426\u53ef\u7528\u3002\u8bbe\u8ba1\u7a3f\u4ec5\u5c55\u793a\u64cd\u4f5c\u8bf4\u660e\u3002",
+  "The plugin opens AGENTS.md in the companion folder or creates the guide if it is missing.": "\u6b63\u5f0f\u63d2\u4ef6\u4f1a\u6253\u5f00\u8f85\u52a9\u76ee\u5f55\u4e0b\u7684 AGENTS.md\u3002\u9996\u6b21\u4f7f\u7528\u65f6\u53ef\u521b\u5efa\u6b64\u6307\u5357\u3002",
+  "Enter a whole number from 1 to {n}.": "\u8bf7\u8f93\u5165 1 \u81f3 {n} \u4e4b\u95f4\u7684\u6574\u6570\u3002",
+  "Use up to 100 relative folder paths.": "\u8bf7\u586b\u5199\u6709\u6548\u7684\u5e93\u5185\u76f8\u5bf9\u76ee\u5f55\uff0c\u6700\u591a 100 \u4e2a\u3002",
+  "Email sign-in, device access and plugin updates": "\u90ae\u7bb1\u767b\u5f55\u3001\u8bbe\u5907\u6388\u6743\u4e0e\u63d2\u4ef6\u66f4\u65b0",
+  "Sign in to account": "\u767b\u5f55\u8d26\u53f7"
+}</script>
+  <script>
+    "use strict";
+    const copy = JSON.parse(document.querySelector("#messages").textContent);
+    const day = 24 * 60 * 60 * 1000;
+    const sampleEmail = "buyer@example.com";
+    const pendingEmail = "pending@example.com";
+    const sampleCode = "246810";
+    const sampleCard = "TGRW-7K3M-9P2D-6R5T-8X4W";
+    const releaseUrl = "https://github.com/tangwz/tangrow/releases";
+    const guideUrl = "https://github.com/tangwz/tangrow#readme";
+    const version = "0.4.0";
+    const defaults = {
+      lang: "zh-CN", autoOpen: true, knowledge: true, focus: 25, ai: false, model: "claude-opus-5-5",
+      support: "99-Tangrow", inbox: "00-Inbox", projects: "20-Project", areas: "30-Area", resources: "40-Resources",
+      archive: "90-Archive", journal: "10-Life(Meta)/13-Journal", cards: "50-Zettel", tasks: "10-Life(Meta)/12-Tasks.md",
+      daily: "YYYY/[Daily]/YYYY-MM-DD", weekly: "GGGG/[Weekly]/GGGG-[W]WW", monthly: "YYYY/[Monthly]/YYYY-MM",
+      quarterly: "YYYY/[Quarterly]/YYYY-[Q]Q", yearly: "YYYY/[Yearly]/YYYY", template: "",
+      weeklyTemplate: "", monthlyTemplate: "", quarterlyTemplate: "", yearlyTemplate: "",
+      wide: false, trackEditing: true, dailyGoal: 60, excluded: ""
+    };
+    const prefs = { ...defaults };
+    const demo = {
+      page: "entry", trialStart: 0, email: "", draft: "", requested: "", codeUntil: 0, resendAt: 0,
+      redeem: false, active: false, paid: new Set([sampleEmail]), cardOwner: "", checkedAt: 0
+    };
+    const sessionKey = "tangrow.design.settings.v2.session";
+    try {
+      const value = Number(sessionStorage.getItem("tangrow.design.settings.v2.trial"));
+      if (Number.isFinite(value) && value > 0) demo.trialStart = value;
+      const saved = JSON.parse(sessionStorage.getItem(sessionKey) || "null");
+      if (saved && typeof saved === "object") {
+        if (saved.orderSynced === true) demo.paid.add(pendingEmail);
+        if (typeof saved.cardOwner === "string") demo.cardOwner = saved.cardOwner;
+        if (typeof saved.email === "string") demo.email = saved.email;
+        demo.active = Boolean(demo.email && saved.active === true && (demo.paid.has(demo.email) || demo.cardOwner === demo.email));
+        if (Number.isFinite(saved.checkedAt)) demo.checkedAt = saved.checkedAt;
+      }
+    } catch {}
+    function saveSession() {
+      try {
+        sessionStorage.setItem(sessionKey, JSON.stringify({
+          email: demo.email, active: demo.active, cardOwner: demo.cardOwner,
+          orderSynced: demo.paid.has(pendingEmail), checkedAt: demo.checkedAt
+        }));
+      } catch {}
+    }
+    const pages = [
+      { id: "account", title: "Sign-in & updates", lead: "Sign in with your purchase email to activate or restore access on this device.", icon: "user", group: "Account & help" },
+      { id: "general", title: "Default settings", lead: "Language, startup behavior and periodic note defaults.", icon: "sliders", group: "Feature settings" },
+      { id: "folders", title: "Folders & notes", lead: "Choose where Tangrow reads and writes inside your vault.", icon: "folder", group: "Feature settings" },
+      { id: "widgets", title: "Sidebar widgets", lead: "Manage the focus timer and quick capture suggestions.", icon: "timer", group: "Feature settings" },
+      { id: "views", title: "View settings", lead: "Set note width, knowledge navigation and the card folder.", icon: "layers", group: "Feature settings" },
+      { id: "reports", title: "Report settings", lead: "Adjust local editing activity, daily targets and excluded folders.", icon: "calendar", group: "Feature settings" },
+      { id: "maintenance", title: "System maintenance", lead: "Manage companion files and tools for this vault.", icon: "shield", group: "System settings" },
+      { id: "help", title: "Purchase & support", lead: "Find purchase information, offline usage details and official releases.", icon: "help", group: "Account & help" }
+    ];
+    const pageById = new Map(pages.map(page => [page.id, page]));
+    const journalPeriods = [
+      ["daily","Daily note","template","Daily journal template"], ["weekly","Weekly note","weeklyTemplate","Weekly journal template"],
+      ["monthly","Monthly note","monthlyTemplate","Monthly journal template"], ["quarterly","Quarterly note","quarterlyTemplate","Quarterly journal template"],
+      ["yearly","Yearly note","yearlyTemplate","Yearly journal template"]
+    ];
+    function setting(key, label, kind = "text", desc = "", choices = []) { return {key,label,kind,desc,choices}; }
+    const prefGroups = {
+      general: [
+        { id:"startup", title:"Language & startup", icon:"sliders", fields:[
+          setting("lang","Interface language","select","Changes labels in this settings window.",[["zh-CN","Simplified Chinese"],["en","English"]]),
+          setting("autoOpen","Open sidebar on startup","toggle","Show Tangrow when this vault opens.")] },
+        { id:"formats", title:"Periodic note formats", icon:"calendar", fields:[
+          setting("journal","Journal folder"), ...journalPeriods.map(([key,label]) => setting(key,label))] },
+        { id:"templates", title:"Journal templates", icon:"file", fields:journalPeriods.map(([, ,key,label]) => setting(key,label,"optional")) }
+      ],
+      folders: [
+        { id:"paths", title:"Vault paths", icon:"folder", fields:[["inbox","Inbox"],["projects","Projects"],["areas","Areas"],["resources","Resources"],["archive","Archive"],["support","Companion folder"]].map(([key,label]) => setting(key,label)) },
+        { id:"tasks", title:"Task navigation", icon:"file", fields:[setting("tasks","Task overview")] }
+      ],
+      widgets: [
+        { id:"timer", title:"Focus timer", icon:"timer", fields:[setting("focus","Default duration","number","Minutes per session, from 1 to 240.")] },
+        { id:"assist", title:"AI suggestions", icon:"sparkle", fields:[
+          setting("ai","Enable AI suggestions","toggle","Suggestions use your Anthropic account when requested."),
+          setting("model","Model","select","Applies to quick capture and sorting.",["claude-opus-5-5","claude-sonnet-5-5","claude-haiku-5-5"].map(value => [value,value])),
+          setting("key","API key","action","Your Anthropic usage is billed separately.",["Key setup","key-info"])] }
+      ],
+      views: [
+        { id:"workspace", title:"Reading layout", icon:"device", fields:[setting("wide","Wide notes by default","toggle","Use a wider reading column for notes in this vault.")] },
+        { id:"cards", title:"Knowledge cards", icon:"layers", fields:[
+          setting("knowledge","Knowledge features","toggle","Show knowledge navigation, card reviews and reports."),setting("cards","Card folder")] }
+      ],
+      reports: [
+        { id:"activity", title:"Editing activity", icon:"clock", fields:[
+          setting("trackEditing","Track editing activity","toggle","Count active editing time on this device."),
+          setting("dailyGoal","Daily activity target","number","Whole minutes per day, from 1 to 1440.")] },
+        { id:"coverage", title:"Report scope", icon:"folder", fields:[setting("excluded","Excluded folders","list","One vault-relative folder per line.")] }
+      ],
+      maintenance: [
+        { id:"files", title:"Companion files", icon:"folder", fields:[
+          setting("bases","Set up companion Bases","action","Create only missing companion views.",["View setup details","bases-info"]),
+          setting("migrate","Move companion folder","action","Move the companion folder to 99-Tangrow after checking the destination.",["View migration details","migrate-info"])] },
+        { id:"guide", title:"Agent guide", icon:"book", fields:[
+          setting("guide","Agent guide","action","Open the companion guide for Claudian and other agents.",["View guide details","guide-info"])] }
+      ]
+    };
+    const fieldByKey = new Map(Object.values(prefGroups).flat().flatMap(group => group.fields.map(field => [field.key, field])));
+    const openZones = new Map();
+    const scrollOffsets = new Map();
+    let highlightTimer;
+    const $ = (selector) => document.querySelector(selector);
+    const dialog = $("#dialog");
+    const content = $("#content");
+    let artObserver;
+    let noticeTimer;
+
+    function t(key, params = {}) {
+      const value = prefs.lang === "en" ? key : (copy[key] ?? key);
+      return value.replace(/\{(\w+)\}/g, (match, name) => String(params[name] ?? match));
+    }
+    function element(tag, className = "", value = "") {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (value !== "") node.textContent = value;
+      return node;
+    }
+    const paths = {
+      sprout: "M11.5 21V15C11.5 10 14 6 20.6 3.5C21 10 18 14.4 12 14.5 M11.4 16.5C6 16.5 3.1 13 3.2 7.6C8.2 7.7 11.4 10.6 11.4 15.7 M12 14.5L17.3 8.7 M10.8 15.7L6.8 11.4",
+      user: "M15.5 8a3.5 3.5 0 1 1-7 0a3.5 3.5 0 1 1 7 0 M4.5 20v-1.3c0-2.8 3.4-4.7 7.5-4.7s7.5 1.9 7.5 4.7V20",
+      sliders: "M4 7h5m5 0h6M4 17h10m5 0h1 M14 7a2.5 2.5 0 1 1-5 0a2.5 2.5 0 1 1 5 0 M19 17a2.5 2.5 0 1 1-5 0a2.5 2.5 0 1 1 5 0",
+      folder: "M3 7V5.8q0-1.3 1.4-1.3h5l2.2 2.4h7.8q1.6 0 1.6 1.5v9.8q0 1.3-1.4 1.3H4.5Q3 19.5 3 18Z",
+      calendar: "M5 5.5h14q1.5 0 1.5 1.5v12q0 1.5-1.5 1.5H5q-1.5 0-1.5-1.5V7q0-1.5 1.5-1.5 M7.7 3v5m8.6-5v5M3.5 10.5h17M7 14h3m3 0h3",
+      layers: "m3 8 9-5 9 5-9 5z M3 12l9 5 9-5 M3 16l9 5 9-5",
+      timer: "M19 13.7a7 7 0 1 1-14 0a7 7 0 1 1 14 0 M9.5 3h5M12 6.5v-3m0 10.2 3-3m2.8-2.8 1.6-1.6",
+      clock: "M21 12a9 9 0 1 1-18 0a9 9 0 1 1 18 0 M12 6.7V12l3.6 2.3",
+      sparkle: "m12 3 1.9 6.9L21 12l-7.1 2.1L12 21l-2-6.9L3 12l7-2.1z M19 3v3m-1.5-1.5h3",
+      help: "M21 12a9 9 0 1 1-18 0a9 9 0 1 1 18 0 M9.2 9a2.9 2.9 0 1 1 4.9 2c-1.6 1.2-2 1.5-2 3.1 M12 17h.01",
+      search: "M16.5 10.4a6.3 6.3 0 1 1-12.6 0a6.3 6.3 0 1 1 12.6 0 M15 15l5.3 5.3",
+      key: "M13 9a5.1 5.1 0 1 1 3 4.7l-6.7 6.6H5v-3.5l2-2h2v-2l4.4-4 M18.2 8.5h.1",
+      mail: "M4 5.5h16a1.4 1.4 0 0 1 1.4 1.4v10.2a1.4 1.4 0 0 1-1.4 1.4H4a1.4 1.4 0 0 1-1.4-1.4V6.9A1.4 1.4 0 0 1 4 5.5z M3.5 7l8.5 6.5L20.5 7",
+      arrow: "M4 12h15m-5.5-5.5 5.5 5.5-5.5 5.5", chevron: "m9 5 7 7-7 7", down: "m5.5 9 6.5 6.5L18.5 9",
+      external: "M12 5h7v7m0-7L9 15 M9 6H5a1.2 1.2 0 0 0-1.2 1.2v12A1.2 1.2 0 0 0 5 20.4h12a1.2 1.2 0 0 0 1.2-1.2v-4",
+      device: "M3.5 4.5h17v12h-17z M12 16.5v3m-4.5 0h9",
+      sync: "M19 8.5A7.8 7.8 0 0 0 5.5 6.8L3.6 9 M3.6 4.5V9h4.5 M5 15.5a7.8 7.8 0 0 0 13.5 1.7l1.9-2.2m0 4.5V15h-4.5",
+      check: "m4.5 12.4 4.7 4.7L19.5 6.9", shield: "M12 2.7c2.7 2 5.4 2.8 8 3.1v6c0 4.2-3.6 7.6-8 9.5-4.4-1.9-8-5.3-8-9.5v-6c2.6-.3 5.3-1.1 8-3.1z M8.5 12l2.4 2.4 4.7-4.8",
+      tag: "M3.5 4h8l9 9-7.5 7.5-9.5-9.2z M8 8.2h.1", x: "M6 6l12 12m0-12L6 18",
+      menu: "M3.5 5h17v14h-17z M9 5v14", switcher: "M3 5.5h18v13H3z M10 5.5v13m3-8.7h4m-4 3.4h2.5",
+      book: "M3 5c3-.7 6-.3 9 1.2C15 4.7 18 4.3 21 5v14c-3-.7-6-.3-9 1.2C9 18.7 6 18.3 3 19z M12 6.2v14",
+      dots: "M5 12h.2m6.7 0h.2m6.7 0h.2", code: "M8 5 6.5 19M16 5l-1.5 14M3 9h17M2.5 15h17",
+      logout: "M10 4H4v16h6 M8 12h12m-5-5 5 5-5 5", language: "M21 12a9 9 0 1 1-18 0a9 9 0 1 1 18 0M3 12h18m-9-9c5.6 4.9 5.6 13.1 0 18-5.6-4.9-5.6-13.1 0-18",
+      lock: "M5 10h14v10H5z M8 10V7a4 4 0 1 1 8 0v3", file: "M5 3h9l5 5v13H5z M14 3v5h5m-10 5h6m-6 3.5h6"
+    };
+    const iconMasks = new Map();
+    function icon(name, extra = "") {
+      if (!iconMasks.has(name)) {
+        const tile = document.createElement("canvas");
+        tile.width = tile.height = 64;
+        const c = tile.getContext("2d");
+        c.scale(64 / 24, 64 / 24);
+        Object.assign(c, { lineWidth: name === "sprout" ? 1.85 : 1.65, lineCap: "round", lineJoin: "round", strokeStyle: "white" });
+        c.stroke(new Path2D(paths[name]));
+        iconMasks.set(name, "url(" + tile.toDataURL() + ")");
+      }
+      const node = element("span", "icon " + extra);
+      node.setAttribute("aria-hidden", "true");
+      node.style.cssText = "background:currentColor;mask:" + iconMasks.get(name) + " center/contain no-repeat;-webkit-mask:" + iconMasks.get(name) + " center/contain no-repeat";
+      return node;
+    }
+    function button(label, action, cls = "", first = "", last = "") {
+      const b = element("button", cls);
+      b.type = "button";
+      b.dataset.action = action;
+      if (first) b.append(icon(first));
+      if (label) b.append(element("span", "", t(label)));
+      if (last) b.append(icon(last));
+      return b;
+    }
+    function rowHead(symbol, title, detail = "") {
+      const start = element("div", "row-start");
+      const mark = element("span", "row-icon");
+      mark.append(icon(symbol));
+      const text = element("div", "truncate");
+      text.append(element("div", "row-name", title));
+      if (detail) text.append(element("p", "row-desc", detail));
+      start.append(mark, text);
+      return start;
+    }
+    function section(title, right) {
+      const block = element("section", "sector");
+      const head = element("div", "sector-head");
+      head.append(element("h2", "", t(title)));
+      if (right) head.append(right);
+      block.append(head); content.append(block);
+      return block;
+    }
+    function zone(parent, id, label, symbol, caption, initiallyOpen = false) {
+      const container = element("details","zone");
+      container.id = "zone-" + id;
+      const key = demo.page + "/" + id;
+      container.open = openZones.get(key) ?? initiallyOpen;
+      const head = element("summary");
+      head.append(icon(symbol),element("strong","",t(label)),element("span","zone-value",caption),icon("chevron","arrow"));
+      const body = element("div","zone-body");
+      container.append(head,body); parent.append(container);
+      container.addEventListener("toggle", () => { if (container.isConnected) openZones.set(key, container.open); });
+      return body;
+    }
+    function externalLink(url, className) {
+      const a = element("a",className); a.href=url; a.target="_blank"; a.rel="noopener noreferrer"; return a;
+    }
+    function statusDot() {
+      const node = element("span","account-state"); node.dataset.tone=status()[1]; node.setAttribute("aria-hidden","true"); return node;
+    }
+    function dateText(value) {
+      return new Intl.DateTimeFormat(prefs.lang, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(value);
+    }
+    function trialState() {
+      if (!demo.trialStart) return "idle";
+      return Date.now() < demo.trialStart + day ? "running" : "expired";
+    }
+    function status() {
+      if (demo.active) return ["Activated", "ok"];
+      if (trialState() === "running") return ["Trial in progress", "ok"];
+      if (trialState() === "expired") return ["Trial ended", "warn"];
+      if (demo.email) return ["Awaiting activation", "warn"];
+      return ["Not activated", ""];
+    }
+    function setTrial(value) {
+      demo.trialStart = value;
+      try { sessionStorage.setItem("tangrow.design.settings.v2.trial", String(value)); } catch {}
+    }
+    function drawPass(canvas) {
+      const box = canvas.getBoundingClientRect();
+      if (!box.width || !box.height) return;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.round(box.width * dpr); canvas.height = Math.round(box.height * dpr);
+      const c = canvas.getContext("2d");
+      c.scale(dpr, dpr);
+      const scale = Math.min(box.width / 290, box.height / 162);
+      c.translate(box.width * .53 - 155 * scale, box.height * .53 - 83 * scale);
+      c.scale(scale, scale);
+      const haze = c.createRadialGradient(163, 78, 8, 163, 78, 165);
+      haze.addColorStop(0, "#6f609026"); haze.addColorStop(1, "#6f609000");
+      c.fillStyle = haze; c.fillRect(-60, -55, 440, 270);
+      function stroke(points, color, weight) {
+        c.beginPath(); points.forEach(([x,y], index) => index ? c.lineTo(x,y) : c.moveTo(x,y));
+        c.strokeStyle = color; c.lineWidth = weight; c.stroke();
+      }
+      for (let n = -9; n <= 14; n++) {
+        const x = n * 22;
+        stroke([[x-50,174],[x+162,58]], "rgba(164,158,194,.095)", .55);
+        stroke([[x-50,73],[x+151,178]], "rgba(164,158,194,.085)", .55);
+      }
+      function leaf(start, end, span, bend, fold, colors) {
+        const dx = end[0] - start[0], dy = end[1] - start[1], len = Math.hypot(dx, dy);
+        function point(u, v) {
+          const arch = Math.pow(Math.max(0, Math.sin(u * Math.PI)), .85);
+          const lateral = arch * (bend + span * v);
+          return [start[0] + dx*u - dy/len*lateral, start[1] + dy*u + dx/len*lateral - arch*(1-v*v)*fold];
+        }
+        function line(f) { return Array.from({ length: 41 }, (_, i) => f(i / 40)); }
+        const top = line(u => point(u, -1)), bottom = line(u => point(1-u, 1));
+        c.beginPath(); [...top, ...bottom].forEach(([x,y], i) => i ? c.lineTo(x,y) : c.moveTo(x,y));
+        const fill = c.createLinearGradient(start[0], start[1], end[0], end[1]);
+        fill.addColorStop(0, colors[0]); fill.addColorStop(.55, colors[1]); fill.addColorStop(1, colors[2]);
+        c.closePath(); c.fillStyle = fill; c.fill();
+        for (let i = -5; i <= 5; i++) stroke(line(u => point(u,i/5)), colors[3], i === 0 ? 1.05 : .55);
+        for (let i = 1; i < 33; i++) {
+          const u = i/33;
+          stroke(line(v => point(u + (1-u)*u*.44*Math.abs(v*2-1), v*2-1)), colors[4], .70);
+        }
+        stroke(top, colors[5], .95); stroke(bottom, colors[3], .8);
+      }
+      c.beginPath(); c.moveTo(143,151); c.bezierCurveTo(145,137,149,124,162,113);
+      c.moveTo(148,137); c.quadraticCurveTo(144,123,132,113); c.strokeStyle = "#b5a8db"; c.lineWidth = 1.4; c.stroke();
+      leaf([142,125], [51,57], 21, 3, 11, ["#272332","#51495f","#403847","#b6a6c389","#cfc0d19c","#d6c7dc"]);
+      leaf([151,129], [251,23], 30, -7, 17, ["#262336","#544866","#494052","#c6b7e19c","#e0cffaab","#eee1ff"]);
+    }
+    function renderPass() {
+      const pass = element("div", "pass"), body = element("div", "pass-copy");
+      const [name,tone] = status();
+      const chip = element("span", "status", t(name)); chip.dataset.tone = tone;
+      body.append(chip, element("h2", "", t("Local lifetime license")), element("p", "", t("One purchase includes every future local feature update.")));
+      const perks = element("div", "perks");
+      for (const [symbol, key] of [["device","Offline use"],["sync","Restore on any device"]]) {
+        const item = element("span"); item.append(icon(symbol), t(key)); perks.append(item);
+      }
+      body.append(perks);
+      const art = element("canvas", "art"); art.setAttribute("aria-hidden", "true");
+      pass.append(art, body); content.append(pass);
+      drawPass(art);
+      if (window.ResizeObserver) { artObserver = new ResizeObserver(() => drawPass(art)); artObserver.observe(art); }
+    }
+    function field(form, id, label, symbol, options, actionLabel) {
+      const lab = element("label", "field-label", t(label)); lab.htmlFor = id;
+      const line = element("div", "input-line"), wrap = element("div", "field"), input = element("input");
+      input.id = id; input.name = id; Object.assign(input, options);
+      input.setAttribute("aria-describedby", "formHint formMessage");
+      wrap.append(icon(symbol), input);
+      const submit = button(actionLabel, "", "primary", "", "arrow");
+      submit.type = "submit"; delete submit.dataset.action;
+      line.append(wrap, submit); form.append(lab, line); return input;
+    }
+    function formNote(form, hint) {
+      const p = element("p", "field-hint", hint); p.id = "formHint";
+      const msg = element("p", "result", ""); msg.id = "formMessage"; msg.setAttribute("role","status"); msg.hidden = true;
+      form.append(p, msg);
+    }
+    function formMessage(key, invalid = false) {
+      const form = $("#accountForm");
+      if (!form) return;
+      const node = $("#formMessage");
+      node.textContent = t(key); node.hidden = false; node.classList.toggle("error", invalid);
+      const input = form.querySelector("input");
+      if (input) { input.setAttribute("aria-invalid", String(invalid)); if (invalid) input.focus(); }
+    }
+    function authForm() {
+      const signed = Boolean(demo.email);
+      let secondary;
+      if (!signed && !demo.requested) {
+        secondary = demo.redeem ? button("Use purchase email", "toggle-redeem", "link", "mail") : button("I have a redemption code", "toggle-redeem", "link", "key");
+      } else if (signed) {
+        secondary = button("Sign out", "logout", "link", "logout");
+      } else {
+        secondary = button("Change email", "change-email", "link");
+      }
+      const block = zone(content,"auth","Account & device","user",demo.email || t("Not signed in"),true);
+      const tools = element("div","zone-tools");
+      tools.append(element("span","",t(signed ? "Login account" : "Email sign-in")),secondary);
+      block.append(tools);
+      if (signed) {
+        const account = element("div", "row-list");
+        const row = element("div", "row");
+        row.id = "verified-email"; row.tabIndex = -1;
+        row.append(rowHead("mail", demo.email, t("Email verified")), icon("check"));
+        account.append(row); block.append(account);
+        if (demo.active) return;
+      }
+      const form = element("form", "form-panel"); form.id = "accountForm"; form.noValidate = true;
+      if (signed && demo.redeem) {
+        form.style.marginTop = "9px";
+        field(form, "cardValue", "Redemption code", "key", { type: "text", placeholder: "TGRW-XXXX-XXXX-XXXX-XXXX", maxLength: 30, spellcheck: false, autocomplete: "off" }, "Bind & activate");
+        formNote(form, t("Demo card: {card}", { card: sampleCard }));
+        form.append(button("Back to order status", "toggle-redeem", "link"));
+      } else if (signed) {
+        const row = element("div", "row"), panel = element("div", "row-list");
+        panel.style.marginTop = "9px";
+        row.append(rowHead("clock", t("No matching purchase yet"), t("If you have paid, refresh after your order has synced.")), button("Refresh access", "refresh", "secondary", "sync"));
+        const other = button("", "toggle-redeem", "row row-link support-row");
+        other.append(rowHead("key", t("I have a redemption code")), icon("chevron", "arrow"));
+        panel.append(row, other); block.append(panel);
+        return;
+      } else if (demo.requested) {
+        field(form, "otpValue", "Email verification code", "code", { type: "text", className: "code-input", inputMode: "numeric", maxLength: 6, autocomplete: "one-time-code", placeholder: "000000" }, "Verify email");
+        formNote(form, t("Local demo code {code} for {email}.", { code: sampleCode, email: demo.requested }));
+        const resend = button("Resend code", "resend", "link"); resend.id = "resend";
+        form.append(resend);
+      } else {
+        field(form, "emailValue", demo.redeem ? "Email to bind" : "Purchase email", "mail", { type: "email", autocomplete: "off", inputMode: "email", spellcheck: false, maxLength: 254, placeholder: sampleEmail, value: demo.draft }, "Get code");
+        formNote(form, t(demo.redeem ? "Verify your email first, then enter the code from your shop order." : "Your email is used to verify identity and find purchase records."));
+      }
+      block.append(form);
+    }
+    function accountPage() {
+      renderPass(); authForm();
+      const block = zone(content,"access",demo.active ? "Device access" : "Trial & purchase","shield",t(status()[0]),!demo.active);
+      const list = element("div", "row-list"), row = element("div", "row");
+      if (demo.active) {
+        row.append(rowHead("shield", t("Offline access is ready"), t("Last checked {time}", { time: dateText(demo.checkedAt) })), button("Refresh access", "refresh", "secondary", "sync"));
+      } else {
+        const state = trialState();
+        const name = state === "running" ? "Trial in progress" : state === "expired" ? "Trial ended" : "24-hour free trial";
+        const desc = state === "running" ? t("Ends {time} in this vault.", { time: dateText(demo.trialStart + day) })
+          : state === "expired" ? t("Your notes remain available. You can still save or export existing drafts.") : t("Starts when you click. Explore all local features without signing in.");
+        row.append(rowHead("clock", t(name), desc));
+        if (state === "idle") row.append(button("Start trial", "start-trial", "secondary"));
+        if (state === "running") { const remaining = element("span","value"); remaining.id = "remaining"; row.append(remaining); }
+        if (state === "expired") row.append(button("Activate", "account-focus", "secondary"));
+      }
+      const support = button("", "go-help", "row row-link support-row");
+      support.append(rowHead("book", t("Purchase & support")), icon("chevron","arrow"));
+      list.append(row, support); block.append(list);
+      const updates = zone(content,"updates","Plugin updates","sync","v" + version);
+      const link = externalLink(releaseUrl,"row row-link entry-line");
+      link.id="release-link"; link.append(rowHead("tag",t("View releases"),t("Download the official ZIP and view release notes.")),icon("external","arrow"));
+      updates.append(link);
+    }
+    function accessAllowed() { return demo.active || trialState() === "running"; }
+    function prefRow(list, label, desc, control) {
+      const row = element("div","row"), name = element("div","truncate");
+      row.dataset.field = control.id; row.tabIndex = -1;
+      const title = element("label","row-name",t(label)); title.htmlFor = control.id;
+      name.append(title);
+      if (desc) name.append(element("p","row-desc",t(desc)));
+      row.append(name, control); list.append(row);
+    }
+    function toggle(list, key, label, desc) {
+      const control = button("", "toggle-pref", "toggle");
+      control.dataset.pref = key; control.id = "pref-" + key;
+      control.setAttribute("role","switch"); control.setAttribute("aria-label", t(label));
+      control.setAttribute("aria-checked", String(prefs[key])); control.disabled = !accessAllowed();
+      prefRow(list, label, desc, control);
+    }
+    function selectPref(list, key, label, desc, options) {
+      const select = element("select", "setting-field"); select.id = "pref-" + key; select.dataset.select = key;
+      options.forEach(([value, title]) => { const o = element("option","",t(title)); o.value = value; select.append(o); });
+      select.value = prefs[key]; select.disabled = key !== "lang" && !accessAllowed();
+      prefRow(list, label, desc, select);
+    }
+    function prefInput(list, field) {
+      const {key,label,desc,kind} = field;
+      const input = element(kind === "list" ? "textarea" : "input","setting-field");
+      input.id = "pref-" + key; input.name = key; input.value = prefs[key]; input.disabled = !accessAllowed(); input.autocomplete = "off";
+      if (kind === "number") { input.type = "number"; input.step = "1"; input.min = "1"; input.max = key === "dailyGoal" ? "1440" : "240"; }
+      if (kind === "optional") input.placeholder = t("Optional");
+      prefRow(list,label,desc,input);
+    }
+    function groupSummary(group) {
+      switch (group.id) {
+        case "startup": return t(prefs.lang === "en" ? "English" : "Simplified Chinese");
+        case "templates": return t("{n} configured",{n:group.fields.filter(f=>prefs[f.key]).length});
+        case "formats": return t("Five periods");
+        case "timer": return t("{n} min",{n:prefs.focus});
+        case "assist": return t(prefs.ai ? "Enabled" : "Off");
+        case "cards": return t(prefs.knowledge ? "Enabled" : "Off");
+        case "workspace": return t(prefs.wide ? "Wide" : "Standard width");
+        case "activity": return t(prefs.trackEditing ? "{n} min / day" : "Off",{n:prefs.dailyGoal});
+        case "coverage": return t("{n} folders",{n:prefs.excluded.split("\n").filter(Boolean).length});
+        default: return t("{n} settings",{n:group.fields.length});
+      }
+    }
+    function preferences(page) {
+      if (!accessAllowed()) {
+        const panel = element("div","row-list"), row = element("div","row");
+        row.append(rowHead("lock", t("Previewing settings"), t("Start a trial or activate to edit local features. Language is always available.")), button("Account & license","go-account","secondary"));
+        panel.append(row); content.append(panel);
+      }
+      const groups = prefGroups[page];
+      groups.forEach((group,index) => {
+        const body = zone(content,group.id,group.title,group.icon,groupSummary(group),index === 0);
+        const form = element("form","settings-form"), list = element("div","row-list");
+        form.append(list); body.append(form);
+        for (const field of group.fields) {
+          const {key,label,desc,kind,choices} = field;
+          if (kind === "toggle") toggle(list,key,label,desc);
+          else if (kind === "select") selectPref(list,key,label,desc,choices);
+          else if (kind === "action") {
+            const action=button(choices[0],choices[1],"secondary"); action.id="pref-"+key; prefRow(list,label,desc,action);
+          } else prefInput(list,field);
+        }
+        if (form.querySelector("input,textarea")) {
+          const actions = element("div","form-actions"), apply = button("Apply", "", "secondary");
+          apply.type="submit"; delete apply.dataset.action; apply.disabled=!accessAllowed();
+          actions.append(apply); form.append(actions);
+        }
+      });
+    }
+    const questions = [
+      ["What does the purchase include?", "All current and future local features, including major versions. Third-party AI and API fees are separate."],
+      ["Where can I purchase or request a refund?", "Tangrow is sold through Xiaohongshu and Douyin. For a receipt, refund or email correction, contact the seller in the original order conversation."],
+      ["Why is my email verified but access is pending?", "Use the email you registered with the shop. A new account may have to wait for the next order sync. Then choose Refresh access. If you received a redemption code, bind it here instead."],
+      ["Can I work offline or change devices?", "An activated vault works offline. On a new device or in a new vault, verify the original purchase email once to restore access."]
+    ];
+    function helpPage() {
+      const block = section("Purchase & support");
+      questions.forEach(([q,a], index) => {
+        const d = element("details","details"); d.id = "faq-"+index; d.open = index === 0;
+        d.append(element("summary","",t(q)), element("p","",t(a))); block.append(d);
+      });
+      const releases = section("Official releases"), panel = element("div","row-list"), a = element("a","row row-link");
+      a.href = releaseUrl; a.target = "_blank"; a.rel = "noopener noreferrer"; a.style.textDecoration = "none";
+      a.append(rowHead("tag","GitHub Releases",t("Download the official ZIP and view release notes.")),icon("external","arrow")); panel.append(a); releases.append(panel);
+    }
+    function navItem(page) {
+      const item = button(page.title, "page-" + page.id, "nav-item", page.icon);
+      if (page.id === demo.page) item.setAttribute("aria-current","page");
+      return item;
+    }
+    function searchBox(mobile = false) {
+      const box = element("div",mobile ? "setting-search mobile-search" : "setting-search desktop-search");
+      const wrap=element("div","field"), input=element("input"), menu=element("div","search-menu"); menu.hidden=true;
+      input.type="search"; input.autocomplete="off"; input.placeholder=t("Search settings");
+      input.setAttribute("aria-label", t("Search settings")); input.dataset.search = "";
+      wrap.append(icon("search"),input);
+      if (!mobile) wrap.append(element("kbd","",/mac|iphone|ipad/i.test(navigator.platform) ? "\u2318 K" : "Ctrl K"));
+      box.append(wrap,menu); return box;
+    }
+    function docsLink(entry = false) {
+      const link=externalLink(guideUrl,entry ? "row row-link entry-line" : "nav-item");
+      if (entry) link.append(rowHead("book",t("User guide"),t("Read the Tangrow guide on GitHub.")));
+      else link.append(icon("book"),element("span","",t("User guide")));
+      link.append(icon("external","arrow")); return link;
+    }
+    function accountNav() {
+      const b=button("","page-account","nav-item status-nav"), words=element("span","truncate");
+      if (demo.page==="account") b.setAttribute("aria-current","page");
+      words.append(element("strong","",t(status()[0])),element("small","",t("Sign-in & updates")+" \u00b7 v"+version));
+      b.append(statusDot(),words); return b;
+    }
+    const navGroups=["Account & help","Feature settings","System settings"];
+    function renderNav() {
+      const aside = $("#sidebar"); aside.replaceChildren();
+      const brand = element("div","brand"), mark = element("span","brand-mark");
+      mark.append(icon("sprout")); brand.append(mark, element("strong","brand-name","Tangrow"));
+      const nav = element("nav","side-nav"); nav.setAttribute("aria-label",t("Settings sections"));
+      for (const group of navGroups) {
+        const g = element("div","nav-group"); g.append(element("div","group-label",t(group)));
+        if (group==="Account & help") g.append(accountNav(),docsLink());
+        else pages.filter(p => p.group===group).forEach(p => g.append(navItem(p)));
+        nav.append(g);
+      }
+      const footer=element("div","side-foot"); footer.append(button("Back to plugin settings","entry","nav-item","menu"));
+      aside.append(brand,searchBox(),nav,footer);
+      const crumb = demo.page === "entry" ? element("span","",t("Community plugins")) : button("Plugin settings","entry","crumb-link");
+      $("#crumbs").replaceChildren(element("span","","Obsidian"),icon("chevron"),crumb,icon("chevron"),element("b","","Tangrow"));
+      $(".mobile-nav").replaceChildren(icon("chevron"),document.createTextNode(t("Back to settings")));
+      $(".mobile-nav").firstChild.style.transform="rotate(180deg)";
+      $(".chrome-btn").replaceChildren(icon("switcher"),document.createTextNode(t("Preview states")),icon("down"));
+    }
+    function entryPage() {
+      const head=element("header","entry-head"), brand=element("div","entry-brand"), mark=element("span","brand-mark"), copy=element("div");
+      mark.append(icon("sprout")); const title=element("h1","","Tangrow"); title.tabIndex=-1;
+      copy.append(title,element("p","page-lead",t("Choose a section to open it in the settings window.")));
+      brand.append(mark,copy); head.append(brand,button("Open settings window","page-general","primary","","arrow")); content.append(head);
+      for (const name of navGroups) {
+        const block=element("section","entry-group"), list=element("div","row-list");
+        block.append(element("h2","",t(name)),list); content.append(block);
+        if (name==="Account & help") {
+          const b=button("","page-account","row row-link entry-line");
+          const statusRow=rowHead("user",t(status()[0]),t("Email sign-in, device access and plugin updates")+" \u00b7 v"+version);
+          statusRow.firstChild.replaceChildren(statusDot());
+          b.append(statusRow,icon("chevron","arrow")); list.append(b,docsLink(true));
+        } else for (const page of pages.filter(p=>p.group===name)) {
+          const b=button("","page-"+page.id,"row row-link entry-line");
+          b.append(rowHead(page.icon,t(page.title),t(page.lead)),icon("chevron","arrow")); list.append(b);
+        }
+      }
+    }
+    function render() {
+      if (artObserver) artObserver.disconnect();
+      document.documentElement.lang = prefs.lang; document.title = "Tangrow \u00b7 " + t("Plugin settings");
+      $(".frame").dataset.view=demo.page==="entry" ? "entry" : "settings";
+      renderNav(); content.replaceChildren();
+      if (demo.page==="entry") { entryPage(); tick(); return; }
+      const page = pageById.get(demo.page);
+      const header = element("header","page-head"), title = element("h1","",t(page.title)); title.tabIndex = -1;
+      header.append(title,element("p","page-lead",t(page.lead)),searchBox(true)); content.append(header);
+      if (page.id === "account") accountPage(); else if (page.id === "help") helpPage(); else preferences(page.id);
+      tick();
+    }
+    function toast(text) {
+      clearTimeout(noticeTimer); const node = $("#notice"); node.textContent = text; node.hidden = false;
+      noticeTimer = setTimeout(() => { node.hidden = true; }, 3600);
+    }
+    function navigate(id, focus = true, writeHash = true) {
+      if (dialog.open) dialog.close();
+      if (id !== "entry" && !pageById.has(id)) return;
+      scrollOffsets.set(demo.page,window.scrollY);
+      for (const details of content.querySelectorAll(".zone")) openZones.set(demo.page+"/"+details.id.slice(5),details.open);
+      demo.page = id; render();
+      if (writeHash && location.hash !== "#"+id) {
+        try { history.pushState(null,"","#"+id); } catch { location.hash=id; }
+      }
+      if (focus) content.querySelector("h1").focus({preventScroll:true});
+      window.scrollTo(0,scrollOffsets.get(id) || 0);
+    }
+    const samples = [
+      ["fresh", "First visit", "user"], ["trial", "Trial in progress", "timer"], ["expired", "Trial ended", "clock"],
+      ["pending", "Email verified, order pending", "mail"], ["active", "Lifetime access", "shield"]
+    ];
+    function openDialog(title) {
+      const body = $("#dialogBody"); body.replaceChildren();
+      const head = element("div","dialog-head"), h = element("h2","",t(title)); h.id = "dialogTitle";
+      const close = button("", "close", "icon-btn", "x"); close.setAttribute("aria-label", t("Close"));
+      head.append(h, close); body.append(head);
+      if (!dialog.open) dialog.showModal();
+      return body;
+    }
+    function searchEntries() {
+      const entries = [];
+      function add(page,target,label,aliases=[]) { entries.push({page,target,label,aliases}); }
+      for (const [page,groups] of Object.entries(prefGroups)) {
+        for (const group of groups) {
+          add(page,"zone-"+group.id,group.title);
+          for (const field of group.fields) {
+            const aliases = [group.title];
+            if (field.key === "focus") aliases.push("Pomodoro","Focus timer");
+            if (field.key === "lang") aliases.push("English","Simplified Chinese");
+            if (field.key === "key") aliases.push("Anthropic");
+            add(page,"pref-"+field.key,field.label,aliases);
+          }
+        }
+      }
+      add("account","zone-auth","Account & device");
+      const loginControl=demo.email ? "Login account" : demo.requested ? "Email verification code" : "Purchase email";
+      add("account","identity",loginControl,["Email sign-in","Sign in to account","Email verification code"]);
+      add("account","release-link","Plugin updates",["Version","GitHub Releases","View releases"]);
+      if (demo.email) add("account","refresh","Refresh access");
+      if (demo.active) add("account","zone-access","Device access",["Offline use"]);
+      else {
+        add("account","redeem","Redemption code",["I have a redemption code"]);
+        add("account","trial","24-hour free trial",["Start trial"]);
+      }
+      questions.forEach(([q],i)=>add("help","faq-"+i,q));
+      return entries;
+    }
+    function updateSearch(input) {
+      const list = input.closest(".setting-search").querySelector(".search-menu");
+      const query = input.value.trim().toLocaleLowerCase(); list.replaceChildren(); list.hidden=!query;
+      if (!query) return;
+      const tokens=query.split(/\s+/);
+      const ranked=searchEntries().map(hit=>{
+        const sectionName=pageById.get(hit.page).title;
+        const label=t(hit.label).toLocaleLowerCase();
+        const all=[hit.label,sectionName,t(sectionName),label,...hit.aliases.flatMap(a=>[a,t(a)])].join(" ").toLocaleLowerCase();
+        const score=label===query ? 0 : label.includes(query) ? 1 : 2;
+        return {hit,score,matches:tokens.every(token=>all.includes(token))};
+      }).filter(r=>r.matches).sort((a,b)=>a.score-b.score).slice(0,20);
+      for (const {hit} of ranked) {
+        const b=button("","find-setting","search-match");
+        b.dataset.page=hit.page; b.dataset.target=hit.target;
+        b.append(element("span","context",t(pageById.get(hit.page).title)),icon("chevron"),element("span","",t(hit.label)));
+        list.append(b);
+      }
+      if (!ranked.length) list.append(element("p","dialog-copy",t("No matching settings.")));
+    }
+    function findSetting(page, targetId) {
+      if (targetId==="redeem" && !demo.active) demo.redeem=true;
+      if (targetId==="refresh") demo.redeem=false;
+      navigate(page,false);
+      let target;
+      switch (targetId) {
+        case "redeem": target=content.querySelector("#cardValue,#emailValue,#otpValue") || $("#zone-auth"); break;
+        case "identity": target=content.querySelector("#verified-email,#emailValue,#otpValue"); break;
+        case "refresh": target=content.querySelector('[data-action="refresh"]'); break;
+        case "trial": target=content.querySelector('[data-action="start-trial"],#remaining') || $("#zone-access"); break;
+        default: target=document.getElementById(targetId);
+      }
+      if (!target) return;
+      const details=target.closest("details");
+      if (details) {
+        details.open=true;
+        if (details.classList.contains("zone")) openZones.set(page+"/"+details.id.slice(5),true);
+      }
+      const point=target.matches("details") ? target.querySelector("summary") : target.closest("[data-field]") || target;
+      if (!point.hasAttribute("tabindex") && !point.matches("input,button,summary,a")) point.tabIndex=-1;
+      point.focus({preventScroll:true}); point.scrollIntoView({block:"center"});
+      point.classList.add("located"); clearTimeout(highlightTimer);
+      highlightTimer=setTimeout(()=>point.classList.remove("located"),1800);
+    }
+    function previewDialog() {
+      const body = openDialog("Preview states");
+      body.append(element("p","dialog-copy",t("This local prototype simulates verification and orders. No email is sent.")));
+      const list = element("div","menu-list");
+      const current = demo.active ? "active" : demo.email ? "pending" : ({idle:"fresh",running:"trial",expired:"expired"})[trialState()];
+      for (const [id,label,symbol] of samples) {
+        const b = button(label,"sample-"+id,"menu-item",symbol);
+        if (id === current) { b.setAttribute("aria-current","true"); b.append(icon("check","trail")); }
+        list.append(b);
+      }
+      const foot = element("div","dialog-foot");
+      foot.append(element("p","dialog-copy",t("Try {email} with code {code} for a paid order. Other emails start without a purchase.", { email: sampleEmail, code: sampleCode })));
+      if (demo.email === pendingEmail && !demo.active && !demo.paid.has(pendingEmail)) foot.append(button("Simulate order sync","sync-order","link","sync"));
+      body.append(list,foot);
+    }
+    function simpleDialog(kind) {
+      const logout = kind === "logout";
+      const info={
+        logout:["Sign out on this device?","To restore purchased access here, you will need to verify your email online. Your original trial period is kept."],
+        "key-info":["API key","Set your Anthropic key in the installed plugin. This design preview uses sample settings only."],
+        "bases-info":["Set up companion Bases","In the plugin this creates missing views in your companion folder and keeps existing views and notes."],
+        "migrate-info":["Move companion folder","The plugin checks that 99-Tangrow is available before moving files. This preview only shows the operation."],
+        "guide-info":["Agent guide","The plugin opens AGENTS.md in the companion folder or creates the guide if it is missing."]
+      }[kind];
+      const body = openDialog(info[0]); body.append(element("p","dialog-copy",t(info[1])));
+      const actions = element("div","dialog-actions");
+      actions.append(button(logout ? "Cancel" : "Done","close","secondary"));
+      if (logout) actions.append(button("Sign out","confirm-logout","primary"));
+      body.append(actions);
+    }
+    function clearLogin() {
+      Object.assign(demo,{email:"",draft:"",requested:"",resendAt:0,codeUntil:0,redeem:false,active:false,checkedAt:0});
+    }
+    function sample(id) {
+      clearLogin(); demo.paid = new Set([sampleEmail]); demo.cardOwner = "";
+      setTrial(id === "trial" ? Date.now()-5*60*60*1000 : id === "expired" ? Date.now()-day-60000 : 0);
+      if (id === "active") { demo.email = sampleEmail; demo.active = true; demo.checkedAt = Date.now(); }
+      if (id === "pending") demo.email = pendingEmail;
+      saveSession();
+      navigate("account");
+    }
+    function issueCode(email) {
+      demo.draft = email; demo.requested = email; demo.codeUntil = Date.now()+600000; demo.resendAt = Date.now()+60000;
+    }
+    function applyEntitlement() {
+      demo.active = Boolean(demo.email && (demo.paid.has(demo.email) || demo.cardOwner === demo.email));
+      if (demo.active) { demo.checkedAt = Date.now(); demo.redeem = false; }
+      saveSession();
+    }
+    function submitAccount(form) {
+      if (form.elements.emailValue) {
+        const input = form.elements.emailValue;
+        const email = input.value.trim().toLowerCase(); input.value = email;
+        if (!email || !input.validity.valid || !email.includes("@")) { formMessage("Enter a valid email address.",true); return; }
+        issueCode(email); render(); $("#otpValue").focus(); return;
+      }
+      if (form.elements.otpValue) {
+        if (Date.now() >= demo.codeUntil) { formMessage("The code has expired. Request another code.",true); return; }
+        if (form.elements.otpValue.value.trim() !== sampleCode) { formMessage("Incorrect code. Check the six-digit demo code below the field.",true); return; }
+        demo.email = demo.requested; demo.requested = ""; demo.resendAt = 0; demo.codeUntil = 0;
+        applyEntitlement(); render();
+        if ($("#cardValue")) $("#cardValue").focus();
+        toast(t(demo.active ? "Purchase restored on this device." : "Email verified.")); return;
+      }
+      if (form.elements.cardValue) {
+        const value = form.elements.cardValue.value.trim().toUpperCase();
+        if (value !== sampleCard) { formMessage("Check the demo redemption code and try again.",true); return; }
+        if (demo.cardOwner && demo.cardOwner !== demo.email) { formMessage("This code is already bound to another email.",true); return; }
+        demo.cardOwner = demo.email; applyEntitlement(); render(); toast(t("Purchase restored on this device."));
+      }
+    }
+    function submitPrefs(form) {
+      if (!accessAllowed()) return;
+      const edits = Object.fromEntries(new FormData(form));
+      for (const key of Object.keys(edits)) {
+        let value = edits[key].trim();
+        const kind=fieldByKey.get(key)?.kind;
+        if (kind === "number") {
+          const maximum=key==="dailyGoal" ? 1440 : 240;
+          value = Number(value);
+          if (!Number.isInteger(value) || value < 1 || value > maximum) { toast(t("Enter a whole number from 1 to {n}.",{n:maximum})); return; }
+        } else if (kind === "list") {
+          const paths=[...new Set(value.split(/\r?\n/).map(item=>item.trim()).filter(Boolean))];
+          if (paths.length>100 || paths.some(path=>path.startsWith("/") || path.split("/").some(part=>!part || part.startsWith(".")))) { toast(t("Use up to 100 relative folder paths.")); return; }
+          value=paths.join("\n");
+        } else if ((!value && kind !== "optional") || value.startsWith("/") || value.split("/").includes("..")) {
+          toast(t("Enter a path or format relative to the vault.")); return;
+        }
+        edits[key] = value;
+      }
+      Object.assign(prefs,edits); render(); toast(t("Saved in this preview."));
+    }
+    function accountFocus() {
+      findSetting("account","zone-auth");
+      const target = $("#accountForm input") || $("#zone-auth [data-action='refresh']") || $("#zone-auth summary");
+      target.focus();
+    }
+    function handleAction(action, source) {
+      if (action.startsWith("page-")) { navigate(action.slice(5)); return; }
+      if (action.startsWith("sample-")) { sample(action.slice(7)); return; }
+      switch (action) {
+        case "entry": navigate("entry"); break;
+        case "find-setting": findSetting(source.dataset.page,source.dataset.target); break;
+        case "preview": previewDialog(); break;
+        case "close": dialog.close(); break;
+        case "go-help": navigate("help"); break;
+        case "go-account": case "account-focus": accountFocus(); break;
+        case "key-info": case "bases-info": case "migrate-info": case "guide-info": case "logout": simpleDialog(action); break;
+        case "confirm-logout": clearLogin(); saveSession(); navigate("account"); toast(t("Signed out on this device.")); break;
+        case "start-trial":
+          if (!demo.trialStart && !demo.active) setTrial(Date.now());
+          render(); toast(t("Your 24-hour trial has started.")); break;
+        case "toggle-redeem":
+          demo.redeem = !demo.redeem; render(); content.querySelector("form input")?.focus(); break;
+        case "change-email": demo.requested = ""; render(); $("#emailValue")?.focus(); break;
+        case "resend":
+          if (demo.requested && Date.now() >= demo.resendAt) { issueCode(demo.requested); render(); $("#otpValue").focus(); toast(t("New demo code available.")); }
+          break;
+        case "refresh":
+          applyEntitlement(); render();
+          toast(t(demo.active ? "Access is up to date." : "No matching purchase yet. Check your email or wait for order sync.")); break;
+        case "sync-order":
+          if (demo.email === pendingEmail) { demo.paid.add(pendingEmail); saveSession(); dialog.close(); toast(t("Sample order synced. Choose Refresh access.")); }
+          break;
+        case "toggle-pref":
+          if (accessAllowed()) {
+            prefs[source.dataset.pref] = !prefs[source.dataset.pref]; source.setAttribute("aria-checked",String(prefs[source.dataset.pref]));
+            const details=source.closest(".zone"), group=prefGroups[demo.page].find(item=>"zone-"+item.id===details.id);
+            details.querySelector(".zone-value").textContent=groupSummary(group); toast(t("Saved in this preview."));
+          }
+          break;
+      }
+    }
+    let renderedTrial = "";
+    function tick() {
+      const state = trialState();
+      const resend = $("#resend");
+      if (resend) {
+        const seconds = Math.max(0,Math.ceil((demo.resendAt-Date.now())/1000));
+        resend.disabled = seconds > 0; resend.textContent = seconds ? t("Resend in {n}s",{n:seconds}) : t("Resend code");
+      }
+      const remaining = $("#remaining");
+      if (remaining) {
+        const minutes = Math.max(0,Math.ceil((demo.trialStart+day-Date.now())/60000));
+        remaining.textContent = t("{h}h {m}m left",{h:Math.floor(minutes/60),m:minutes%60});
+      }
+      const expiredNow = renderedTrial === "running" && state === "expired"; renderedTrial = state;
+      if (expiredNow && !demo.active) render();
+    }
+    document.addEventListener("click", event => {
+      if (!event.target.closest(".setting-search")) document.querySelectorAll(".search-menu").forEach(menu=>{menu.hidden=true;});
+      const source = event.target.closest("[data-action]");
+      if (source && !source.disabled && source.dataset.action) handleAction(source.dataset.action,source);
+    });
+    dialog.addEventListener("click",event => { if (event.target === dialog) dialog.close(); });
+    document.addEventListener("input",event => {
+      if (event.target.matches("[data-search]")) updateSearch(event.target);
+      if (event.target.id === "emailValue") demo.draft = event.target.value;
+      if (event.target.closest("#accountForm")) { event.target.removeAttribute("aria-invalid"); const msg = $("#formMessage"); if (msg) msg.hidden = true; }
+    });
+    document.addEventListener("change",event => {
+      const key = event.target.dataset.select;
+      if (key === "lang" || (key === "model" && accessAllowed())) {
+        prefs[key] = event.target.value; render(); $("#pref-"+key)?.focus(); toast(t("Saved in this preview."));
+      }
+    });
+    document.addEventListener("submit",event => {
+      event.preventDefault();
+      if (event.target.id === "accountForm") submitAccount(event.target);
+      if (event.target.matches(".settings-form")) submitPrefs(event.target);
+    });
+    document.addEventListener("focusin",event=>{
+      document.querySelectorAll(".setting-search").forEach(box=>{
+        if (!box.contains(event.target)) box.querySelector(".search-menu").hidden=true;
+      });
+      if (event.target.matches("[data-search]") && event.target.value) updateSearch(event.target);
+    });
+    document.addEventListener("keydown",event => {
+      if (dialog.open || event.isComposing) return;
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase()==="k") {
+        event.preventDefault(); if (demo.page==="entry") navigate("general",false);
+        const selector=matchMedia("(max-width: 700px)").matches ? ".mobile-search" : ".desktop-search";
+        const input=document.querySelector(selector+" input"); input.focus(); input.select(); return;
+      }
+      const box=event.target.closest(".setting-search");
+      const input=box?.querySelector("input");
+      if (event.key==="Escape") {
+        if (input?.value) { input.value=""; updateSearch(input); input.focus(); }
+        else if (demo.page!=="entry") navigate("entry");
+        event.preventDefault(); return;
+      }
+      if (!box || box.querySelector(".search-menu").hidden) return;
+      const items = Array.from(box.querySelectorAll(".search-match"));
+      if (!items.length) return;
+      if (event.key === "Enter" && document.activeElement === input) { event.preventDefault(); items[0].click(); }
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault(); const index = items.indexOf(document.activeElement);
+        const next = index === -1 ? (event.key === "ArrowDown" ? 0 : items.length-1) : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+        items[next].focus();
+      }
+    });
+    function routeFromHash() {
+      const requested=location.hash.slice(1);
+      return pageById.has(requested) ? requested : "entry";
+    }
+    window.addEventListener("hashchange",()=>{const id=routeFromHash(); if(id!==demo.page) navigate(id,true,false);});
+    demo.page=routeFromHash(); render(); setInterval(tick,1000);
+  </script>
+</body>
+</html>

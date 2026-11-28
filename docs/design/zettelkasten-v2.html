@@ -1,0 +1,1106 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Tangrow · 记录、知识与写作 · 设计稿 v2</title>
+<style>
+:root {
+  --bg: #f6f5f8; --surface: #fff; --surface-2: #f0eef4; --surface-3: #e6e3ec;
+  --text: #1d1b22; --muted: #6b6775; --faint: #85808f; --border: #dedae5;
+  --accent: #7c5cff; --accent-soft: #ece6ff; --accent-text: #5b3ee0;
+  --ok: #187f56; --ok-soft: #e1f5ec; --warn: #976319; --warn-soft: #fbf0dc;
+  --danger: #c33c55; --shadow: 0 20px 64px #21133416; --selection: #e9e0ff;
+}
+html[data-theme="dark"] {
+  --bg: #161519; --surface: #1f1e23; --surface-2: #26252b; --surface-3: #303036;
+  --text: #e9e7ee; --muted: #aaa6b3; --faint: #898491; --border: #34333a;
+  --accent: #8b6dff; --accent-soft: #2e2747; --accent-text: #b6a3ff;
+  --ok: #4fd1a0; --ok-soft: #173329; --warn: #f0b552; --warn-soft: #382c17;
+  --danger: #ff8394; --shadow: 0 20px 64px #0003; --selection: #382d54;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 24px; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.65 -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Segoe UI", sans-serif; }
+button, input, textarea, select { font: inherit; }
+button, summary, a { -webkit-tap-highlight-color: transparent; }
+button, summary { cursor: pointer; }
+button { color: inherit; }
+button:disabled { cursor: default; opacity: .5; }
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+a { color: var(--accent-text); text-underline-offset: 4px; }
+button, input, textarea, select { min-width: 0; }
+button, input, textarea, select, article, aside, section { overflow-wrap: anywhere; }
+[hidden] { display: none !important; }
+svg.icon { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.65; fill: none; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; vertical-align: -3px; }
+h1, h2, h3, h4, p { margin: 0; }
+h1 { font-size: clamp(28px, 3.4vw, 43px); line-height: 1.28; letter-spacing: -.035em; font-weight: 650; }
+h2 { font-size: 23px; line-height: 1.4; font-weight: 620; letter-spacing: -.02em; }
+h3 { font-size: 16px; font-weight: 600; }
+small, .small { font-size: 12px; }
+.muted { color: var(--muted); }
+.accent { color: var(--accent-text); }
+.ok { color: var(--ok); }
+.warn { color: var(--warn); }
+.page { max-width: 1260px; margin: auto; padding: 28px 28px 56px; }
+.row { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.between { justify-content: space-between; }
+.grow { flex: 1; min-width: 0; }
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.brand { display: inline-flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 650; letter-spacing: -.02em; }
+.brand-mark { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 8px; background: var(--accent-soft); color: var(--accent-text); }
+.version { color: var(--muted); font-size: 11px; letter-spacing: .08em; padding-left: 10px; border-left: 1px solid var(--border); }
+.btn { display: inline-flex; justify-content: center; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px; background: var(--surface); color: var(--text); text-decoration: none; line-height: 1.5; font-size: 12px; }
+.btn:hover { background: var(--surface-2); border-color: var(--faint); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.soft { background: var(--accent-soft); border-color: transparent; color: var(--accent-text); }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+.btn.compact { padding: 4px 8px; font-size: 11px; }
+.btn.full { width: 100%; }
+.icon-button { width: 30px; height: 30px; display: inline-grid; place-items: center; padding: 0; }
+.hero { padding: 46px 0 30px; display: grid; grid-template-columns: 1fr auto; gap: 28px; align-items: end; }
+.eyebrow { text-transform: uppercase; font-size: 11px; color: var(--accent-text); letter-spacing: .13em; font-weight: 600; margin-bottom: 12px; }
+.hero p { margin-top: 14px; max-width: 670px; color: var(--muted); font-size: 14px; line-height: 1.85; }
+.hero-aside { color: var(--muted); font-size: 12px; padding-bottom: 4px; text-align: right; line-height: 1.9; }
+.hero-aside b { font-weight: 500; color: var(--text); }
+.toc { display: flex; gap: 22px; border-bottom: 1px solid var(--border); padding: 0 0 16px; font-size: 12px; flex-wrap: wrap; }
+.toc a { color: var(--muted); text-decoration: none; }
+.toc a:hover { color: var(--accent-text); }
+.section { margin-top: 46px; }
+.section-head { display: flex; justify-content: space-between; gap: 16px; align-items: end; margin-bottom: 18px; flex-wrap: wrap; }
+.section-index { color: var(--faint); font-size: 11px; letter-spacing: .1em; margin-bottom: 5px; }
+.section-head p { color: var(--muted); margin-top: 7px; max-width: 720px; font-size: 13px; }
+.pill { display: inline-flex; gap: 5px; align-items: center; border-radius: 20px; background: var(--surface-2); color: var(--muted); padding: 2px 9px; font-size: 11px; white-space: nowrap; }
+.pill.purple { color: var(--accent-text); background: var(--accent-soft); }
+.pill.green { color: var(--ok); background: var(--ok-soft); }
+.pill.amber { color: var(--warn); background: var(--warn-soft); }
+.scenarios { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; margin-bottom: 13px; }
+.scenarios > span { font-size: 11px; color: var(--muted); margin-right: 5px; }
+.scenario { border: 1px solid var(--border); background: transparent; border-radius: 7px; color: var(--muted); padding: 6px 11px; font-size: 12px; }
+.scenario[aria-pressed="true"] { color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent); }
+.mock-window { border: 1px solid var(--border); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow); overflow: clip; }
+.window-bar { display: flex; gap: 8px; align-items: center; justify-content: space-between; min-height: 39px; padding: 8px 16px; background: var(--surface-2); border-bottom: 1px solid var(--border); color: var(--muted); font-size: 11px; }
+.window-dots { display: flex; gap: 6px; }
+.window-dots i { display: block; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); opacity: .5; }
+.app-grid { display: grid; grid-template-columns: minmax(0, 1fr) 358px; min-height: 712px; }
+.editor-zone { min-width: 0; display: flex; flex-direction: column; }
+.editor-toolbar { min-height: 42px; padding: 9px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 11px; }
+.editor-breadcrumb { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; min-width: 0; }
+.editor-toolbar > :last-child { flex-shrink: 0; }
+.editor-content { padding: 32px 42px 24px; flex: 1; min-width: 0; }
+.note-label { display: flex; align-items: center; gap: 7px; margin-bottom: 12px; font-size: 11px; color: var(--muted); }
+.note-title { font-size: 26px; font-weight: 620; letter-spacing: -.025em; line-height: 1.4; margin-bottom: 18px; }
+.properties { border-left: 2px solid var(--surface-3); padding-left: 12px; margin: 0 0 27px; font-size: 11px; display: grid; gap: 6px; color: var(--muted); }
+.properties .property { display: flex; gap: 16px; align-items: baseline; }
+.properties .property > span:first-child { flex: 0 0 56px; color: var(--faint); }
+.note-body { line-height: 1.95; font-size: 13px; }
+.note-body > * + * { margin-top: 14px; }
+.note-body h2 { font-size: 18px; margin-top: 26px; margin-bottom: 10px; }
+.note-body h3 { font-size: 15px; margin-top: 18px; }
+.note-body ul { padding-left: 22px; }
+.note-body blockquote { margin: 15px 0; border-left: 3px solid var(--accent); padding: 5px 0 5px 16px; color: var(--muted); }
+.note-body mark { background: var(--selection); color: var(--text); padding: 3px 1px; border-radius: 3px; }
+.note-body .note-hint { color: var(--faint); font-size: 11px; margin-top: 7px; }
+.note-link { background: none; border: 0; padding: 0; color: var(--accent-text); text-align: left; font-size: inherit; line-height: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent); text-underline-offset: 3px; }
+.selection-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 16px; }
+.note-links { border-top: 1px solid var(--border); margin-top: 27px; padding-top: 13px; }
+.note-links-label { font-size: 10px; color: var(--faint); margin-bottom: 7px; text-transform: uppercase; letter-spacing: .06em; }
+.note-links .pill { white-space: normal; max-width: 100%; }
+.editor-status { padding: 9px 20px; color: var(--faint); font-size: 10px; display: flex; justify-content: space-between; border-top: 1px solid var(--border); gap: 12px; }
+.workbench { border-left: 1px solid var(--border); padding: 16px; background: var(--surface); min-width: 0; }
+.bench-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px; gap: 8px; }
+.bench-top .brand { font-size: 16px; }
+.new-dropdown { position: relative; }
+.new-dropdown summary { list-style: none; }
+.new-dropdown summary::-webkit-details-marker { display: none; }
+.dropdown-menu { position: absolute; right: 0; top: 35px; width: 190px; padding: 5px; border: 1px solid var(--border); background: var(--surface); border-radius: 10px; box-shadow: var(--shadow); z-index: 5; }
+.dropdown-menu button { width: 100%; border: 0; padding: 8px; background: transparent; text-align: left; border-radius: 6px; font-size: 12px; display: flex; justify-content: space-between; }
+.dropdown-menu button:hover { background: var(--accent-soft); }
+.dropdown-menu kbd { color: var(--faint); font-size: 10px; }
+.workspace-nav { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); background: var(--surface-2); border-radius: 9px; gap: 2px; padding: 3px; margin-bottom: 18px; }
+.workspace-nav button { display: flex; flex-direction: column; align-items: center; gap: 3px; background: transparent; border: none; padding: 7px 2px; border-radius: 7px; color: var(--muted); font-size: 11px; }
+.workspace-nav button[aria-selected="true"] { color: var(--accent-text); background: var(--surface); box-shadow: 0 1px 3px #0002; }
+.workspace-nav svg.icon { width: 17px; height: 17px; }
+.subnav { display: flex; gap: 5px; margin: 0 0 16px; border-bottom: 1px solid var(--border); }
+.subnav button { padding: 0 10px 9px; color: var(--muted); border: 0; border-bottom: 2px solid transparent; background: transparent; font-size: 12px; }
+.subnav button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+.section-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 12px; font-weight: 600; margin: 18px 0 7px; }
+.section-title > span { color: var(--muted); font-size: 10px; font-weight: 400; }
+.context-box { background: var(--surface-2); padding: 12px; border-radius: 10px; margin-bottom: 12px; }
+.context-box h3 { font-size: 14px; line-height: 1.55; margin: 7px 0; }
+.context-box p { color: var(--muted); font-size: 11px; line-height: 1.65; }
+.list-item { display: flex; gap: 9px; align-items: flex-start; width: 100%; padding: 9px 7px; border: none; background: transparent; border-radius: 8px; text-align: left; }
+button.list-item:hover { background: var(--surface-2); }
+.item-symbol { color: var(--faint); padding-top: 2px; }
+.item-text { flex: 1; min-width: 0; }
+.item-title { color: var(--text); font-size: 12px; line-height: 1.55; }
+.item-caption { color: var(--muted); font-size: 10px; margin-top: 3px; line-height: 1.6; }
+.item-end { color: var(--faint); font-size: 10px; padding-top: 3px; white-space: nowrap; }
+.divider { height: 1px; background: var(--border); margin: 14px 0; }
+.empty { color: var(--muted); font-size: 11px; line-height: 1.7; padding: 12px; border: 1px dashed var(--border); border-radius: 8px; }
+.soft-note { background: var(--accent-soft); color: var(--accent-text); border-radius: 8px; font-size: 11px; padding: 9px 11px; line-height: 1.7; }
+.soft-note.neutral { background: var(--surface-2); color: var(--muted); }
+.soft-note.success { background: var(--ok-soft); color: var(--ok); }
+.soft-note.warning { background: var(--warn-soft); color: var(--warn); }
+.period-tabs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; margin: 12px 0; background: var(--surface-2); padding: 3px; border-radius: 7px; }
+.period-tabs button { border: 0; background: transparent; color: var(--muted); border-radius: 5px; padding: 4px; font-size: 11px; }
+.period-tabs button[aria-pressed="true"] { background: var(--surface); color: var(--accent-text); }
+.calendar { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; margin: 7px 0 14px; text-align: center; font-size: 10px; }
+.calendar > span { color: var(--faint); padding: 3px; }
+.calendar button { color: var(--muted); background: transparent; border: 0; border-radius: 6px; padding: 6px 0; min-width: 0; font-size: 11px; position: relative; }
+.calendar button.has-note::after { content: ""; width: 3px; height: 3px; border-radius: 50%; background: var(--accent); position: absolute; left: calc(50% - 1px); bottom: 2px; }
+.calendar button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.calendar button[aria-pressed="true"]::after { background: #fff; }
+.calendar button:disabled { opacity: .35; }
+.field-label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+.field { width: 100%; padding: 9px 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 7px; font-size: 12px; line-height: 1.7; }
+textarea.field { resize: vertical; }
+.composer { width: 100%; min-height: 86px; font-size: 12px; background: var(--surface-2); }
+.counter-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin: 12px 0; }
+.counter { background: var(--surface-2); border-radius: 8px; padding: 10px; }
+.counter b { display: block; font-size: 21px; line-height: 1.2; font-weight: 550; }
+.counter span { display: block; color: var(--muted); font-size: 10px; margin-top: 4px; }
+.task-line { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; padding: 7px 3px; }
+input[type="checkbox"] { accent-color: var(--accent); flex-shrink: 0; margin-top: 4px; }
+.task-line:has(input:checked) > span { color: var(--faint); text-decoration: line-through; }
+.writing-target { padding: 12px; background: var(--accent-soft); border-radius: 10px; }
+.writing-target h3 { font-size: 14px; margin: 6px 0 9px; line-height: 1.5; }
+.material-row { border-bottom: 1px solid var(--border); padding: 11px 0; }
+.material-row:last-child { border-bottom: 0; }
+.material-row > .row { margin-top: 6px; }
+.preview-note { color: var(--muted); font-size: 11px; margin-top: 10px; display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.guide-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 16px; }
+.guide { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+.guide h3 { margin: 10px 0; }
+.guide p { color: var(--muted); font-size: 12px; line-height: 1.85; }
+.guide-top { display: flex; justify-content: space-between; align-items: center; }
+.guide-number { font-size: 11px; color: var(--faint); letter-spacing: .08em; }
+.capture-sample { background: var(--surface-2); border-radius: 9px; padding: 12px; margin: 14px 0; font-size: 12px; line-height: 1.9; }
+.mini-result { display: flex; justify-content: space-between; align-items: center; gap: 7px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+.mini-result:last-child { border: 0; }
+.relation-layout { display: grid; grid-template-columns: 1.15fr 1fr; gap: 22px; }
+.lineage { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); padding: 22px; }
+.lineage-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.lineage-node { padding: 12px; border-radius: 9px; background: var(--surface-2); font-size: 12px; }
+.lineage-node small { display: block; margin-bottom: 6px; color: var(--muted); font-size: 10px; }
+.lineage-node.highlight { background: var(--accent-soft); color: var(--accent-text); }
+.lineage-arrow { text-align: center; padding: 9px; font-size: 11px; color: var(--muted); }
+.relation-row { padding: 15px 0; border-bottom: 1px solid var(--border); }
+.relation-row:first-child { padding-top: 0; }
+.relation-row h3 { font-size: 13px; margin-bottom: 5px; }
+.relation-row p { font-size: 12px; color: var(--muted); line-height: 1.8; }
+.delta-list { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 32px; }
+.delta { display: grid; grid-template-columns: 30px 1fr; gap: 10px; }
+.delta > span { color: var(--accent-text); padding-top: 2px; }
+.delta h3 { font-size: 14px; margin-bottom: 5px; }
+.delta p { font-size: 12px; color: var(--muted); line-height: 1.8; }
+.phase { position: relative; padding-top: 18px; border-top: 2px solid var(--border); }
+.phase:first-child { border-top-color: var(--accent); }
+.phase h3 { margin: 8px 0; }
+.phase p { color: var(--muted); font-size: 12px; line-height: 1.9; }
+.spec-details { margin-top: 24px; border-top: 1px solid var(--border); padding-top: 16px; }
+.spec-details > summary { color: var(--muted); font-size: 12px; }
+.spec-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 16px; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.9 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 16px; background: var(--surface-2); border-radius: 9px; color: var(--muted); margin: 0; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; color: var(--accent-text); }
+.page-footer { margin-top: 40px; padding-top: 18px; border-top: 1px solid var(--border); font-size: 11px; color: var(--faint); display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+dialog { color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 15px; box-shadow: var(--shadow); padding: 0; width: min(790px, calc(100vw - 32px)); max-height: calc(100dvh - 40px); }
+dialog::backdrop { background: #09070eb3; backdrop-filter: blur(3px); }
+.dialog-header { padding: 20px 24px 16px; border-bottom: 1px solid var(--border); }
+.dialog-header h2 { font-size: 18px; }
+.dialog-header p { color: var(--muted); font-size: 12px; margin-top: 6px; }
+.dialog-body { padding: 20px 24px; }
+.dialog-split { display: grid; grid-template-columns: 1fr 1.2fr; gap: 20px; }
+.source-preview { background: var(--surface-2); border-radius: 9px; padding: 13px; font-size: 12px; line-height: 1.9; white-space: pre-wrap; }
+.dialog-footer { padding: 15px 24px; display: flex; gap: 9px; justify-content: flex-end; align-items: center; border-top: 1px solid var(--border); flex-wrap: wrap; }
+.dialog-footer > .muted { margin-right: auto; font-size: 11px; }
+.form-stack { display: grid; gap: 14px; }
+.check-option { display: flex; gap: 9px; align-items: flex-start; font-size: 12px; }
+.check-option small { display: block; color: var(--muted); margin-top: 3px; font-size: 11px; }
+.notice { position: fixed; bottom: 24px; left: 50%; transform: translate(-50%, 12px); opacity: 0; pointer-events: none; background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 9px; box-shadow: var(--shadow); font-size: 12px; z-index: 20; max-width: calc(100% - 32px); transition: opacity .15s, transform .15s; }
+.notice.visible { opacity: 1; transform: translate(-50%, 0); }
+.extra-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.extra-grid button { justify-content: flex-start; padding: 10px; }
+.focus-timer { text-align: center; font-size: 40px; padding: 20px 0; font-variant-numeric: tabular-nums; letter-spacing: -.03em; }
+.mobile-current { display: none; }
+@media (max-width: 1000px) {
+  .app-grid { grid-template-columns: minmax(0,1fr) 330px; }
+  .editor-content { padding: 26px; }
+  .hero-aside { display: none; }
+  .hero { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) {
+  .page { padding: 20px 16px 40px; }
+  .hero { padding: 32px 0 25px; }
+  .app-grid { display: flex; flex-direction: column; min-height: 0; }
+  .workbench { order: 0; border-left: 0; border-bottom: 1px solid var(--border); }
+  .editor-zone { order: 1; }
+  .editor-content { padding: 26px 22px; }
+  .editor-toolbar { padding: 10px 16px; }
+  .guide-grid, .delta-list, .relation-layout, .spec-grid { grid-template-columns: 1fr; }
+  .guide-grid { gap: 14px; }
+  .dialog-split { grid-template-columns: 1fr; }
+  .dialog-header, .dialog-body { padding: 17px; }
+  .dialog-footer { padding: 14px 17px; }
+  .note-title { font-size: 23px; }
+  .mobile-current { display: block; }
+  .section { margin-top: 36px; }
+  .version { display: none; }
+  .window-bar .window-dots { display: none; }
+}
+@media (max-width: 420px) {
+  .topbar .btn { padding: 6px 9px; }
+  .topbar { gap: 8px; }
+  .topbar .row { gap: 5px; }
+  .brand { font-size: 17px; }
+  .scenarios { display: grid; grid-template-columns: 1fr 1fr; }
+  .scenarios > span { grid-column: 1 / -1; }
+  .lineage-pair { grid-template-columns: 1fr; }
+  .editor-status { flex-wrap: wrap; }
+  .hero p { font-size: 13px; }
+}
+@media (pointer: coarse) {
+  .btn, .scenario, .subnav button, .period-tabs button, .calendar button { min-height: 42px; }
+  .field { font-size: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .notice { transition: none; }
+}
+@media print {
+  .page { max-width: none; }
+  .notice, dialog, #reset-demo { display: none; }
+  .mock-window { box-shadow: none; }
+}
+</style>
+</head>
+<body>
+<svg style="display:none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="icon-leaf" viewBox="0 0 24 24"><path d="M20 4C9 3 4 7 4 13a7 7 0 0 0 7 7c6 0 9-6 9-16Z"/><path d="m5 19 10-10M10 14V9m0 5h5"/></symbol>
+  <symbol id="icon-home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10H3Z"/><path d="M9 20v-7h6v7"/></symbol>
+  <symbol id="icon-record" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></symbol>
+  <symbol id="icon-library" viewBox="0 0 24 24"><path d="M4 4v16M9 4v16M14 5l5-1 3 15-5 1ZM2 20h10"/></symbol>
+  <symbol id="icon-pen" viewBox="0 0 24 24"><path d="m14 4 6 6M4 20l2-7L17 2l5 5-11 11ZM4 20l7-2"/></symbol>
+  <symbol id="icon-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+  <symbol id="icon-card" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9h10M7 13h7M7 17h4"/></symbol>
+  <symbol id="icon-link" viewBox="0 0 24 24"><path d="m10 14 4-4M8 16l-2 2a4 4 0 0 1-6-6l5-5a4 4 0 0 1 6 0m2 1 2-2a4 4 0 0 1 6 6l-5 5a4 4 0 0 1-6 0"/></symbol>
+  <symbol id="icon-inbox" viewBox="0 0 24 24"><path d="m3 13 3-9h12l3 9v7H3Z"/><path d="M3 13h5l2 3h4l2-3h5"/></symbol>
+  <symbol id="icon-arrow" viewBox="0 0 24 24"><path d="M4 12h16m-6-6 6 6-6 6"/></symbol>
+  <symbol id="icon-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+  <symbol id="icon-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 2v6M17 2v6M3 10h18M7 14h3M14 14h3"/></symbol>
+  <symbol id="icon-theme" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4v16M12 4a8 8 0 0 1 0 16Z"/></symbol>
+  <symbol id="icon-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+  <symbol id="icon-pin" viewBox="0 0 24 24"><path d="m9 3 12 12-3 3-3-3-5 1-2-2 1-5-3-3ZM3 21l7-7"/></symbol>
+  <symbol id="icon-clock" viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v5l3 2M9 2h6"/></symbol>
+  <symbol id="icon-spark" viewBox="0 0 24 24"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5ZM20 2v4m-2-2h4"/></symbol>
+  <symbol id="icon-hub" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="5" rx="1"/><rect x="2" y="17" width="6" height="5" rx="1"/><rect x="16" y="17" width="6" height="5" rx="1"/><path d="M12 7v5M5 17v-5h14v5"/></symbol>
+</svg>
+<main class="page">
+  <header class="topbar">
+    <div class="row"><span class="brand"><span class="brand-mark"><svg class="icon"><use href="#icon-leaf"/></svg></span>Tangrow</span><span class="version">DESIGN STUDY · V2</span></div>
+    <div class="row"><a class="btn ghost" href="./zettelkasten-v1.html">查看 v1</a><button class="btn" id="theme-toggle" type="button" aria-label="切换明暗主题"><svg class="icon"><use href="#icon-theme"/></svg><span>切换明暗</span></button></div>
+  </header>
+  <div class="hero">
+    <div><div class="eyebrow">Record → Connect → Write → Reflect</div><h1>记录、思考，直到写成。</h1><p>Journal 保留经历，速记收住想法，素材支撑观点。<br>让卡片、主题与稿件相互连接，每次写作也留下新的思考。</p></div>
+    <div class="hero-aside"><b>记录、知识与写作的统一工作台</b><br>延续现有目录与原生编辑体验<br>2026.11.17 · 交互设计提案</div>
+  </div>
+  <nav class="toc" aria-label="设计稿章节"><a href="#prototype">01 体验工作台</a><a href="#processing">02 分次处理</a><a href="#relationships">03 来源与引用</a><a href="#decisions">04 设计调整</a><a href="#delivery">05 分期落地</a></nav>
+
+  <section class="section" id="prototype">
+    <div class="section-head"><div><div class="section-index">01 / WORKSPACE</div><h2>四个入口，一条持续生长的路径</h2><p>左侧保留原生笔记，右侧是 Tangrow。切换入口、打开来源，或把一个观点用进稿件。</p></div><button class="btn ghost" id="reset-demo" type="button">重置演示</button></div>
+    <div class="scenarios" aria-label="体验场景">
+      <span>从一个场景开始</span>
+      <button class="scenario" data-scenario="journal" aria-pressed="true">Journal → 观点</button>
+      <button class="scenario" data-scenario="capture" aria-pressed="false">整理一条混合速记</button>
+      <button class="scenario" data-scenario="writing" aria-pressed="false">素材 → 稿件</button>
+      <button class="scenario" data-scenario="review" aria-pressed="false">回看这一周</button>
+    </div>
+    <div class="mock-window" id="app-demo">
+      <div class="window-bar"><div class="window-dots" aria-hidden="true"><i></i><i></i><i></i></div><span>Tangrow Vault</span><span>示例内容 · 交互原型</span></div>
+      <div class="app-grid">
+        <section class="editor-zone" aria-label="笔记预览">
+          <div class="editor-toolbar"><span class="editor-breadcrumb" id="editor-path"></span><span>阅读视图</span></div>
+          <div class="editor-content" id="editor-content"></div>
+          <div class="editor-status"><span>Markdown · 原有笔记位置</span><span id="editor-status"></span></div>
+        </section>
+        <aside class="workbench" aria-label="Tangrow 工作台">
+          <div class="bench-top"><span class="brand"><svg class="icon accent"><use href="#icon-leaf"/></svg>Tangrow</span><details class="new-dropdown" id="new-menu"><summary class="btn compact">＋ 新建 ▾</summary><div class="dropdown-menu"><button data-new="capture">速记 <kbd>⌘/Ctrl 1</kbd></button><button data-new="note">普通笔记 <kbd>⌘/Ctrl 2</kbd></button><button data-new="task">任务 <kbd>⌘/Ctrl 3</kbd></button><button data-new="project">项目 <kbd>⌘/Ctrl 4</kbd></button><button data-new="card">卡片 <kbd>⌘/Ctrl 5</kbd></button></div></details></div>
+          <div class="workspace-nav" role="tablist" aria-label="工作区">
+            <button role="tab" id="tab-today" aria-controls="workbench-panel" aria-selected="false" data-workspace="today"><svg class="icon"><use href="#icon-home"/></svg>今天</button>
+            <button role="tab" id="tab-record" aria-controls="workbench-panel" aria-selected="true" data-workspace="record"><svg class="icon"><use href="#icon-record"/></svg>记录</button>
+            <button role="tab" id="tab-knowledge" aria-controls="workbench-panel" aria-selected="false" data-workspace="knowledge"><svg class="icon"><use href="#icon-library"/></svg>知识</button>
+            <button role="tab" id="tab-write" aria-controls="workbench-panel" aria-selected="false" data-workspace="write"><svg class="icon"><use href="#icon-pen"/></svg>写作</button>
+            <button role="tab" id="tab-more" aria-controls="workbench-panel" aria-selected="false" data-workspace="more"><svg class="icon"><use href="#icon-more"/></svg>更多</button>
+          </div>
+          <div id="workbench-panel" role="tabpanel" aria-labelledby="tab-record"></div>
+        </aside>
+      </div>
+    </div>
+    <div class="preview-note"><span>可体验：切换工作区、提炼卡片、处理速记、收集素材、插入引用、保存暂存。</span><span>所有操作仅在当前演示中生效，刷新可还原。</span></div>
+    <noscript><p class="soft-note warning">请在浏览器中启用 JavaScript 以体验工作台；下方设计说明可直接阅读。</p></noscript>
+  </section>
+
+  <section class="section" id="processing">
+    <div class="section-head"><div><div class="section-index">02 / CAPTURE PROCESSING</div><h2>一条速记，可以有多个出口</h2><p>先保存输入，逐步判断用途。产生了一个结果之后，剩下的内容仍然可以继续处理。</p></div><button class="btn soft" data-action="try-capture">体验处理流程 <svg class="icon"><use href="#icon-arrow"/></svg></button></div>
+    <div class="guide-grid">
+      <article class="guide"><div class="guide-top"><span class="guide-number">01 · 原始记录</span><span class="pill amber">待处理</span></div><h3>阅读、观点和行动混在一起</h3><div class="capture-sample">看到一篇关于缓存失效的文章。<br>想到：缓存的失效边界应与数据所有权一致。<br>明天补一组失效场景的压测。</div><p>同一份原件保留上下文。先处理最有价值的一部分，不要求一次全部整理完。</p></article>
+      <article class="guide"><div class="guide-top"><span class="guide-number">02 · 逐步产生结果</span><span class="pill purple">可继续</span></div><h3>每个用途，有自己的去处</h3><div class="mini-result"><span>阅读理解</span><span class="pill">文献笔记</span></div><div class="mini-result"><span>缓存失效边界</span><span class="pill">观点卡片</span></div><div class="mini-result"><span>补充压测</span><span class="pill">原有任务页</span></div><p style="margin-top:14px">结果带回来源。时间线显示“待处理 · 已产生 2 个结果”，而不是直接移出待处理队列。</p></article>
+      <article class="guide"><div class="guide-top"><span class="guide-number">03 · 明确结束</span><span class="pill green">已处理</span></div><h3>由你确认，这条记录已处理好</h3><div class="capture-sample"><span class="ok">✓</span> 阅读材料已保存<br><span class="ok">✓</span> 想法已提炼<br><span class="ok">✓</span> 行动已进入任务页</div><p>处理完成与原文保留同时成立。之后仍能找到结果，也能重新恢复为待处理。</p></article>
+    </div>
+  </section>
+
+  <section class="section" id="relationships">
+    <div class="section-head"><div><div class="section-index">03 / CONTEXT & CITATIONS</div><h2>知道从哪里来，也知道后来用在了哪里</h2><p>来源、主题、写作候选和正文引用各自表达清楚，同一份内容可以被多次使用。</p></div></div>
+    <div class="relation-layout">
+      <div class="lineage">
+        <div class="lineage-pair"><div class="lineage-node"><small>生活与实践</small>11 月 17 日 · 事故复盘</div><div class="lineage-node"><small>参考资料</small>读书笔记 · 重试与幂等</div></div>
+        <div class="lineage-arrow">↓ 提炼来源</div>
+        <div class="lineage-node highlight"><small>自己的观点</small>重试需要稳定的操作身份</div>
+        <div class="lineage-arrow">↓ 持续组织与使用</div>
+        <div class="lineage-pair"><div class="lineage-node"><small>收录到主题</small>可靠性设计 · 主题笔记</div><div class="lineage-node"><small>用于论证</small>把失败恢复写进系统设计</div></div>
+        <div class="lineage-arrow">↺ 写作里的新见解，继续成为卡片</div>
+        <p class="small muted">Journal 和素材也可以直接用于稿件，不需要先经过卡片。</p>
+      </div>
+      <div>
+        <div class="relation-row"><h3>素材是可以使用的内容集合</h3><p>资源目录、剪藏、文献笔记在同一处浏览；显示各自的来源类别，原件保持原来的位置。</p></div>
+        <div class="relation-row"><h3>候选素材 ≠ 正文引用</h3><p>收集到稿件，表示“我可能会用”；写入正文，才表示“这篇文章引用了它”。移除候选项不会删掉正文引用。</p></div>
+        <div class="relation-row"><h3>同一天记录 ≠ 来源关系</h3><p>Journal 分开展示“从本篇提炼”与“同日记录”。时间帮助回忆，来源需要明确建立。</p></div>
+        <div class="relation-row"><h3>切换来源，写作目标保持不变</h3><p>查看材料时仍能看到选定稿件的名字。引用始终写向该稿件，随时可以返回继续写作。</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="decisions">
+    <div class="section-head"><div><div class="section-index">04 / WHAT CHANGED</div><h2>从 v1 的卡片盒，走向完整的工作台</h2><p>保留已有能力，并为它们找到清楚的位置。</p></div></div>
+    <div class="delta-list">
+      <div class="delta"><span><svg class="icon"><use href="#icon-home"/></svg></span><div><h3>四个主入口，其他能力仍然可达</h3><p>今天、记录、知识、写作常驻；收藏、专注、习惯、AI 与工具进入“更多”。全局只保留一个“新建”菜单。</p></div></div>
+      <div class="delta"><span><svg class="icon"><use href="#icon-calendar"/></svg></span><div><h3>Journal 加入记录与回顾路径</h3><p>日、周、月、季、年沿用现有周期与模板。回顾内容由用户预览后写入，不自动刷新历史正文。</p></div></div>
+      <div class="delta"><span><svg class="icon"><use href="#icon-pen"/></svg></span><div><h3>写作拥有自己的上下文</h3><p>暂存继续可用；保存后的稿件关联候选素材、正文引用与新观点，正文保持在原生编辑器中。</p></div></div>
+      <div class="delta"><span><svg class="icon"><use href="#icon-library"/></svg></span><div><h3>度量进入现有报表结构</h3><p>卡片与写作进入“笔记”子页，素材与剪藏留在“资源”，周期记录留在“时间”；保留八个报表顶层页。</p></div></div>
+    </div>
+  </section>
+
+  <section class="section" id="delivery">
+    <div class="section-head"><div><div class="section-index">05 / DELIVERY</div><h2>先贯通，再丰富</h2><p>这份原型同时预览 P0 与 P1 的交互，实际按完整的用户路径分期实现。</p></div><span class="pill">设计提案 · 尚未实现</span></div>
+    <div class="guide-grid">
+      <article class="phase"><span class="pill purple">P0 · 一条路径</span><h3>记录 → 卡片 → 稿件</h3><p>统一入口、单卡片提炼、来源追溯、素材候选和插入引用。基本的修订核对与失败恢复一起交付。</p></article>
+      <article class="phase"><span class="pill">P1 · 反复使用</span><h3>组织、回顾与持续写作</h3><p>多卡片处理、结构笔记、稿件阶段、主题起稿、每日与周期回顾。让材料在多个上下文里反复发挥作用。</p></article>
+      <article class="phase"><span class="pill">P2 · 辅助与观察</span><h3>AI 建议与可解释的度量</h3><p>提炼、关联和写作提纲建议由用户审阅；报表区分当前覆盖率、候选集合与真正的正文引用。</p></article>
+    </div>
+    <details class="spec-details"><summary>查看对应的数据约定与实现边界</summary><div class="spec-grid"><pre>tangrow_kind: card
+tangrow_id: "38f45ef1-7712-4190-ae7b-a49013fe5b8c"
+tangrow_stage: seed
+tangrow_sources:
+  - "[[2026-11-17#Incident review]]"
+  - "[[Retry semantics]]"
+
+# Sources remain in their original locations.
+# Reverse relationships are derived.</pre><pre>tangrow_kind: draft
+tangrow_writing_stage: outline
+tangrow_materials:
+  - "[[Retries need stable identities]]"
+  - "[[Retry semantics]]"
+
+# Candidates do not count as body citations.
+# Existing capture receipts remain readable.
+# New operations keep versioned receipts.</pre></div></details>
+  </section>
+  <footer class="page-footer"><span>Tangrow · 统一工作台设计稿 v2</span><span>沿用 v1 视觉语言 · 单文件 · 离线可打开</span></footer>
+</main>
+
+<dialog id="extract-dialog" aria-labelledby="extract-heading">
+  <form id="extract-form">
+    <header class="dialog-header"><div class="row between"><h2 id="extract-heading">提炼为卡片</h2><button type="button" class="btn ghost icon-button" data-close="extract-dialog" aria-label="关闭提炼弹窗"><svg class="icon"><use href="#icon-close"/></svg></button></div><p>保留原始上下文，把一个想法写成自己的观点。</p></header>
+    <div class="dialog-body"><div class="dialog-split"><div><span class="field-label">来源</span><div class="source-preview" id="extract-source"></div><p class="small muted" style="margin-top:10px">原文保留；新卡片记录来源链接。</p></div><div class="form-stack"><label><span class="field-label">观点标题</span><input class="field" id="extract-title" required maxlength="140"></label><label><span class="field-label">用自己的话展开</span><textarea class="field" id="extract-body" rows="7" required></textarea></label><div class="row"><span class="pill purple">种子</span><span class="small muted">保存到 50-Zettel</span></div></div></div><div id="extract-capture-options" style="margin-top:18px"><label class="check-option"><input type="checkbox" id="extract-complete"><span>这条速记的所有用途都已处理完<small>不勾选时，保存卡片后仍留在待处理列表。</small></span></label></div></div>
+    <footer class="dialog-footer"><span class="muted">预览：新建 1 张卡片，保留来源原文</span><button type="button" class="btn" data-close="extract-dialog">取消</button><button type="submit" class="btn primary">保存卡片</button></footer>
+  </form>
+</dialog>
+
+<dialog id="collect-dialog" aria-labelledby="collect-heading">
+  <form id="collect-form"><header class="dialog-header"><div class="row between"><h2 id="collect-heading">用于稿件</h2><button type="button" class="btn ghost icon-button" data-close="collect-dialog" aria-label="关闭稿件弹窗"><svg class="icon"><use href="#icon-close"/></svg></button></div><p>先加入候选列表，写作时再决定如何引用。</p></header><div class="dialog-body form-stack"><div class="context-box" id="collect-source"></div><label><span class="field-label">目标稿件</span><select class="field" id="collect-target"></select></label><label id="collect-new-title-wrap" hidden><span class="field-label">新稿件标题</span><input class="field" id="collect-new-title" maxlength="140" placeholder="这篇文章想说明什么？"></label><div class="soft-note neutral">只收集来源链接。加入候选列表不会增加正文引用数量。</div></div><footer class="dialog-footer"><button type="button" class="btn" data-close="collect-dialog">取消</button><button type="submit" class="btn primary">加入候选素材</button></footer></form>
+</dialog>
+
+<dialog id="create-dialog" aria-labelledby="create-heading">
+  <form id="create-form"><header class="dialog-header"><div class="row between"><h2 id="create-heading">新建</h2><button type="button" class="btn ghost icon-button" data-close="create-dialog" aria-label="关闭新建弹窗"><svg class="icon"><use href="#icon-close"/></svg></button></div><p id="create-description"></p></header><div class="dialog-body form-stack"><label id="create-title-wrap"><span class="field-label">标题</span><input class="field" id="create-title" maxlength="140"></label><label><span class="field-label" id="create-body-label">内容</span><textarea class="field" id="create-body" rows="6" required></textarea></label></div><footer class="dialog-footer"><button type="button" class="btn" data-close="create-dialog">取消</button><button type="submit" class="btn primary">保存</button></footer></form>
+</dialog>
+
+<dialog id="link-dialog" aria-labelledby="link-heading">
+  <form id="link-form"><header class="dialog-header"><div class="row between"><h2 id="link-heading">连接一个相关观点</h2><button type="button" class="btn ghost icon-button" data-close="link-dialog" aria-label="关闭关联弹窗"><svg class="icon"><use href="#icon-close"/></svg></button></div><p>留下连接的理由，以后能接着这条思路想下去。</p></header><div class="dialog-body form-stack"><label><span class="field-label">目标卡片</span><select class="field" id="link-target" required></select></label><label><span class="field-label">关系</span><select class="field" id="link-relation"><option value="supports">支撑</option><option value="extends">延伸</option><option value="contrasts">对比</option><option value="challenges">反驳</option></select></label><label><span class="field-label">为什么把它们连起来？</span><textarea class="field" id="link-reason" required rows="3" placeholder="用一句话写下这个联系"></textarea></label></div><footer class="dialog-footer"><span class="muted">只在发起连接的卡片中追加</span><button type="button" class="btn" data-close="link-dialog">取消</button><button type="submit" class="btn primary">保存连接</button></footer></form>
+</dialog>
+<dialog id="review-dialog" aria-labelledby="review-heading">
+  <form id="review-form"><header class="dialog-header"><div class="row between"><h2 id="review-heading">预览本周期索引</h2><button type="button" class="btn ghost icon-button" data-close="review-dialog" aria-label="关闭回顾弹窗"><svg class="icon"><use href="#icon-close"/></svg></button></div><p>选中的内容作为链接写入周期笔记，保留此刻的回顾上下文。</p></header><div class="dialog-body"><div id="review-items"></div><div class="soft-note neutral" style="margin-top:16px">这是一份明确确认的快照。之后新增的记录不会自动改写它。</div></div><footer class="dialog-footer"><button type="button" class="btn" data-close="review-dialog">取消</button><button type="submit" class="btn primary">插入所选链接</button></footer></form>
+</dialog>
+<div class="notice" id="notice" role="status" aria-live="polite"></div>
+<script>
+'use strict';
+
+const $ = (selector) => document.querySelector(selector);
+const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+})[character]);
+const icon = (name) => '<svg class="icon" aria-hidden="true"><use href="#icon-' + name + '"/></svg>';
+const kindLabels = { journal: 'Journal', capture: '速记', literature: '文献笔记', clip: '剪藏', card: '卡片', hub: '结构笔记', draft: '稿件', note: '普通笔记', project: '项目', tasks: '任务总览' };
+const kindIcons = { journal: 'calendar', capture: 'inbox', literature: 'library', clip: 'link', card: 'card', hub: 'hub', draft: 'pen', note: 'record', project: 'hub', tasks: 'check' };
+const writingStages = { outline: '提纲', drafting: '起草中', revising: '修改中', finished: '已完成', published: '已发布' };
+const cardStages = { seed: '种子', growing: '成长中', evergreen: '常青' };
+const relations = { supports: '支撑', extends: '延伸', contrasts: '对比', challenges: '反驳' };
+const periodLabels = { daily: '日', weekly: '周', monthly: '月', quarterly: '季', yearly: '年' };
+const periodNotes = { daily: 'day', weekly: 'week', monthly: 'month', quarterly: 'quarter', yearly: 'year' };
+
+function buildNotes() {
+  const notes = [
+    { id: 'day', kind: 'journal', title: '2026-11-17 · 周二', path: '10-Life(Meta)/13-Journal/2026/Daily/2026-11-17.md', period: 'daily',
+      excerpt: '今天复盘了一次请求超时。写入实际上已经成功，但调用方没有收到确认。重试时产生了第二条记录。\n重试需要复用同一次操作的身份，并先核对已有结果。',
+      body: '<h2>今天的记录</h2><p>上午和团队复盘了昨天的一次请求超时。日志里只有“失败”，但数据库中的写入已经完成。</p><h2>事故复盘</h2><p><mark>重试不是再做一遍相同的事，而是确认同一次操作是否已经完成。稳定的操作身份，让“新请求”和“上一次的继续”可以被区分。</mark></p><p>这个问题在速记转成多张卡片时也会出现：第二张保存失败，不应该让第一张再创建一次。</p><p class="note-hint">这段记录可以继续提炼，也可以直接用于稿件。</p><h2>留给自己的问题</h2><p>当确认消息丢失时，系统需要保留哪些证据，才能安全地继续？</p>' },
+    { id: 'capture', kind: 'capture', title: '缓存、阅读和明天的压测', path: '00-Inbox/Capture 2026-11-17 0924.md', processed: false, results: [],
+      excerpt: '看到一篇关于缓存失效的文章，值得读完。\n想到：缓存的失效边界应该与数据所有权一致。\n明天补一组失效场景的压测。',
+      body: '<p>看到一篇关于缓存失效的文章，值得读完。</p><p><mark>想到：缓存的失效边界应该与数据所有权一致。</mark></p><p>明天补一组失效场景的压测。</p>' },
+    { id: 'capture-two', kind: 'capture', title: '文章里还需要一个具体案例', path: '00-Inbox/Capture 2026-11-17 1430.md', processed: false, results: [],
+      excerpt: '为失败恢复的文章补一个例子：导出成功，但前端没有收到响应。\n重点写清楚用户应该如何继续。',
+      body: '<p>为失败恢复的文章补一个例子：导出成功，但前端没有收到响应。</p><p>重点写清楚用户应该如何继续。</p>' },
+    { id: 'material', kind: 'literature', title: '读书笔记 · 重试与幂等', path: '40-Resources/Reliability/Retry semantics.md',
+      excerpt: '阅读理解：幂等需要明确请求身份、有效范围，以及如何确认第一次请求的结果。\n一个业务操作的身份应该跨越它的所有重试。',
+      body: '<h2>出处与阅读范围</h2><p>关于请求重试、幂等与不确定结果的阅读整理。重点关注客户端超时与服务端提交之间的边界。</p><h2>自己的理解</h2><p><mark>请求失败的反馈，不足以证明副作用没有发生。再次执行之前，需要检查与操作身份绑定的结果。</mark></p><h2>需要继续追问</h2><ul><li>操作身份由谁产生、由谁保存？</li><li>有效范围与过期策略应该如何说明？</li></ul>' },
+    { id: 'cache-material', kind: 'clip', title: '缓存失效：边界与所有权', path: '40-Resources/Cache/Invalidation boundaries.md',
+      excerpt: '一份关于缓存失效边界的参考资料。重点阅读：失效的责任应该跟随数据的所有者。',
+      body: '<h2>阅读线索</h2><p>这份材料讨论缓存更新的责任边界，适合作为“缓存失效与数据所有权”这一观点的参考。</p><blockquote>先界定谁负责数据，再界定谁负责使缓存失效。</blockquote><h2>我的问题</h2><p>跨服务共享缓存时，应该把失效规则放在哪里？</p>' },
+    { id: 'identity', kind: 'card', title: '重试需要稳定的操作身份', path: '50-Zettel/重试需要稳定的操作身份.md', sources: ['day', 'material'], stage: 'growing',
+      connections: [{ target: 'scope', relation: 'extends', reason: '操作身份的有效性，依赖一个明确的幂等范围。' }],
+      excerpt: '一次业务操作的身份应当跨越所有重试。重试先查询这个身份对应的结果，再决定是否继续执行。',
+      body: '<p>一次业务操作的身份应当跨越所有重试。重试先查询这个身份对应的结果，再决定是否继续执行。</p><h2>为什么需要这个区分</h2><p>相同的正文可以是两次有意的提交；相同的操作身份，则表示我们正在确认同一次效果。用内容本身去重，会把这两种情形混在一起。</p>' },
+    { id: 'scope', kind: 'card', title: '幂等保证总有一个范围', path: '50-Zettel/幂等保证总有一个范围.md', sources: ['material'], stage: 'seed', connections: [], parent: 'identity',
+      excerpt: '讨论幂等时，需要同时说明它在什么存储、什么时间窗口和什么并发模型下成立。',
+      body: '<p>讨论幂等时，需要同时说明它在什么存储、什么时间窗口和什么并发模型下成立。</p><h2>一个需要留意的边界</h2><p>同一进程中的串行队列，可以消除一类重复提交；跨设备产生的独立请求，还需要它们共同理解的身份与持久化机制。</p>' },
+    { id: 'hub', kind: 'hub', title: '可靠性设计 · 主题笔记', path: '50-Zettel/可靠性设计.md', members: ['identity', 'scope', 'material'],
+      excerpt: '围绕“失败之后如何安全继续”组织观点、问题与阅读材料。',
+      body: '<p>围绕一个问题组织这些内容：<strong>失败之后，系统怎样知道接下来应该做什么？</strong></p><h2>一、识别同一次操作</h2><p>先区分新的意图与上一次请求的继续。</p><h2>二、说明保证的边界</h2><p>明确单进程、持久化状态与跨设备之间的差异。</p><h2>三、把未知结果变成可检查的状态</h2><p>继续补充实际案例与恢复流程。</p>' },
+    { id: 'draft', kind: 'draft', title: '把失败恢复写进系统设计', path: '00-Inbox/把失败恢复写进系统设计.md', candidates: ['identity', 'material'], citations: ['identity'], writingStage: 'drafting',
+      excerpt: '本文讨论一个常被忽略的状态：写入可能已经成功，但确认没有到达。系统应该怎样让用户安全继续？',
+      body: '<h2>问题：失败，不一定意味着没有发生</h2><p>一次导出已经写完文件，却在返回响应之前断开了连接。用户再点一次“导出”，系统应该创建第二份，还是返回第一次的结果？</p><p>要回答这个问题，我们需要先建立可追溯的操作身份，再说明恢复保证的边界。</p>' },
+    { id: 'tasks', kind: 'tasks', title: '任务总览', path: '10-Life(Meta)/12-Tasks.md', excerpt: '原有任务页中的行动。', body: '<p>行动仍然保存在原有任务页中。</p>' }
+  ];
+  for (const [id, title, path, period, range] of [
+    ['week', '2026 · 第 47 周', 'Weekly/2026-W47', 'weekly', '11 月 16 日 — 11 月 22 日'],
+    ['month', '2026 · 十一月', 'Monthly/2026-11', 'monthly', '11 月 1 日 — 11 月 30 日'],
+    ['quarter', '2026 · 第四季度', 'Quarterly/2026-Q4', 'quarterly', '10 月 1 日 — 12 月 31 日'],
+    ['year', '2026 · 年度回顾', 'Yearly/2026', 'yearly', '1 月 1 日 — 12 月 31 日']
+  ]) {
+    notes.push({ id, kind: 'journal', title, path: '10-Life(Meta)/13-Journal/2026/' + path + '.md', period, range,
+      excerpt: '回顾这一周期里的记录、观点与写作，决定接下来值得继续的事情。',
+      body: '<h2>这一周期，值得记住的事情</h2><p>从一次事故复盘出发，重新理解了“请求失败”与“操作没有发生”的区别。</p><h2>留下的观点</h2><p>稳定的操作身份，以及保证成立的范围，是这次思考的两条线索。</p><h2>继续推进的写作</h2><p>把失败恢复写进系统设计：补充一个贴近实际使用的例子。</p><h2>下一步</h2><p>把问题放回到真实的操作过程里，检查失败后是否还有足够的证据继续。</p>' });
+  }
+  for (const date of [15, 16]) {
+    notes.push({ id: 'day-' + date, kind: 'journal', title: '2026-11-' + date + ' · 日记', path: '10-Life(Meta)/13-Journal/2026/Daily/2026-11-' + date + '.md', period: 'daily',
+      excerpt: '回看当天的工作，整理值得继续的问题。',
+      body: '<h2>当天记录</h2><p>整理了最近的案例，留下几个关于恢复流程的问题。</p><h2>继续思考</h2><p>当一件事情只完成了一部分，界面怎样帮助使用者理解和继续？</p>' });
+  }
+  return notes.map((note) => ({ sources: [], connections: [], createdDay: '2026-11-17', ...note }));
+}
+
+function initialState() {
+  return {
+    notes: buildNotes(), active: 'day', workspace: 'record', recordTab: 'journal', knowledgeTab: 'cards',
+    writingTab: 'manuscripts', writingTarget: 'draft', period: 'daily', journalDate: 17,
+    selectedCapture: 'capture', captureFilter: 'pending', scenario: 'journal', moreView: '',
+    captureText: '', scratchTitle: '', scratchText: '', counter: 0, reviewed: [],
+    focusRunning: false, focusSeconds: 1500, habits: [false, true, false],
+    tasks: [
+      { id: 'task-1', title: '为失败恢复的文章补一个具体案例', done: false },
+      { id: 'task-2', title: '完成数据库事故复盘', done: true }
+    ]
+  };
+}
+
+let state = initialState();
+let extractSource = null;
+let collectSource = null;
+let linkSource = null;
+let createKind = 'note';
+let noticeTimer;
+
+const findNote = (id) => state.notes.find((note) => note.id === id);
+const notesOfKind = (...kinds) => state.notes.filter((note) => kinds.includes(note.kind));
+const derivedFrom = (id) => state.notes.filter((note) => note.sources.includes(id));
+const citationsOf = (id) => notesOfKind('draft').filter((note) => note.citations.includes(id));
+const candidatesOf = (id) => notesOfKind('draft').filter((note) => note.candidates.includes(id));
+const hubsOf = (id) => notesOfKind('hub').filter((note) => note.members.includes(id));
+
+function actionButton(label, action, value = '', variant = '') {
+  return '<button type="button" class="btn ' + variant + '" data-action="' + action + '" data-value="' + escapeHtml(value) + '">' + label + '</button>';
+}
+
+function noteLink(id, label) {
+  const note = findNote(id);
+  return note ? '<button class="note-link" type="button" data-note="' + note.id + '">' + escapeHtml(label ?? note.title) + '</button>' : '';
+}
+
+function noteRow(note, caption = '', ending = '') {
+  return '<button type="button" class="list-item" data-note="' + note.id + '"><span class="item-symbol">' + icon(kindIcons[note.kind]) + '</span><span class="item-text"><span class="item-title">' + escapeHtml(note.title) + '</span><span class="item-caption" style="display:block">' + escapeHtml(caption || kindLabels[note.kind]) + '</span></span>' + (ending ? '<span class="item-end">' + escapeHtml(ending) + '</span>' : '') + '</button>';
+}
+
+function sectionTitle(title, caption = '') {
+  return '<div class="section-title">' + title + '<span>' + caption + '</span></div>';
+}
+
+function noteRows(notes, emptyText = '这里还没有内容。') {
+  return notes.length ? notes.map((note) => noteRow(note)).join('') : '<div class="empty">' + emptyText + '</div>';
+}
+
+function subnav(items, selected, action) {
+  return '<div class="subnav" role="tablist" aria-label="子视图">' + items.map(([value, label]) => '<button type="button" role="tab" aria-selected="' + (value === selected) + '" data-action="' + action + '" data-value="' + value + '">' + label + '</button>').join('') + '</div>';
+}
+
+function taskRows() {
+  return state.tasks.map((task) => '<label class="task-line"><input type="checkbox" data-task="' + task.id + '"' + (task.done ? ' checked' : '') + '><span>' + escapeHtml(task.title) + (task.source ? ' <span class="muted small">来自速记</span>' : '') + '</span></label>').join('');
+}
+
+function renderEditor() {
+  const note = findNote(state.active);
+  const provenance = note.sources.map((id) => noteLink(id)).join('、');
+  let properties = '<div class="property"><span>类型</span><span>' + kindLabels[note.kind] + '</span></div>';
+  if (note.kind === 'journal') properties += '<div class="property"><span>周期</span><span>' + periodLabels[note.period] + ' · ' + escapeHtml(note.range || note.title.split(' · ')[0]) + '</span></div>';
+  if (note.kind === 'card') properties += '<div class="property"><span>成熟度</span><span>' + cardStages[note.stage] + '</span></div>';
+  if (note.kind === 'draft') properties += '<div class="property"><span>阶段</span><span>' + writingStages[note.writingStage] + '</span></div>';
+  if (note.kind === 'capture') properties += '<div class="property"><span>处理状态</span><span>' + (note.processed ? '已处理' : '待处理') + ' · 已有 ' + note.results.length + ' 个结果</span></div>';
+  if (provenance) properties += '<div class="property"><span>来自</span><span>' + provenance + '</span></div>';
+  let body = note.body;
+  if (note.kind === 'card' && note.connections.length) body += '<h2>关联</h2><ul>' + note.connections.map((edge) => '<li>' + noteLink(edge.target) + ' <span class="muted">— ' + relations[edge.relation] + '：</span>' + escapeHtml(edge.reason) + '</li>').join('') + '</ul>';
+  if (note.kind === 'hub') body += '<h2>相关内容</h2><ul>' + note.members.map((id) => '<li>' + noteLink(id) + '</li>').join('') + '</ul>';
+  if (note.kind === 'draft' && note.citations.length) body += '<h2>正文引用</h2>' + note.citations.map((id) => {
+    const source = findNote(id);
+    return '<blockquote>' + escapeHtml(source.excerpt.split('\n')[0]) + '<br>' + noteLink(id) + '</blockquote>';
+  }).join('');
+  if (note.kind === 'tasks') body += taskRows();
+  if (note.reviewSnapshot) body += '<h2>本周期索引 · 已确认的快照</h2><ul>' + note.reviewSnapshot.map((id) => '<li>' + noteLink(id) + '</li>').join('') + '</ul>';
+  const actionLabel = note.kind === 'capture' ? '提炼这个想法' : note.kind === 'draft' ? '把新观点提炼为卡片' : '提炼为卡片';
+  let actions = actionButton(icon('card') + actionLabel, 'extract', note.id, 'soft');
+  if (note.kind !== 'draft' && note.kind !== 'tasks') actions += actionButton(icon('pen') + '用于稿件', 'collect', note.id);
+  if (note.kind === 'card') actions += actionButton(icon('link') + '连接观点', 'connect', note.id);
+  if (note.kind === 'tasks') actions = '';
+  if (note.kind === 'hub') actions = actionButton(icon('pen') + '从主题开始写作', 'start-hub', note.id, 'soft') + actions;
+  const outputs = derivedFrom(note.id);
+  const citations = citationsOf(note.id);
+  let context = '';
+  if (outputs.length || citations.length) context = '<div class="note-links"><div class="note-links-label">这篇内容的后续</div><div class="row">' + outputs.map((item) => '<span class="pill">' + noteLink(item.id) + '</span>').join('') + citations.map((item) => '<span class="pill purple">引用于 ' + noteLink(item.id) + '</span>').join('') + '</div></div>';
+  $('#editor-path').textContent = note.path;
+  $('#editor-content').innerHTML = '<div class="note-label">' + icon(kindIcons[note.kind]) + kindLabels[note.kind] + '<span class="pill">原生笔记</span></div><h1 class="note-title">' + escapeHtml(note.title) + '</h1><div class="properties">' + properties + '</div><article class="note-body">' + body + '</article><div class="selection-actions">' + actions + '</div>' + context;
+  $('#editor-status').textContent = note.kind === 'draft' ? note.candidates.length + ' 项候选 · ' + note.citations.length + ' 条正文引用' : '来源与产出通过链接连接';
+}
+
+function renderToday() {
+  const pending = notesOfKind('capture').filter((note) => !note.processed);
+  return '<div class="eyebrow" style="margin-bottom:6px">TUESDAY · NOV 17</div><h3 style="font-size:20px">今天，接着往前写。</h3><p class="small muted" style="margin-top:5px">从一条记录，或一篇未完成的稿件开始。</p><div class="counter-grid"><div class="counter"><b>' + pending.length + '</b><span>待处理速记</span></div><div class="counter"><b>' + notesOfKind('card').length + '</b><span>观点卡片</span></div><div class="counter"><b>' + notesOfKind('draft').length + '</b><span>稿件</span></div></div><div class="context-box"><span class="small muted">今日 Journal</span><h3>11 月 17 日 · 事故复盘</h3>' + actionButton('打开今天的记录 ' + icon('arrow'), 'open-journal', 'daily', 'full') + '</div>' + sectionTitle('继续写作') + noteRow(findNote(state.writingTarget), '选定的稿件', '继续') + sectionTitle('今天的行动', '保留在原有任务页') + taskRows() + sectionTitle('回顾一个观点', '本日示例队列') + noteRow(findNote('scope'), state.reviewed.includes('scope') ? '今天已回顾' : '可以补充一个适用边界') + actionButton(state.reviewed.includes('scope') ? '已完成今日回顾' : '标记已回顾', 'review-card', 'scope', 'full ghost');
+}
+
+function renderJournal() {
+  const journalId = state.period === 'daily' ? (state.journalDate === 17 ? 'day' : 'day-' + state.journalDate) : periodNotes[state.period];
+  const journal = findNote(journalId);
+  const outputs = derivedFrom(journalId);
+  const days = Array.from({ length: 30 }, (_, index) => {
+    const day = index + 1;
+    const enabled = [15, 16, 17].includes(day);
+    return '<button type="button" data-action="journal-day" data-value="' + day + '" class="' + (enabled ? 'has-note' : '') + '" aria-label="2026年11月' + day + '日" aria-pressed="' + (day === state.journalDate) + '"' + (enabled ? '' : ' disabled') + '>' + day + '</button>';
+  }).join('');
+  const calendar = '<div class="row between small"><b>2026 年 11 月</b><span class="muted">3 篇示例日记</span></div><div class="calendar"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span>' + '<span></span>'.repeat(6) + days + '</div>';
+  const tabs = '<div class="period-tabs" aria-label="周期">' + Object.entries(periodLabels).map(([id, label]) => '<button type="button" data-action="period" data-value="' + id + '" aria-pressed="' + (state.period === id) + '">' + label + '</button>').join('') + '</div>';
+  let detail = '<div class="context-box"><span class="small muted">' + (state.period === 'daily' ? '选中的日记' : '选中的周期') + '</span><h3>' + escapeHtml(journal.title) + '</h3><p>' + escapeHtml(journal.range || '按经历记录，按问题提炼。') + '</p><div class="row" style="margin-top:9px">' + actionButton('打开原文', 'open', journalId, 'compact') + actionButton('提炼观点', 'extract', journalId, 'compact soft') + '</div></div>';
+  if (state.period === 'daily') {
+    detail += sectionTitle('从本篇提炼', outputs.length + ' 项') + noteRows(outputs, '这里展示明确来自这篇 Journal 的内容。') + sectionTitle('同日记录', '按创建日期浏览') + (state.journalDate === 17 ? noteRow(findNote('capture'), '09:24 · 速记', '同日') : '<div class="empty">这个示例日期没有其他记录。</div>') + '<div class="soft-note neutral" style="margin-top:10px">同日记录仅表示时间接近，不会自动成为本篇的来源或产出。</div>';
+  } else {
+    detail += sectionTitle('本周期线索', '示例范围') + noteRow(findNote('identity'), '从事故复盘形成的观点') + noteRow(findNote(state.writingTarget), '继续推进的稿件') + actionButton('预览本周期索引', 'review-snapshot', journalId, 'full soft');
+  }
+  return tabs + (state.period === 'daily' ? calendar : '') + detail;
+}
+
+function renderCaptures() {
+  const capture = findNote(state.selectedCapture);
+  const all = notesOfKind('capture');
+  const visible = all.filter((note) => state.captureFilter === 'all' || (state.captureFilter === 'pending' ? !note.processed : note.processed));
+  let selected = '<div class="context-box"><div class="row between"><span class="pill ' + (capture.processed ? 'green' : 'amber') + '">' + (capture.processed ? '已处理' : '待处理') + '</span><span class="small muted">已有 ' + capture.results.length + ' 个结果</span></div><h3>' + escapeHtml(capture.title) + '</h3><p>' + escapeHtml(capture.excerpt) + '</p><div class="row" style="margin-top:12px">' + actionButton('提炼为卡片', 'extract', capture.id, 'compact soft') + actionButton('保存阅读理解', 'capture-literature', capture.id, 'compact') + actionButton('追加任务', 'capture-task', capture.id, 'compact') + actionButton('用于稿件', 'collect', capture.id, 'compact') + '</div></div>';
+  if (capture.results.length) selected += sectionTitle('已有结果', '原速记保留') + noteRows(capture.results.map(findNote));
+  selected += actionButton(capture.processed ? '恢复为待处理' : '这条速记已全部处理好', 'capture-complete', capture.id, 'full ghost') + '<div class="divider"></div>';
+  return '<label class="field-label" for="capture-input">先记下来，稍后再整理</label><textarea class="field composer" id="capture-input" placeholder="一个想法、一个问题，或一条阅读线索…">' + escapeHtml(state.captureText) + '</textarea><div class="row between" style="margin:8px 0 16px"><span class="small muted">保存到原有 Inbox</span><button type="button" class="btn primary compact" id="save-capture" data-action="save-capture"' + (state.captureText.trim() ? '' : ' disabled') + '>保存速记</button></div>' + selected + '<div class="row between"><span class="small muted">11 月 17 日</span><select class="field" id="capture-filter" aria-label="速记处理状态" style="width:auto;padding:3px 7px;font-size:11px"><option value="pending">待处理</option><option value="processed">已处理</option><option value="all">全部</option></select></div>' + (visible.length ? visible.map((note) => noteRow(note, note.processed ? '已处理' : '待处理 · ' + note.results.length + ' 个结果')).join('') : '<div class="empty" style="margin-top:9px">这个筛选下没有速记。</div>');
+}
+
+function renderKnowledge() {
+  const list = state.knowledgeTab === 'materials' ? notesOfKind('literature', 'clip') : state.knowledgeTab === 'cards' ? notesOfKind('card') : notesOfKind('hub');
+  const active = findNote(state.active);
+  let detail = '';
+  if (['card', 'literature', 'clip', 'hub'].includes(active.kind)) {
+    detail = '<div class="divider"></div><div class="context-box"><span class="small muted">当前笔记 · ' + kindLabels[active.kind] + '</span><h3>' + escapeHtml(active.title) + '</h3><div class="row">' + actionButton('用于稿件', 'collect', active.id, 'compact soft') + (active.kind === 'card' ? actionButton('连接观点', 'connect', active.id, 'compact') : actionButton('提炼为卡片', 'extract', active.id, 'compact')) + '</div></div>';
+    if (active.kind === 'card') {
+      detail += sectionTitle('来源', active.sources.length + ' 项') + noteRows(active.sources.map(findNote), '这个原创观点还没有指定来源。');
+      const outgoing = active.connections.map((edge) => noteRow(findNote(edge.target), relations[edge.relation] + ' · ' + edge.reason));
+      const incoming = notesOfKind('card').filter((note) => note.connections.some((edge) => edge.target === active.id));
+      detail += sectionTitle('观点连接', outgoing.length + ' 条出链 · ' + incoming.length + ' 条反链') + outgoing.join('') + incoming.map((note) => noteRow(note, '从这张卡片连接而来')).join('');
+      const continuations = notesOfKind('card').filter((note) => note.parent === active.id);
+      if (active.parent || continuations.length) detail += sectionTitle('思路的后续', '父子关系') + (active.parent ? noteRow(findNote(active.parent), '上一层观点') : '') + continuations.map((note) => noteRow(note, '继续展开')).join('');
+      detail += sectionTitle('所属主题', hubsOf(active.id).length + ' 篇') + noteRows(hubsOf(active.id), '还没有被主题收录。');
+    } else {
+      detail += sectionTitle('从本篇提炼', derivedFrom(active.id).length + ' 项') + noteRows(derivedFrom(active.id), '可以从一段阅读理解开始。');
+    }
+    detail += sectionTitle('正文引用', citationsOf(active.id).length + ' 篇稿件') + noteRows(citationsOf(active.id), '加入候选素材后，仍需要在正文中实际引用。');
+  } else {
+    detail = '<div class="soft-note neutral" style="margin-top:14px">打开一份素材或卡片，查看它的来源、主题和写作去向。</div>';
+  }
+  const caption = state.knowledgeTab === 'materials' ? '资源、剪藏与文献笔记，保留原件位置。' : state.knowledgeTab === 'cards' ? '用自己的话，保存一个可独立理解的观点。' : '围绕一个问题，组织观点与论证路径。';
+  return subnav([['materials', '素材'], ['cards', '卡片'], ['hubs', '主题']], state.knowledgeTab, 'knowledge-tab') + '<p class="small muted" style="margin-bottom:10px">' + caption + '</p>' + list.map((note) => noteRow(note, note.kind === 'card' ? cardStages[note.stage] + ' · ' + note.sources.length + ' 项来源' : note.kind === 'hub' ? note.members.length + ' 项收录' : kindLabels[note.kind] + ' · ' + derivedFrom(note.id).length + ' 项提炼', note.kind === 'card' ? citationsOf(note.id).length + ' 篇引用' : '')).join('') + detail;
+}
+
+function renderWriting() {
+  const nav = subnav([['scratchpad', '写作暂存'], ['manuscripts', '稿件']], state.writingTab, 'writing-tab');
+  if (state.writingTab === 'scratchpad') {
+    return nav + '<h3>先写下一句话。</h3><p class="small muted" style="margin:7px 0 15px">暂存留在这里，准备好后再保存为稿件。</p><label class="field-label" for="scratch-title">临时标题</label><input class="field" id="scratch-title" value="' + escapeHtml(state.scratchTitle) + '" placeholder="这篇文章想说明什么？"><label class="field-label" for="scratch-body" style="margin-top:12px">写作内容</label><textarea class="field" id="scratch-body" rows="9" placeholder="从一个问题开始…">' + escapeHtml(state.scratchText) + '</textarea><div class="row between" style="margin:11px 0 18px"><span class="small muted">切换工作区会保留暂存</span><button type="button" id="save-scratch" class="btn primary compact" data-action="save-scratch"' + (state.scratchText.trim() ? '' : ' disabled') + '>保存为稿件</button></div>' + sectionTitle('回到已有稿件') + noteRows(notesOfKind('draft'));
+  }
+  const draft = findNote(state.writingTarget);
+  const active = findNote(state.active);
+  const selector = '<label class="field-label" for="writing-target">选定稿件</label><select class="field" id="writing-target" style="margin-bottom:12px">' + notesOfKind('draft').map((note) => '<option value="' + note.id + '"' + (draft.id === note.id ? ' selected' : '') + '>' + escapeHtml(note.title) + '</option>').join('') + '</select>';
+  const target = '<div class="writing-target"><div class="row between"><span class="small accent">' + icon('pin') + ' 写作目标已固定</span><span class="pill">' + writingStages[draft.writingStage] + '</span></div><h3>' + escapeHtml(draft.title) + '</h3>' + actionButton(active.id === draft.id ? '正在查看稿件' : '返回这篇稿件', 'open', draft.id, 'compact') + '</div>';
+  const counters = '<div class="counter-grid"><div class="counter"><b>' + draft.candidates.length + '</b><span>候选素材</span></div><div class="counter"><b>' + draft.citations.length + '</b><span>正文引用</span></div><div class="counter"><b>' + derivedFrom(draft.id).length + '</b><span>提炼的观点</span></div></div>';
+  const candidates = draft.candidates.map((id) => {
+    const note = findNote(id);
+    const cited = draft.citations.includes(id);
+    return '<div class="material-row"><div class="row"><span class="item-symbol">' + icon(kindIcons[note.kind]) + '</span><div class="grow">' + noteLink(id) + '</div><span class="pill ' + (cited ? 'green' : '') + '">' + (cited ? '已引用' : '候选') + '</span></div><div class="row"><button type="button" class="btn compact ' + (cited ? 'ghost' : 'soft') + '" data-action="cite" data-value="' + id + '"' + (cited ? ' disabled' : '') + '>' + (cited ? '正文已有引用' : '插入正文引用') + '</button>' + actionButton('移出候选', 'remove-candidate', id, 'compact ghost') + '</div></div>';
+  }).join('');
+  const stageOptions = Object.entries(writingStages).map(([value, label]) => '<option value="' + value + '"' + (draft.writingStage === value ? ' selected' : '') + '>' + label + '</option>').join('');
+  return nav + selector + target + counters + (active.id !== draft.id ? '<div class="soft-note neutral">正在查看来源：' + escapeHtml(active.title) + '<br>插入引用时，目标仍是上面的稿件。</div>' : '') + sectionTitle('候选素材', '收集后，再决定如何使用') + (candidates || '<div class="empty">到“知识”或“记录”中选择内容，加入这篇稿件。</div>') + sectionTitle('正文引用', draft.citations.length + ' 项') + noteRows(draft.citations.map(findNote), '正文还没有引用；候选列表不计入。') + '<label class="field-label" for="writing-stage" style="margin-top:17px">稿件阶段</label><select class="field" id="writing-stage">' + stageOptions + '</select>';
+}
+
+function renderMore() {
+  const choices = [['pins', 'pin', '收藏'], ['focus', 'clock', '专注'], ['habits', 'check', '习惯'], ['assistant', 'spark', 'AI 助手'], ['tools', 'record', '工具'], ['reports', 'library', '报表']];
+  const grid = '<div class="extra-grid">' + choices.map(([value, image, label]) => actionButton(icon(image) + label, 'more-view', value)).join('') + '</div>';
+  let content = '';
+  if (state.moreView === 'pins') content = sectionTitle('收藏') + noteRows([findNote('identity'), findNote('hub'), findNote('draft')]);
+  if (state.moreView === 'focus') content = sectionTitle('专注于这篇稿件') + noteRow(findNote(state.writingTarget)) + '<div class="focus-timer" id="focus-timer">' + formatTimer() + '</div>' + actionButton(state.focusRunning ? '暂停' : '开始 25 分钟', 'focus-toggle', '', 'full soft');
+  if (state.moreView === 'habits') content = sectionTitle('今天的小习惯') + ['阅读几页书', '记录一个观察', '推进一段写作'].map((title, index) => '<label class="task-line"><input type="checkbox" data-habit="' + index + '"' + (state.habits[index] ? ' checked' : '') + '><span>' + title + '</span></label>').join('');
+  if (state.moreView === 'assistant') content = sectionTitle('工作流预览', '此演示不请求 AI') + '<div class="context-box"><h3>从阅读笔记提炼候选观点</h3><p>1. 读取指定来源<br>2. 列出候选观点与出处<br>3. 预览后由用户选择保存</p></div><div class="soft-note neutral">即时建议只预填；多文件工作流仍由 Claudian 承担。</div>';
+  if (state.moreView === 'tools') content = sectionTitle('原有工具入口') + noteRow(findNote('tasks'), '任务总览') + noteRow(findNote('day'), '今日日记') + '<div class="soft-note neutral">复制链接、定位文件、行宽、主题与数据库仍可从工具区进入。</div>';
+  if (state.moreView === 'reports') content = sectionTitle('笔记报表 · 知识与写作') + '<div class="counter-grid"><div class="counter"><b>' + notesOfKind('card').length + '</b><span>卡片</span></div><div class="counter"><b>' + notesOfKind('draft').length + '</b><span>稿件</span></div><div class="counter"><b>' + new Set(notesOfKind('draft').flatMap((note) => note.citations)).size + '</b><span>被引用的内容</span></div></div><div class="soft-note neutral">保留八个顶层页：总览、行动、任务、项目、笔记、资源、领域、时间。这里仅预览“笔记”子页的示例集合。</div>';
+  return '<p class="small muted" style="margin-bottom:14px">常用的辅助能力，都留在这里。</p>' + grid + (content || sectionTitle('最近访问') + noteRows([findNote('day'), findNote('identity'), findNote('draft')]));
+}
+
+function renderWorkbench() {
+  const panel = $('#workbench-panel');
+  panel.setAttribute('aria-labelledby', 'tab-' + state.workspace);
+  document.querySelectorAll('[data-workspace]').forEach((button) => button.setAttribute('aria-selected', String(button.dataset.workspace === state.workspace)));
+  document.querySelectorAll('[data-scenario]').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.scenario === state.scenario)));
+  if (state.workspace === 'today') panel.innerHTML = renderToday();
+  if (state.workspace === 'record') panel.innerHTML = subnav([['captures', '速记'], ['journal', 'Journal']], state.recordTab, 'record-tab') + (state.recordTab === 'journal' ? renderJournal() : renderCaptures());
+  if (state.workspace === 'knowledge') panel.innerHTML = renderKnowledge();
+  if (state.workspace === 'write') panel.innerHTML = renderWriting();
+  if (state.workspace === 'more') panel.innerHTML = renderMore();
+  if ($('#capture-filter')) $('#capture-filter').value = state.captureFilter;
+}
+
+function render() {
+  renderEditor();
+  renderWorkbench();
+}
+
+function formatTimer() {
+  return String(Math.floor(state.focusSeconds / 60)).padStart(2, '0') + ':' + String(state.focusSeconds % 60).padStart(2, '0');
+}
+
+let reviewTarget = null;
+
+function toast(message) {
+  const notice = $('#notice');
+  notice.textContent = message;
+  notice.classList.add('visible');
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => notice.classList.remove('visible'), 3400);
+}
+
+function openNote(id) {
+  const note = findNote(id);
+  if (!note) return;
+  state.active = id;
+  if (note.kind === 'capture') state.selectedCapture = id;
+  if (note.kind === 'draft') state.writingTarget = id;
+  render();
+}
+
+function makeNote(kind, title, text, extra = {}) {
+  let unique = title.trim();
+  let suffix = 2;
+  const titles = new Set(state.notes.map((note) => note.title));
+  while (titles.has(unique)) unique = title.trim() + ' (' + suffix++ + ')';
+  const folder = kind === 'card' || kind === 'hub' ? '50-Zettel' : kind === 'literature' ? '40-Resources' : kind === 'project' ? '20-Project/' + unique : '00-Inbox';
+  const note = {
+    id: 'demo-' + (++state.counter), kind, title: unique, path: folder + '/' + unique + '.md',
+    excerpt: text, body: text.split(/\n\s*\n/).filter(Boolean).map((paragraph) => '<p>' + escapeHtml(paragraph).replace(/\n/g, '<br>') + '</p>').join(''),
+    createdDay: '2026-11-17', sources: [], connections: [], ...extra
+  };
+  state.notes.push(note);
+  return note;
+}
+
+function addResult(source, target) {
+  if (source.kind === 'capture' && !source.results.includes(target.id)) source.results.push(target.id);
+}
+
+function openExtraction(id) {
+  const source = findNote(id);
+  if (!source) return;
+  if (source.kind === 'capture' && source.processed) {
+    toast('先恢复为待处理，再继续整理这条速记。');
+    return;
+  }
+  extractSource = source.id;
+  const title = source.kind === 'capture' ? (source.id === 'capture' ? '缓存失效应跟随数据所有权' : '用具体案例解释恢复过程') : source.kind === 'draft' ? '恢复能力需要可观察的中间状态' : source.kind === 'journal' ? '确认结果应该先于重试' : '不确定结果需要可检查的证据';
+  const body = source.kind === 'capture' && source.id === 'capture' ? '缓存失效的责任，应当跟随数据的所有权。明确由谁决定数据变化，才能确定谁负责传播失效信息。\n\n当多个服务共享缓存时，需要先说明责任边界，再选择失效机制。' : '在不能确定前一次操作结果时，首先检查已有的证据，再决定是否执行下一步。\n\n这要求系统保留稳定的操作身份，以及能被再次读取的结果。';
+  $('#extract-source').textContent = source.title + '\n\n' + source.excerpt;
+  $('#extract-title').value = title;
+  $('#extract-body').value = body;
+  $('#extract-complete').checked = false;
+  $('#extract-capture-options').hidden = source.kind !== 'capture';
+  $('#extract-dialog').showModal();
+}
+
+function openCollection(id, startNew = false) {
+  const source = findNote(id);
+  if (!source) return;
+  collectSource = id;
+  $('#collect-source').innerHTML = '<span class="small muted">' + kindLabels[source.kind] + '</span><h3>' + escapeHtml(source.title) + '</h3>';
+  $('#collect-target').innerHTML = notesOfKind('draft').filter((note) => note.id !== id).map((note) => '<option value="' + note.id + '">' + escapeHtml(note.title) + '</option>').join('') + '<option value="new">＋ 开始一篇新稿件</option>';
+  $('#collect-target').value = startNew ? 'new' : state.writingTarget;
+  if (!$('#collect-target').value) $('#collect-target').value = 'new';
+  $('#collect-new-title').value = '';
+  updateCollectionTarget();
+  $('#collect-dialog').showModal();
+}
+
+function updateCollectionTarget() {
+  const isNew = $('#collect-target').value === 'new';
+  $('#collect-new-title-wrap').hidden = !isNew;
+  $('#collect-new-title').required = isNew;
+}
+
+function openConnection(id) {
+  linkSource = id;
+  $('#link-target').innerHTML = notesOfKind('card').filter((note) => note.id !== id).map((note) => '<option value="' + note.id + '">' + escapeHtml(note.title) + '</option>').join('');
+  $('#link-reason').value = '';
+  $('#link-dialog').showModal();
+}
+
+function openCreation(kind) {
+  createKind = kind;
+  $('#new-menu').open = false;
+  const labels = { capture: '速记', note: '普通笔记', task: '任务', project: '项目', card: '卡片' };
+  $('#create-heading').textContent = '新建' + labels[kind];
+  $('#create-description').textContent = kind === 'card' ? '一个完整的观点，不自动把当前文件当作来源。' : kind === 'task' ? '每行一条行动，追加到原有任务页。' : kind === 'capture' ? '先保存到 Inbox，稍后决定用途。' : kind === 'project' ? '沿用项目子目录及同名项目笔记。' : '保留普通笔记作为轻量的默认选择。';
+  const needsTitle = !['capture', 'task'].includes(kind);
+  $('#create-title-wrap').hidden = !needsTitle;
+  $('#create-title').required = needsTitle;
+  $('#create-title').value = '';
+  $('#create-body').value = '';
+  $('#create-body').required = ['capture', 'task', 'card'].includes(kind);
+  $('#create-body-label').textContent = kind === 'task' ? '行动（每行一条）' : ['note', 'project'].includes(kind) ? '内容（可选）' : '内容';
+  $('#create-dialog').showModal();
+}
+
+function captureLiterature(id) {
+  const source = findNote(id);
+  if (source.processed) { toast('请先恢复为待处理。'); return; }
+  const existing = derivedFrom(id).find((note) => note.kind === 'literature');
+  if (existing) { toast('阅读笔记已经保存，可以从结果列表打开。'); return; }
+  const note = makeNote('literature', '阅读理解 · ' + source.title, source.excerpt + '\n\n我的理解：先明确材料提出的问题，再把自己的判断写成独立观点。', { sources: [id] });
+  addResult(source, note);
+  render();
+  toast('阅读理解已保存。原速记仍然待处理。');
+}
+
+function captureTask(id) {
+  const source = findNote(id);
+  if (source.processed) { toast('请先恢复为待处理。'); return; }
+  if (state.tasks.some((task) => task.source === id)) { toast('这条行动已在任务页中，未重复添加。'); return; }
+  state.tasks.push({ id: 'demo-task-' + (++state.counter), title: id === 'capture' ? '补一组缓存失效场景的压测' : '继续整理：' + source.title, done: false, source: id });
+  addResult(source, findNote('tasks'));
+  render();
+  toast('任务已追加到原有任务页。原速记仍然待处理。');
+}
+
+function selectScenario(value, scroll = false) {
+  state.scenario = value;
+  if (value === 'journal') {
+    state.workspace = 'record'; state.recordTab = 'journal'; state.period = 'daily'; state.journalDate = 17; state.active = 'day';
+  } else if (value === 'capture') {
+    state.workspace = 'record'; state.recordTab = 'captures'; state.selectedCapture = 'capture'; state.active = 'capture';
+  } else if (value === 'writing') {
+    state.workspace = 'write'; state.writingTab = 'manuscripts'; state.active = state.writingTarget;
+  } else if (value === 'review') {
+    state.workspace = 'record'; state.recordTab = 'journal'; state.period = 'weekly'; state.active = 'week';
+  }
+  render();
+  if (scroll) $('#prototype').scrollIntoView({ block: 'start' });
+}
+
+function action(name, value) {
+  if (name === 'open') { openNote(value); return; }
+  if (name === 'extract') { openExtraction(value); return; }
+  if (name === 'collect') { openCollection(value); return; }
+  if (name === 'start-hub') { openCollection(value, true); return; }
+  if (name === 'connect') { openConnection(value); return; }
+  if (name === 'try-capture') { selectScenario('capture', true); return; }
+  if (name === 'capture-literature') { captureLiterature(value); return; }
+  if (name === 'capture-task') { captureTask(value); return; }
+  if (name === 'record-tab') {
+    state.recordTab = value;
+    state.active = value === 'captures' ? state.selectedCapture : state.period === 'daily' ? (state.journalDate === 17 ? 'day' : 'day-' + state.journalDate) : periodNotes[state.period];
+  }
+  if (name === 'knowledge-tab') state.knowledgeTab = value;
+  if (name === 'writing-tab') state.writingTab = value;
+  if (name === 'more-view') state.moreView = value;
+  if (name === 'period' || name === 'open-journal') {
+    state.period = value; state.workspace = 'record'; state.recordTab = 'journal';
+    state.active = value === 'daily' ? (state.journalDate === 17 ? 'day' : 'day-' + state.journalDate) : periodNotes[value];
+  }
+  if (name === 'journal-day') {
+    state.journalDate = Number(value);
+    state.active = Number(value) === 17 ? 'day' : 'day-' + value;
+  }
+  if (name === 'capture-complete') {
+    const source = findNote(value);
+    source.processed = !source.processed;
+    toast(source.processed ? '已标记处理完成。原文与所有结果继续保留。' : '已恢复为待处理。之前的结果继续保留。');
+  }
+  if (name === 'save-capture') {
+    const text = state.captureText.trim();
+    if (!text) return;
+    const note = makeNote('capture', text.split('\n')[0].slice(0, 30), text, { processed: false, results: [] });
+    state.captureText = ''; state.selectedCapture = note.id; state.active = note.id; state.captureFilter = 'pending';
+    toast('速记已保存到演示 Inbox。');
+  }
+  if (name === 'cite') {
+    const draft = findNote(state.writingTarget);
+    if (!draft.citations.includes(value)) {
+      draft.citations.push(value);
+      toast('引用已写入《' + draft.title + '》的正文。');
+    }
+  }
+  if (name === 'remove-candidate') {
+    const draft = findNote(state.writingTarget);
+    draft.candidates = draft.candidates.filter((id) => id !== value);
+    toast('已移出候选列表。原件与已写入的正文引用保持不变。');
+  }
+  if (name === 'save-scratch') {
+    if (!state.scratchText.trim()) return;
+    const draft = makeNote('draft', state.scratchTitle.trim() || '未命名的写作草稿', state.scratchText.trim(), { candidates: [], citations: [], writingStage: 'drafting' });
+    state.scratchText = ''; state.scratchTitle = '';
+    state.writingTarget = draft.id; state.active = draft.id; state.writingTab = 'manuscripts';
+    toast('暂存已保存为稿件，接下来可以为它收集材料。');
+  }
+  if (name === 'review-card') {
+    if (!state.reviewed.includes(value)) state.reviewed.push(value);
+    toast('已完成这张卡片的今日回顾。');
+  }
+  if (name === 'focus-toggle') {
+    if (!state.focusSeconds) state.focusSeconds = 1500;
+    state.focusRunning = !state.focusRunning;
+  }
+  if (name === 'review-snapshot') {
+    reviewTarget = value;
+    const choices = [findNote('day'), ...notesOfKind('card', 'draft')].slice(0, 8);
+    $('#review-items').innerHTML = choices.map((note) => '<label class="task-line"><input type="checkbox" name="review-item" value="' + note.id + '" checked><span>' + escapeHtml(note.title) + '<br><span class="muted small">' + kindLabels[note.kind] + '</span></span></label>').join('');
+    $('#review-dialog').showModal();
+    return;
+  }
+  render();
+}
+
+document.addEventListener('click', (event) => {
+  const target = event.target.closest('button, [data-close]');
+  if (!target || target.disabled) return;
+  if (target.dataset.close) { $('#' + target.dataset.close).close(); return; }
+  if (target.dataset.workspace) {
+    state.workspace = target.dataset.workspace; state.scenario = '';
+    render();
+  } else if (target.dataset.scenario) {
+    selectScenario(target.dataset.scenario);
+  } else if (target.dataset.note) {
+    openNote(target.dataset.note);
+  } else if (target.dataset.new) {
+    openCreation(target.dataset.new);
+  } else if (target.dataset.action) {
+    action(target.dataset.action, target.dataset.value || '');
+  }
+});
+
+document.addEventListener('input', (event) => {
+  const target = event.target;
+  if (target.id === 'capture-input') {
+    state.captureText = target.value;
+    $('#save-capture').disabled = !target.value.trim();
+  }
+  if (target.id === 'scratch-title') state.scratchTitle = target.value;
+  if (target.id === 'scratch-body') {
+    state.scratchText = target.value;
+    $('#save-scratch').disabled = !target.value.trim();
+  }
+});
+
+document.addEventListener('change', (event) => {
+  const target = event.target;
+  if (target.dataset.task) {
+    state.tasks.find((task) => task.id === target.dataset.task).done = target.checked;
+    render();
+  }
+  if (target.dataset.habit) state.habits[Number(target.dataset.habit)] = target.checked;
+  if (target.id === 'capture-filter') { state.captureFilter = target.value; renderWorkbench(); }
+  if (target.id === 'writing-target') { state.writingTarget = target.value; renderWorkbench(); }
+  if (target.id === 'writing-stage') {
+    findNote(state.writingTarget).writingStage = target.value;
+    render();
+  }
+  if (target.id === 'collect-target') updateCollectionTarget();
+});
+
+$('#extract-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const title = $('#extract-title').value.trim();
+  const text = $('#extract-body').value.trim();
+  if (!title || !text) return;
+  const source = findNote(extractSource);
+  const card = makeNote('card', title, text, { sources: [source.id], stage: 'seed' });
+  addResult(source, card);
+  if (source.kind === 'capture' && $('#extract-complete').checked) source.processed = true;
+  $('#extract-dialog').close();
+  render();
+  toast('卡片已保存' + (source.kind === 'capture' && !source.processed ? '，原速记仍然待处理。' : '，可以从来源页查看它。'));
+});
+
+$('#collect-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const source = findNote(collectSource);
+  let draft;
+  if ($('#collect-target').value === 'new') {
+    const title = $('#collect-new-title').value.trim();
+    if (!title) return;
+    const isHub = source.kind === 'hub';
+    draft = makeNote('draft', title, '这篇稿件要回答的问题：\n\n先写下一个问题，再组织论证的顺序。', {
+      candidates: isHub ? [...source.members] : [source.id], citations: [], writingStage: 'outline', sources: isHub ? [source.id] : []
+    });
+    if (isHub) draft.body = '<h2>问题</h2><p>失败之后，系统怎样知道接下来应该做什么？</p><h2>识别同一次操作</h2><p class="muted">从候选观点开始展开。</p><h2>说明保证的边界</h2><p class="muted">补充适用条件与反例。</p>';
+  } else {
+    draft = findNote($('#collect-target').value);
+    if (!draft.candidates.includes(source.id)) draft.candidates.push(source.id);
+  }
+  addResult(source, draft);
+  state.writingTarget = draft.id; state.writingTab = 'manuscripts'; state.workspace = 'write'; state.scenario = '';
+  $('#collect-dialog').close();
+  render();
+  toast('已加入稿件候选。正文引用数量保持不变。');
+});
+
+$('#link-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const source = findNote(linkSource);
+  const target = $('#link-target').value;
+  const reason = $('#link-reason').value.trim();
+  if (!target || !reason || target === source.id) return;
+  const relation = $('#link-relation').value;
+  const existing = source.connections.find((edge) => edge.target === target && edge.relation === relation);
+  if (existing) existing.reason = reason;
+  else source.connections.push({ target, relation, reason });
+  $('#link-dialog').close();
+  render();
+  toast('连接与理由已写入发起连接的卡片。');
+});
+
+$('#create-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const text = $('#create-body').value.trim();
+  if (['capture', 'task', 'card'].includes(createKind) && !text) return;
+  if (createKind === 'task') {
+    text.split('\n').map((line) => line.trim()).filter(Boolean).forEach((title) => state.tasks.push({ id: 'demo-task-' + (++state.counter), title, done: false }));
+    state.active = 'tasks'; state.workspace = 'today';
+  } else {
+    const title = createKind === 'capture' ? text.split('\n')[0].slice(0, 30) : $('#create-title').value.trim();
+    if (!title) return;
+    const extra = createKind === 'capture' ? { results: [], processed: false } : createKind === 'card' ? { stage: 'seed' } : {};
+    const note = makeNote(createKind, title, text, extra);
+    state.active = note.id;
+    if (createKind === 'capture') { state.selectedCapture = note.id; state.workspace = 'record'; state.recordTab = 'captures'; state.captureFilter = 'pending'; }
+    if (createKind === 'card') { state.workspace = 'knowledge'; state.knowledgeTab = 'cards'; }
+  }
+  state.scenario = '';
+  $('#create-dialog').close();
+  render();
+  toast('已保存到当前演示。');
+});
+
+$('#review-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const chosen = [...document.querySelectorAll('[name="review-item"]:checked')].map((input) => input.value);
+  const note = findNote(reviewTarget);
+  note.reviewSnapshot = [...new Set([...(note.reviewSnapshot || []), ...chosen])];
+  $('#review-dialog').close();
+  state.active = note.id;
+  render();
+  toast('已插入选定链接，同一项不会重复追加。');
+});
+
+$('#theme-toggle').addEventListener('click', () => {
+  const theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = theme;
+  $('#theme-toggle').setAttribute('aria-pressed', String(theme === 'light'));
+  try { localStorage.setItem('tangrow-design-theme', theme); } catch {}
+});
+
+$('#reset-demo').addEventListener('click', () => {
+  state = initialState();
+  document.querySelectorAll('dialog[open]').forEach((dialog) => dialog.close());
+  $('#new-menu').open = false;
+  render();
+  toast('已还原初始示例。');
+});
+
+document.addEventListener('keydown', (event) => {
+  if ($('#new-menu').open && (event.metaKey || event.ctrlKey) && /^[1-5]$/.test(event.key)) {
+    event.preventDefault();
+    openCreation(['capture', 'note', 'task', 'project', 'card'][Number(event.key) - 1]);
+    return;
+  }
+  if (event.key === 'Escape') $('#new-menu').open = false;
+  const tab = event.target.closest('[role="tab"]');
+  if (tab && ['ArrowLeft', 'ArrowRight'].includes(event.key)) {
+    const tabs = [...tab.closest('[role="tablist"]').querySelectorAll('[role="tab"]')];
+    const index = (tabs.indexOf(tab) + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length;
+    const next = tabs[index];
+    event.preventDefault();
+    const actionName = next.dataset.action;
+    const value = next.dataset.value;
+    const workspace = next.dataset.workspace;
+    next.click();
+    const replacement = workspace ? $('[data-workspace="' + workspace + '"]') : $('[data-action="' + actionName + '"][data-value="' + value + '"]');
+    replacement?.focus();
+  }
+});
+
+document.addEventListener('pointerdown', (event) => {
+  if (!event.target.closest('#new-menu')) $('#new-menu').open = false;
+});
+
+setInterval(() => {
+  if (!state.focusRunning) return;
+  state.focusSeconds = Math.max(0, state.focusSeconds - 1);
+  const timer = $('#focus-timer');
+  if (timer) timer.textContent = formatTimer();
+  if (!state.focusSeconds) {
+    state.focusRunning = false;
+    renderWorkbench();
+    toast('这一段专注已结束。');
+  }
+}, 1000);
+
+try {
+  const theme = localStorage.getItem('tangrow-design-theme');
+  if (theme === 'dark' || theme === 'light') document.documentElement.dataset.theme = theme;
+} catch {}
+$('#theme-toggle').setAttribute('aria-pressed', String(document.documentElement.dataset.theme === 'light'));
+render();
+</script>
+</body>
+</html>
