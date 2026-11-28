@@ -98,7 +98,7 @@ function fixture() {
   const content = root.createDiv();
   Object.assign(view, { contentEl: root, workspacePane: content, noteLabel: root.createDiv(), isMounted: true });
   view.showSection('more');
-  return { view, state, content, actions, bases };
+  return { view, state, content, actions, bases, settings: host.settings };
 }
 
 function actionButtons(content: Element, id: string): Element[] {
@@ -120,6 +120,22 @@ async function click(button: Element): Promise<void> {
 
 const legacyPages = [['focus', 'Focus'], ['habits', 'Habits'], ['pins', 'Pins']] as const;
 const subpages = [...legacyPages, ['databases', 'Your database views'], ['tools', 'File tools']] as const;
+
+test('the More navigation label stays short and localized when the interface language changes', () => {
+  const { view, content, settings } = fixture();
+  const button = content.createEl('button');
+  const label = button.createSpan({ cls: 'tangrow-nav-label' });
+  Object.assign(view, { navButtons: new Map([['more', button]]) });
+
+  view['refreshShellLabels']();
+  assert.equal(label.textContent, 'More');
+  assert.equal(button.getAttribute('aria-label'), 'More');
+
+  settings.language = 'zh-CN';
+  view['refreshShellLabels']();
+  assert.equal(label.textContent, '更多');
+  assert.equal(button.getAttribute('aria-label'), '更多');
+});
 
 test('More exposes one report entry and restores the opening row after returning from each subpage', async () => {
   const { content, actions, bases } = fixture();

@@ -235,10 +235,19 @@ test('project tasks show sorted sources, expand beyond five, and preserve raw te
   const { workbench, root, opened, completed } = fixture([story]);
   workbench.showProject(story.path);
   const rows = () => root.all().filter((element) => element.dataset.tangrowAction?.startsWith('project-task-note-'));
+  const name = (button: Element | undefined) => {
+    const id = button?.getAttribute('aria-labelledby');
+    assert.ok(id);
+    const label = button?.children.find((child) => child.getAttribute('id') === id);
+    assert.ok(label);
+    assert.equal(label.getAttribute('hidden'), '');
+    return label.textContent;
+  };
   assert.equal(rows().length, 5);
   assert.equal(root.querySelectorAll('progress')[0]?.getAttribute('aria-label'), '1/7 done');
-  assert.match(rows()[0]?.getAttribute('aria-label') ?? '', /Review terms.*Spec note.*#work\/plan.*Task overview/);
-  assert.match(rows()[1]?.getAttribute('aria-label') ?? '', /Project folder · Outline/);
+  assert.match(name(rows()[0]), /Review terms.*Spec note.*#work\/plan.*Task overview/);
+  assert.match(name(rows()[1]), /Project folder · Outline/);
+  assert.equal(name(control(root, `project-task-check-${overdue.path}:${overdue.line}`)), 'Complete: Review terms');
   await click(control(root, 'project-task-more'));
   assert.equal(rows().length, 6);
   assert.equal(control(root, 'project-task-more').getAttribute('aria-expanded'), 'true');
@@ -321,7 +330,9 @@ test('Areas route to related projects and return, with area-scoped note and task
   showAreas();
   await click(control(root, `area-open-${area.path}`));
   assert.equal(primary(root).getAttribute('aria-label'), 'Open the area note');
-  assert.match(control(root, 'area-task-note-30-Area/Work/Checklist.md:0').getAttribute('aria-label') ?? '', /Area folder · Checklist/);
+  const task = control(root, 'area-task-note-30-Area/Work/Checklist.md:0');
+  const name = task.children.find((child) => child.getAttribute('id') === task.getAttribute('aria-labelledby'));
+  assert.match(name?.textContent ?? '', /Area folder · Checklist/);
   await click(primary(root));
   await click(labelledButton(root, 'New note in this area'));
   const input = control(root, 'area-task-add');

@@ -93,6 +93,7 @@ interface Harness {
   FileView: typeof MockFileView;
   ItemView: typeof MockItemView;
   notices: string[];
+  tooltipBehavior: { set(element: GateElement, text: string): void };
   Platform: { isDesktopApp: boolean; isMacOS: boolean; isMobile?: boolean; isAndroidApp?: boolean; isIosApp?: boolean };
   compositionTiming: { later(callback: () => void, owner: Window): void };
   openCaptureWindow(app: unknown, host: unknown): Promise<void>;
@@ -130,6 +131,7 @@ interface TestSidebar {
   mountFocus(): void;
   refreshSection(state: Snapshot): void;
   refreshLanguage(): void;
+  renderTaskPreview(pane: GateElement, state: Snapshot, projects: WorkbenchProject[], today: Date): void;
   flushWritingDraft(): void;
 }
 
@@ -2211,6 +2213,35 @@ class GateElement extends StudioElement {
     await new Promise(resolve => setImmediate(resolve));
   }
 }
+
+test('task tooltip keeps the raw text separate from the accessible row name', () => {
+  const { plugin } = createPlugin();
+  plugin.settings.language = 'en';
+  const view = new harness.TangrowSidebar({}, plugin);
+  const pane = new GateElement();
+  const tasks = [
+    { path: 'Tasks.md', line: 0, text: 'Publish 🔺 🔁 every week #QA', done: false },
+    { path: 'Tasks.md', line: 1, text: 'Outline <!-- private note -->', done: false }
+  ];
+  const original = harness.tooltipBehavior.set;
+  harness.tooltipBehavior.set = (element, text) => element.setAttribute('aria-label', text);
+  try {
+    view.renderTaskPreview(pane, { ...plugin.snapshot(), tasks }, [], new Date(2026, 10, 28));
+  } finally { harness.tooltipBehavior.set = original; }
+
+  const targets = pane.all().filter(element => element.tag === 'button' && element.getAttribute('aria-labelledby'));
+  const names = targets.map(button => {
+    const id = button.getAttribute('aria-labelledby');
+    const name = button.children.find(child => child.getAttribute('id') === id);
+    assert.ok(name);
+    assert.equal(name.getAttribute('hidden'), '');
+    return name.textContent;
+  });
+  assert.equal(new Set(targets.map(button => button.getAttribute('aria-labelledby'))).size, 4);
+  assert.deepEqual(names, ['Complete: Publish', 'Publish, Highest priority, Weekly, #QA', 'Complete: Outline', 'Outline']);
+  assert.deepEqual(targets.map(button => button.getAttribute('aria-label')),
+    ['Mark done in the note', tasks[0]?.text, 'Mark done in the note', tasks[1]?.text]);
+});
 
 test('sidebar captures start with the composer and a week, with an expandable month and a date-specific journal', async () => {
   await withWindow(async () => {
