@@ -63,10 +63,15 @@ export interface WorkbenchProjectTaskSource extends TaskSummary {
 
 const NON_OUTPUT_KINDS = new Set(['capture', 'card', 'clip', 'literature', 'hub', 'topic', 'focus', 'habit']);
 
+export function hasProjectAreaLink(value: unknown): value is string {
+  return typeof value === 'string' && value.trim() !== '';
+}
+
 export function areaAssociationOwner<T extends { frontmatter?: Record<string, unknown> }>(canonical: readonly T[]): T | undefined {
   return canonical.find((note) => {
     const area = note.frontmatter?.tangrow_area;
-    return typeof area === 'string' && area.trim() !== '';
+    // A project can have an explicit clear on its owning note.
+    return area === null || hasProjectAreaLink(area);
   }) ?? canonical[0];
 }
 

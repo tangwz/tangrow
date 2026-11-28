@@ -32,7 +32,7 @@ import { addEditingActivity, createActivityState, normalizeActivityState, summar
 import { ReportSource } from './report-source';
 import { captureWritingNavigation } from './writing-navigation';
 import { aggregateReport } from './report-data';
-import { areaAssociationOwner, buildWorkbenchPara, workbenchPathIncluded, type WorkbenchArea, type WorkbenchLinkCandidate, type WorkbenchParaData, type WorkbenchProject,
+import { areaAssociationOwner, buildWorkbenchPara, hasProjectAreaLink, workbenchPathIncluded, type WorkbenchArea, type WorkbenchLinkCandidate, type WorkbenchParaData, type WorkbenchProject,
   type WorkbenchProjectRecord, type WorkbenchProjectTaskSource } from './project-workbench-data';
 import { canonicalEntityNotes, reportStatusSource } from './report-metrics';
 import { writeReportStatus } from './report-editing';
@@ -1288,12 +1288,10 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     const included = workbenchPathIncluded(this.settings);
     return canonicalEntityNotes(this.app.vault.getMarkdownFiles().filter((file) => file.parent?.path === folder.path && included(file.path)), folder.path);
   }
-  private workbenchProjectNote(path: string, canonical = false): TFile {
+  private workbenchProjectNote(path: string): TFile {
     const project = this.workbenchEntity(path, this.settings.projectFolder, 'Choose an existing project.');
     if (project instanceof TFile) return project;
-    const notePath = canonical
-      ? areaAssociationOwner(this.canonicalWorkbenchNotes(project).map((file) => ({ path: file.path, frontmatter: this.app.metadataCache.getFileCache(file)?.frontmatter })))?.path
-      : this.workbenchProjects().find((entry) => entry.path === path)?.notePath;
+    const notePath = this.workbenchProjects().find((entry) => entry.path === path)?.notePath;
     return this.workbenchLinkedNote(notePath, project.path, 'Choose an existing project note.');
   }
   private workbenchAreaNote(path: string): TFile {
@@ -1303,11 +1301,22 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   }
   async setWorkbenchProjectArea(projectPath: string, areaPath: string | null): Promise<void> {
     await this.exclusive(async () => {
-      const project = this.workbenchProjectNote(projectPath, true);
+      const project = this.workbenchEntity(projectPath, this.settings.projectFolder, 'Choose an existing project.');
+      const canonical = project instanceof TFile ? [project] : this.canonicalWorkbenchNotes(project);
+      const notes = await Promise.all(canonical.map(async (file) => {
+        const path = file.path;
+        const info = getFrontMatterInfo(await this.app.vault.read(file));
+        const parsed: unknown = info.exists ? parseYaml(info.frontmatter) : null;
+        const frontmatter = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
+        return { file, path, frontmatter };
+      }));
+      const owner = areaAssociationOwner(notes);
+      if (!owner || this.app.vault.getAbstractFileByPath(owner.path) !== owner.file) throw new Error('Choose an existing project note.');
       const area = areaPath === null ? null : this.workbenchAreaNote(areaPath);
-      const link = area ? this.propertyLink(area, project.path) : null;
-      await this.app.fileManager.processFrontMatter(project, (fields) => {
-        if (link === null) delete fields.tangrow_area;
+      const link = area ? this.propertyLink(area, owner.path) : null;
+      const hasFallback = notes.some((note) => note !== owner && hasProjectAreaLink(note.frontmatter?.tangrow_area));
+      await this.app.fileManager.processFrontMatter(owner.file, (fields) => {
+        if (link === null && !hasFallback) delete fields.tangrow_area;
         else fields.tangrow_area = link;
       });
     });

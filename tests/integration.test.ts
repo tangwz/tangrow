@@ -1475,6 +1475,37 @@ test('PARA links, area tasks and completion affect only their explicitly selecte
   assert.deepEqual(app.vault.createdPaths, []);
 });
 
+test('clearing a project area uses the on-disk canonical owner and preserves the fallback note', async () => {
+  const { plugin, app } = createPlugin();
+  const projectPath = '20-Project/Plan';
+  const primary = app.vault.seedFile(`${projectPath}/Plan.md`, '# Plan\n');
+  const owner = app.vault.seedFile(`${projectPath}/README.md`, '---\ntangrow_area: "[[30-Area/Work]]"\ncustom: "keep"\n---\n# Work plan\n');
+  const fallbackBody = '---\ntangrow_area: "[[30-Area/Home]]"\n---\n# Index\n';
+  const fallback = app.vault.seedFile(`${projectPath}/Index.md`, fallbackBody);
+  const work = app.vault.seedFile('30-Area/Work.md', '# Work\n');
+  const home = app.vault.seedFile('30-Area/Home.md', '# Home\n');
+  app.metadataCache.getFirstLinkpathDest = (link) => link === '30-Area/Work' ? work : link === '30-Area/Home' ? home : null;
+  assert.equal(plugin.workbenchProjects()[0]?.areaPath, work.path);
+
+  const getFileCache = app.metadataCache.getFileCache;
+  app.metadataCache.getFileCache = (file) => file === primary
+    ? { ...getFileCache(file), frontmatter: { tangrow_area: '[[30-Area/Work]]' } }
+    : getFileCache(file);
+  await plugin.setWorkbenchProjectArea(projectPath, null);
+  app.metadataCache.getFileCache = getFileCache;
+
+  assert.deepEqual(app.metadataCache.getFileCache(owner).frontmatter, { tangrow_area: null, custom: 'keep' });
+  assert.equal(plugin.workbenchProjects()[0]?.areaPath, null);
+  assert.equal(primary.content, '# Plan\n');
+  assert.equal(fallback.content, fallbackBody);
+  assert.deepEqual(app.vault.processedPaths, [owner.path]);
+
+  await plugin.setWorkbenchProjectArea(projectPath, work.path);
+  assert.equal(plugin.workbenchProjects()[0]?.areaPath, work.path);
+  assert.equal(fallback.content, fallbackBody);
+  assert.deepEqual(app.vault.processedPaths, [owner.path, owner.path]);
+});
+
 test('new area notes are additive in both folder and standalone note areas', async () => {
   const { plugin, app } = createPlugin();
   const areaFolder = app.vault.seedFolder('30-Area/Work');

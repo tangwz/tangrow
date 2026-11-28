@@ -112,3 +112,16 @@ test('an existing project area link keeps its canonical owner when a higher-prio
   assert.equal(plan?.areaPath, area);
   assert.equal(projects.find((entry) => entry.name === 'No canonical')?.areaNotePath, null);
 });
+
+test('an explicit project area clear suppresses another canonical note’s area link', () => {
+  const folder = '20-Project/Plan';
+  const owner = `${folder}/README.md`;
+  const area = '30-Area/Work.md';
+  const { projects, areas } = buildWorkbenchPara([
+    note(`${folder}/Plan.md`), note(owner, { tangrow_area: null }),
+    { ...note(`${folder}/Index.md`, { tangrow_area: '[[Work]]' }), linkedAreaPath: area }, note(area)
+  ], [], [], DEFAULT_SETTINGS);
+  assert.equal(projects[0]?.areaNotePath, owner);
+  assert.equal(projects[0]?.areaPath, null);
+  assert.deepEqual(areas[0]?.projects, []);
+});
