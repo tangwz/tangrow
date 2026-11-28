@@ -30,6 +30,13 @@ test('new installations use a root companion folder while stored paths remain ex
   assert.equal(readSettings({ supportFolder: 'Custom/Companion' }).supportFolder, 'Custom/Companion');
 });
 
+test('organizing preferences use boolean defaults and read explicit choices', () => {
+  const preferences = ({ showComingSoon, prepareDailyReview }: ReturnType<typeof readSettings>) => ({ showComingSoon, prepareDailyReview });
+  assert.deepEqual(preferences(readSettings({})), { showComingSoon: true, prepareDailyReview: false });
+  assert.deepEqual(preferences(readSettings({ showComingSoon: false, prepareDailyReview: true })), { showComingSoon: false, prepareDailyReview: true });
+  assert.deepEqual(preferences(readSettings({ showComingSoon: 'no', prepareDailyReview: 'yes' })), { showComingSoon: true, prepareDailyReview: false });
+});
+
 test('calendar days and streaks cross month boundaries and tolerate today pending', () => {
   const time = new Date(2026, 10, 1, 12).getTime();
   assert.deepEqual(recentDays(3, time), ['2026-10-30', '2026-10-31', '2026-11-01']);

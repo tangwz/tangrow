@@ -1,10 +1,14 @@
 import { Notice } from 'obsidian';
-import type { CardFilter, CardReportRow } from './card-report-data';
+import { groupWorkbenchMaterials, type CardReportRow, type MaterialReportRow } from './card-report-data';
 import { createCardReviewQueue, resolveCardReviewQueue, type CardReviewQueue, type CardReviewReason } from './card-review';
+import { sortCaptures } from './capture-data';
+import { capturePreview } from './capture-preview';
+import { journalInterval } from './periodic-notes';
 import type { ReportRecord } from './report-contract';
-import type { SidebarHost } from './types';
+import type { CaptureSummary, SidebarHost } from './types';
 import type { SidebarUI } from './ui';
 import type { KnowledgeTab } from './workbench-navigation';
+import { renderWorkbenchPicker, type WorkbenchPickerState } from './workbench-picker';
 
 type CardData = Awaited<ReturnType<SidebarHost['loadWorkbenchCards']>>;
 const PAGE_SIZE = 20;
@@ -13,6 +17,9 @@ const REVIEW_REASON: Record<CardReviewReason, string> = {
 };
 const STAGE_LABELS: Record<CardReportRow['stage'], string> = {
   seed: 'Seed', growing: 'Growing', evergreen: 'Evergreen', unset: 'Stage not set', unknown: 'Unknown stage'
+};
+const MATERIAL_ROLES: Record<MaterialReportRow['reason'], string> = {
+  literature: 'Literature note', clip: 'Web clipping', resource: 'Resource folder', derived: 'Distillation source'
 };
 
 export class WorkbenchCards {
@@ -25,6 +32,7 @@ export class WorkbenchCards {
   private refreshAgain = false;
   private reviewOpen = false;
   private pages: Partial<Record<KnowledgeTab, number>> = {};
+  private materialPicker?: { notePath: string; state: WorkbenchPickerState };
 
   constructor(
     private readonly host: SidebarHost,
@@ -32,7 +40,8 @@ export class WorkbenchCards {
     private readonly onChange: () => void,
     private readonly showKnowledge: (tab: KnowledgeTab) => void,
     private readonly manuscript: () => string | undefined,
-    private readonly chooseManuscript: () => void
+    private readonly chooseManuscript: () => void,
+    private readonly showCaptures: () => void
   ) {}
 
   refresh(openReview: boolean): void {
@@ -75,16 +84,19 @@ export class WorkbenchCards {
     }
   }
 
-  get homeSignature(): string {
-    const { data } = this;
-    return JSON.stringify([this.failed, this.queueFailed, data?.knowledge.today, data?.knowledge.counts.all,
-      data?.report.linksReady, data && [data.report.counts.week, data.report.counts.isolated, data.report.counts.candidate],
-      data?.knowledge.linksReady, this.recent().map((row) => [row.note.path, row.note.name, row.created, row.stage]),
-      this.reviewItems().map(({ entry, row, reviewed }) => [entry, row?.note.path, row?.note.name, reviewed]), this.queue !== undefined]);
-  }
-
-  private recent(): CardReportRow[] {
-    return this.data?.knowledge.rows.slice(0, 2).filter((row) => row.created) ?? [];
+  get todayActivity() {
+    const knowledge = this.data?.knowledge;
+    if (!knowledge || this.failed) return null;
+    const review = this.reviewItems().filter(({ row }) => row);
+    const week = journalInterval('weekly', knowledge.today).start;
+    return {
+      total: knowledge.rows.length,
+      newThisWeek: knowledge.rows.filter(({ created }) => created && created >= week && created <= knowledge.today).length,
+      unlinked: knowledge.linksReady ? knowledge.counts.isolated : null,
+      reviewTotal: review.length,
+      reviewDone: review.filter(({ reviewed }) => reviewed).length,
+      nextCard: review.find(({ reviewed }) => !reviewed)?.row?.note.name
+    };
   }
 
   private reviewItems() {
@@ -104,74 +116,156 @@ export class WorkbenchCards {
     }
   }
 
-  private reportButton(parent: HTMLElement, source: string, filter: CardFilter, count: number | null): void {
-    const label = `${this.ui.t(source)} · ${count === null ? this.ui.t('Pending confirmation') : this.ui.number(count)}`;
-    const button = this.ui.userButton(parent, label, () => this.host.openCardReport(filter), { cls: 'tangrow-chip', disabled: count === null });
-    button.dataset.tangrowAction = `home-card-report-${filter}`;
-  }
-
-  renderToday(parent: HTMLElement): void {
-    const section = parent.createDiv({ cls: 'tangrow-workbench-card' });
-    const heading = section.createDiv({ cls: 'tangrow-list-heading' });
-    this.ui.sectionHeading(heading, 'Card activity');
-    if (!this.renderStatus(section)) return;
-    const { knowledge, report } = this.data!;
-    const total = this.ui.userButton(heading, this.ui.t('View all · {count}', { count: this.ui.number(knowledge.counts.all) }), () => this.showKnowledge('cards'), { cls: 'tangrow-text-button' });
-    total.dataset.tangrowAction = 'home-cards';
-    const links = section.createDiv({ cls: 'tangrow-chips tangrow-card-links' });
-    this.reportButton(links, 'Created in the last 7 days', 'week', report.counts.week);
-    this.reportButton(links, 'Awaiting connections', 'isolated', report.linksReady ? report.counts.isolated : null);
-    this.reportButton(links, 'Manuscript candidates only', 'candidate', report.linksReady ? report.counts.candidate : null);
-    if (knowledge.counts.all === 0) {
-      this.ui.button(section, 'New card', () => this.host.openQuickAdd('card'), { icon: 'plus', cls: 'mod-cta tangrow-full-width' });
-      return;
-    }
-    this.renderReview(section, false);
-    const recent = this.recent();
-    this.ui.sectionHeading(section, 'Recently created cards');
-    if (!recent.length) this.ui.paragraph(section, 'No cards with a known creation date.');
-    for (const row of recent) this.note(section, row.note, this.cardMeta(row), 'notebook-pen');
-  }
-
   renderKnowledge(parent: HTMLElement, tab: KnowledgeTab): void {
     parent.empty();
+    if (tab !== 'materials') this.materialPicker = undefined;
     if (!this.renderStatus(parent)) return;
     const { knowledge, materials, hubs } = this.data!;
     if (tab === 'review') {
-      this.renderReview(parent, true);
+      this.renderReview(parent);
+      this.ui.comingSoon(parent, 'AI drafts today’s review');
+      return;
+    }
+    if (tab === 'materials') {
+      this.renderMaterials(parent, materials);
+      return;
+    }
+    if (tab === 'cards' && !knowledge.rows.length) {
+      this.renderFirstCard(parent);
+      this.ui.comingSoon(parent, 'AI drafts candidate cards');
+      return;
+    }
+    if (tab === 'hubs' && !hubs.length) {
+      const missing = 3 - knowledge.rows.length;
+      this.ui.empty(parent, 'No hubs yet', 'A hub connects related cards into a line of argument.', 'network', [{
+        label: missing <= 0 ? 'New hub' : missing === 3 ? 'Write cards first' : this.ui.t('Write {count} more cards', { count: this.ui.number(missing) }),
+        onClick: missing <= 0 ? () => this.host.openNewHub() : () => this.showKnowledge('cards'),
+        level: 'primary'
+      }]);
+      this.ui.comingSoon(parent, 'AI suggests which hub a card belongs to');
       return;
     }
     const heading = parent.createDiv({ cls: 'tangrow-list-heading' });
-    const label = { cards: 'Cards', hubs: 'Knowledge hubs', materials: 'Knowledge materials' }[tab];
+    const label = tab === 'cards' ? 'Cards' : 'Knowledge hubs';
     const rows = tab === 'cards' ? knowledge.rows.map((row) => ({ note: row.note, detail: this.cardMeta(row) }))
-      : tab === 'materials' ? materials.map((row) => ({ note: row.note, detail: this.ui.t({
-        literature: 'Literature note', clip: 'Web clipping', resource: 'Resource folder', derived: 'Distillation source'
-      }[row.reason]) }))
-        : hubs.map((note) => ({ note, detail: note.path }));
+      : hubs.map((note) => ({ note, detail: note.path }));
     this.ui.sectionHeading(heading, label);
     heading.createSpan({ cls: 'tangrow-muted', text: this.ui.number(rows.length) });
     if (tab === 'cards') {
       const actions = parent.createDiv({ cls: 'tangrow-chips tangrow-card-links' });
-      this.ui.button(actions, 'New card', () => this.host.openQuickAdd('card'), { icon: 'plus', cls: 'tangrow-chip' });
-      this.ui.button(actions, 'Open card report', () => this.host.openCardReport('all'), { icon: 'chart-no-axes-combined', cls: 'tangrow-chip' });
+      this.ui.button(actions, 'New card', () => this.host.openQuickAdd('card'), { icon: 'plus' });
+      this.ui.button(actions, 'Open card report', () => this.host.openCardReport('all'), { icon: 'chart-no-axes-combined', level: 'text' });
     }
-    if (!rows.length) {
-      this.ui.paragraph(parent, 'No notes in this view.');
-      return;
-    }
+    if (tab === 'hubs') this.ui.button(parent, 'New hub', () => this.host.openNewHub(), { icon: 'plus', level: 'text' });
+    this.renderPage(parent, tab, rows, (visible) => {
+      for (const { note, detail } of visible) this.note(parent, note, detail);
+    });
+    if (tab === 'cards') this.ui.comingSoon(parent, 'AI finds connections for a card');
+  }
+
+  private renderPage<T>(parent: HTMLElement, tab: KnowledgeTab, rows: readonly T[], render: (visible: T[]) => void): void {
     const lastPage = Math.ceil(rows.length / PAGE_SIZE);
-    const page = Math.min(this.pages[tab] ?? 1, lastPage);
-    for (const { note, detail } of rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)) this.note(parent, note, detail);
+    const page = Math.max(1, Math.min(this.pages[tab] ?? 1, lastPage));
+    render(rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE));
     if (lastPage < 2) return;
     const pager = parent.createDiv({ cls: 'tangrow-workbench-pager' });
     for (const [direction, step, icon] of [['Previous page', -1, 'chevron-left'], ['Next page', 1, 'chevron-right']] as const) {
       const control = this.ui.button(pager, direction, () => {
         this.pages[tab] = page + step;
+        if (tab === 'materials') this.materialPicker = undefined;
         this.onChange();
       }, { icon, cls: 'tangrow-chip', disabled: page + step < 1 || page + step > lastPage });
       control.dataset.tangrowAction = direction;
     }
     pager.createSpan({ cls: 'tangrow-muted', text: this.ui.t('Page {page} of {total}', { page: this.ui.number(page), total: this.ui.number(lastPage) }) });
+  }
+
+  private renderMaterials(parent: HTMLElement, materials: readonly MaterialReportRow[]): void {
+    if (!materials.length) {
+      this.materialPicker = undefined;
+      this.ui.empty(parent, 'No materials yet', 'Clippings, literature notes and resource notes appear here.', 'book-open');
+      return;
+    }
+    const allProjects = this.host.workbenchProjects();
+    const projectsByPath = new Map(allProjects.map((project) => [project.path, project]));
+    const projects = allProjects.filter((project) => project.notePath && project.status !== 'archived');
+    const associations = new Map(this.host.workbenchLinkCandidates().map((entry) => [entry.path, entry.projectPath]));
+    const groups = groupWorkbenchMaterials(materials, this.host.workbenchResources());
+    const rows = groups.flatMap((group) => group.materials.map((material) => ({ group, material })));
+    const projectOptions = projects.map(({ path, name, notePath }) => ({ path, label: name, detail: notePath ?? undefined }));
+    this.renderPage(parent, 'materials', rows, (visible) => {
+      let section = parent;
+      let previousGroup: typeof groups[number] | undefined;
+      for (const { group, material } of visible) {
+        if (group !== previousGroup) {
+          previousGroup = group;
+          section = parent.createEl('section', { cls: 'tangrow-material-group' });
+          section.createEl('h3', { cls: 'tangrow-section-title', text: group.kind === 'resource' ? group.resource.name
+            : this.ui.t(group.kind === 'clippings' ? 'Clippings outside resources' : 'Other materials') });
+        }
+        const { note, reason } = material;
+        const row = section.createDiv({ cls: 'tangrow-material-row' });
+        const linked = projectsByPath.get(associations.get(note.path) ?? '');
+        const role = this.ui.t(MATERIAL_ROLES[reason]);
+        const detail = linked ? `${role} · ${this.ui.t('Currently in {project}', { project: linked.name })}` : role;
+        this.note(row, note, detail, 'book-open');
+        const picker = this.materialPicker?.notePath === note.path ? this.materialPicker : undefined;
+        const actionId = `material-project-${note.path}`;
+        const closePicker = () => {
+          if (this.materialPicker?.notePath !== note.path) return;
+          this.materialPicker = undefined;
+          this.onChange();
+          Array.from(parent.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.dataset.tangrowAction === actionId)?.focus({ preventScroll: true });
+        };
+        const action = this.ui.button(row, 'Use in project', () => {
+          if (picker) { closePicker(); return; }
+          this.materialPicker = { notePath: note.path, state: { query: '', selected: linked?.path ?? null } };
+          this.onChange();
+          parent.querySelector<HTMLInputElement>('input.tangrow-material-project-search')?.focus({ preventScroll: true });
+        }, { level: 'text', icon: 'folder-kanban', disabled: !projects.length });
+        action.setAttribute('aria-expanded', String(!!picker));
+        action.dataset.tangrowAction = actionId;
+        if (!picker) continue;
+        const search = renderWorkbenchPicker(section, this.ui, {
+          label: this.ui.t('Choose a project'), items: projectOptions, state: picker.state, onCancel: closePicker,
+          onConfirm: async (path) => { await this.host.linkWorkbenchNote(note.path, path); closePicker(); }
+        });
+        search.addClass('tangrow-material-project-search');
+        search.dataset.tangrowAction = `material-project-search-${note.path}`;
+      }
+    });
+  }
+
+  private recentCaptures(): CaptureSummary[] {
+    return sortCaptures(this.host.snapshot().captures).slice(0, 2);
+  }
+
+  private renderFirstCard(parent: HTMLElement): void {
+    const captures = this.recentCaptures();
+    const blank = { label: 'Blank card', onClick: () => this.host.openQuickAdd('card') };
+    if (!captures.length) {
+      this.ui.empty(parent, 'Write your first card', 'Cards grow from your captures. Jot a thought, then develop one idea worth keeping.', 'notebook-pen', [
+        { label: 'Capture your first thought', onClick: this.showCaptures, level: 'primary' }, blank
+      ]);
+      return;
+    }
+    this.ui.empty(parent, 'Write your first card', 'A card expresses a single idea in your own words. Start with a recent capture.', 'notebook-pen', [blank]);
+    this.ui.sectionHeading(parent, 'Distill from a recent capture');
+    for (const capture of captures) {
+      const control = this.ui.userButton(parent, capture.name, async () => {
+        await this.host.openCardFromCapture(capture.path, () => parent.isConnected);
+      }, {
+        icon: 'inbox', cls: 'tangrow-note-row', title: capture.path
+      });
+      const descriptionId = `tangrow-capture-description-${crypto.randomUUID()}`;
+      control.dataset.tangrowAction = `distill-capture-${capture.path}`;
+      control.setAttribute('aria-label', this.ui.t('Distill capture: {capture}', { capture: capture.name }));
+      control.setAttribute('aria-describedby', descriptionId);
+      const preview = control.createSpan({ cls: 'tangrow-note-folder', text: this.ui.t('Loading preview...'), attr: { id: descriptionId } });
+      void this.host.readCapture(capture.path).then((content) => {
+        preview.textContent = capturePreview(content) || this.ui.t('No text preview');
+      }, () => { preview.textContent = this.ui.t('Preview unavailable'); });
+    }
   }
 
   private renderStatus(parent: HTMLElement): boolean {
@@ -200,8 +294,19 @@ export class WorkbenchCards {
     control.dataset.tangrowAction = `knowledge-note-${note.path}`;
   }
 
-  private renderReview(parent: HTMLElement, full: boolean): void {
+  private renderReview(parent: HTMLElement): void {
     const cards = this.data!.knowledge;
+    if (!cards.rows.length) {
+      const capture = this.recentCaptures()[0];
+      const label = capture ? 'Distill your first card' : 'Capture your first thought';
+      const onClick = capture ? async () => {
+        await this.host.openCardFromCapture(capture.path, () => parent.isConnected);
+      } : this.showCaptures;
+      this.ui.empty(parent, 'Review starts with cards', 'Review brings back a few cards each day, starting with unlinked cards and ones you have not seen in a while.', 'list-checks', [
+        { label, onClick, level: 'primary' }
+      ]);
+      return;
+    }
     const items = this.reviewItems();
     const available = items.filter(({ row }) => row);
     const next = available.find(({ reviewed }) => !reviewed);
@@ -213,8 +318,7 @@ export class WorkbenchCards {
     if (items.length > available.length) {
       section.createEl('p', { cls: 'tangrow-muted', text: this.ui.t('Unavailable cards · {count}', { count: this.ui.number(items.length - available.length) }) });
     }
-    if (!items.length && !cards.rows.length) this.ui.paragraph(section, 'No cards to review.');
-    else if (!this.queue && !cards.linksReady) this.ui.paragraph(section, 'Building knowledge links…');
+    if (!this.queue && !cards.linksReady) this.ui.paragraph(section, 'Building knowledge links…');
     else if (this.queueFailed) {
       this.ui.paragraph(section, 'The review queue could not be saved.');
       this.ui.button(section, 'Retry', async () => { await this.saveQueue(); this.onChange(); }, { icon: 'refresh-cw', cls: 'tangrow-chip' });
@@ -235,7 +339,7 @@ export class WorkbenchCards {
           this.queue = this.host.loadCardReview(this.queue.day) ?? this.queue;
         }
         this.onChange();
-      }, { icon: 'check', cls: 'tangrow-chip' });
+      }, { icon: 'check', level: 'primary' });
       mark.dataset.tangrowAction = 'mark-card-reviewed';
       const target = this.manuscript();
       const use = this.ui.button(actions, target ? 'Use in selected manuscript' : 'Choose a manuscript', async () => {
@@ -247,11 +351,12 @@ export class WorkbenchCards {
         } else this.chooseManuscript();
       }, { icon: 'pen-line', cls: 'tangrow-chip' });
       use.dataset.tangrowAction = 'review-use-card';
-    } else if (items.length) this.ui.paragraph(section, 'Today’s card review is complete.');
-    if (!full) {
-      const control = this.ui.button(section, 'Open review queue', () => this.showKnowledge('review'), { icon: 'list-checks', cls: 'tangrow-full-width tangrow-text-button' });
-      control.dataset.tangrowAction = 'home-card-review';
-      return;
+    } else if (items.length && !available.length) this.ui.paragraph(section, 'No cards from today’s queue are available.');
+    else if (items.length) {
+      const unlinked = cards.linksReady ? cards.counts.isolated : 0;
+      this.ui.empty(section, 'Today’s card review is complete.', 'A new set will be available tomorrow.', 'check', unlinked ? [{
+        label: this.ui.t('See unlinked cards · {count}', { count: this.ui.number(unlinked) }), onClick: () => this.host.openCardReport('isolated')
+      }] : []).setAttribute('role', 'status');
     }
     if (items.length) {
       this.ui.sectionHeading(section, 'Today’s review queue');

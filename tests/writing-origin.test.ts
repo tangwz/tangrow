@@ -168,7 +168,7 @@ test('a failed write releases navigation listeners and keeps the draft for retry
   await withWindow(async () => {
     const f = fixture(); const draft = f.plugin.loadWritingDraft(); f.app.vault.failCreates = 1;
     await assert.rejects(f.plugin.submitWritingDraft(draft.revision, f.origin), /Simulated vault write failure/);
-    assert.deepEqual(f.plugin.loadWritingDraft(), draft);
+    assert.deepEqual(f.plugin.loadWritingDraft(), { ...draft, preparedProjectPath: null });
     assert.equal(f.sourceDocument.count() + f.sourceDocument.defaultView.count(), 0);
     await f.plugin.submitWritingDraft(draft.revision, f.origin);
     assert.deepEqual(f.opens, ['source-window']);

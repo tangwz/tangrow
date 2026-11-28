@@ -1,6 +1,6 @@
 import { AccessGate, showRecoveryDrafts } from './access-gate';
 import { Notice, setIcon, setTooltip } from 'obsidian';
-import { captureCalendar, captureDay, groupCapturesByDay, shiftCaptureMonth } from './capture-data';
+import { captureCalendar, captureDay, captureWeek, groupCapturesByDay, shiftCaptureMonth } from './capture-data';
 import { capturePreview } from './capture-preview';
 import { CaptureProcessingModal } from './capture-processing-modal';
 import { DraftComposition, recomposeHint, tracksComposition } from './draft-composition';
@@ -14,12 +14,13 @@ const PAGE_SIZE = 12;
 const PREVIEW_CONCURRENCY = 3;
 const PREVIEW_CACHE_SIZE = 200;
 
-type CaptureSurface = 'sidebar' | 'window' | 'immersive';
+type CaptureSurface = 'sidebar' | 'today' | 'window' | 'immersive';
 interface PreviewJob { key: string; path: string; targets: Set<HTMLElement> }
 const openPanels = new WeakMap<SidebarHost, Set<CapturePanel>>();
 
 export class CapturePanel {
   private readonly instanceId = `tangrow-capture-${crypto.randomUUID()}`;
+  private readonly ui = new SidebarUI(() => this.host.settings.language, () => this.host.settings.showComingSoon);
   private conflict?: { id: string; text: string };
   private gate?: AccessGate;
   private root?: HTMLElement;
@@ -29,10 +30,15 @@ export class CapturePanel {
   private saveButton?: HTMLButtonElement;
   private count?: HTMLElement;
   private destination?: HTMLElement;
+  private monthToggle?: HTMLButtonElement;
+  private monthControls?: HTMLElement;
   private calendarTitle?: HTMLElement;
   private monthCount?: HTMLElement;
   private weekdays?: HTMLElement;
   private calendarGrid?: HTMLElement;
+  private calendarFooter?: HTMLElement;
+  private todayButton?: HTMLButtonElement;
+  private journalButton?: HTMLButtonElement;
   private timelineTitle?: HTMLElement;
   private timelineCount?: HTMLElement;
   private statusFilter?: HTMLSelectElement;
@@ -48,6 +54,7 @@ export class CapturePanel {
   private unsubscribeRecovery?: () => void;
   private removeSaveShortcut?: () => void;
   private selectedDay: string | null = null;
+  private monthExpanded = false;
   private focusedDay = captureDay(Date.now());
   private year = new Date().getFullYear();
   private monthIndex = new Date().getMonth();
@@ -70,8 +77,14 @@ export class CapturePanel {
   constructor(private readonly host: SidebarHost, private readonly surface: CaptureSurface = 'sidebar') {}
 
   showPending(): void {
-    this.captureFilter = 'pending';
     this.selectedDay = null;
+    this.setCaptureFilter('pending');
+  }
+
+  focusComposer(): void { this.editor?.focus(); }
+
+  private setCaptureFilter(filter: typeof this.captureFilter): void {
+    this.captureFilter = filter;
     this.limit = PAGE_SIZE;
     if (this.statusFilter) this.statusFilter.value = this.captureFilter;
     this.refresh();
@@ -79,12 +92,13 @@ export class CapturePanel {
 
   mount(container: HTMLElement): void {
     if (this.mounted) this.destroy();
+    const compact = this.surface === 'today';
     this.mounted = true;
     const panels = openPanels.get(this.host) ?? new Set<CapturePanel>();
     panels.add(this);
     openPanels.set(this.host, panels);
-    this.root = container.createDiv({ cls: 'tangrow-capture-panel' });
-    if (this.surface !== 'sidebar') {
+    this.root = container.createDiv({ cls: compact ? 'tangrow-capture-panel tangrow-capture-today' : 'tangrow-capture-panel' });
+    if (this.surface === 'window' || this.surface === 'immersive') {
       this.gate = new AccessGate(this.host, this.root, locked => this.protectDraft(locked), () => {
         if (this.editor) {
           this.editor.readOnly = false;
@@ -96,10 +110,12 @@ export class CapturePanel {
     }
     this.labels = [];
     this.buttonLabels.clear();
-    this.label(this.root, 'h3', 'Capture a thought', 'tangrow-section-title');
-    this.label(this.root, 'p', 'A small note in your existing inbox, ready to organize when you are.', 'tangrow-section-caption');
+    if (!compact) {
+      this.label(this.root, 'h3', 'Capture a thought', 'tangrow-section-title');
+      this.label(this.root, 'p', 'A small note in your existing inbox, ready to organize when you are.', 'tangrow-section-caption');
+    }
     const composer = this.root.createDiv({ cls: 'tangrow-composer' });
-    const editor = this.editor = composer.createEl('textarea', { cls: 'tangrow-textarea', attr: { rows: '6' } });
+    const editor = this.editor = composer.createEl('textarea', { cls: 'tangrow-textarea', attr: { rows: compact ? '1' : '6' } });
     editor.value = this.syncedCapture = this.host.loadComposer().capture;
     const canEdit = () => this.mounted && this.editor === editor && editor.isConnected && !editor.readOnly && !this.protecting;
     const suggestRecomposition = () => {
@@ -173,15 +189,20 @@ export class CapturePanel {
       this.button(composer, 'Open capture window', () => this.host.openCaptureWindow(), 'external-link', 'tangrow-capture-icon-button tangrow-capture-popout');
     }
     const composerFooter = composer.createDiv({ cls: 'tangrow-composer-footer' });
-    this.count = composerFooter.createSpan({ cls: 'tangrow-muted' });
-    if (this.surface !== 'immersive') this.button(composerFooter, 'Immersive capture', () => this.host.openImmersiveCapture(), 'expand', 'tangrow-capture-icon-button');
+    if (compact) this.destination = composerFooter.createSpan({ cls: 'tangrow-destination' });
+    else this.count = composerFooter.createSpan({ cls: 'tangrow-muted' });
+    if (this.surface === 'sidebar' || this.surface === 'window') {
+      this.button(composerFooter, 'Immersive capture', () => this.host.openImmersiveCapture(), 'expand', 'tangrow-capture-icon-button');
+    }
     this.saveButton = this.button(composerFooter, 'Save capture', () => this.submit(), 'arrow-up-right', 'mod-cta');
-    this.destination = this.root.createEl('p', { cls: 'tangrow-destination' });
+    if (!compact) this.destination = this.root.createEl('p', { cls: 'tangrow-destination' });
     this.recoveryArea = this.root.createDiv();
     this.unsubscribeRecovery = this.host.subscribeRecoveryDrafts(() => this.refreshRecoveryDrafts());
-    if (this.surface === 'immersive') {
-      this.root.addClass('tangrow-capture-composer-only');
-      this.label(this.root, 'p', 'Drafts sync automatically. Mod+Enter saves; Esc returns to your workspace.', 'tangrow-muted tangrow-immersive-hint');
+    if (compact || this.surface === 'immersive') {
+      if (this.surface === 'immersive') {
+        this.root.addClass('tangrow-capture-composer-only');
+        this.label(this.root, 'p', 'Drafts sync automatically. Mod+Enter saves; Esc returns to your workspace.', 'tangrow-muted tangrow-immersive-hint');
+      }
       this.unsubscribe = this.host.subscribe(() => this.refresh());
       this.unsubscribeComposer = this.host.subscribeComposer(() => this.syncComposer());
       this.language = '';
@@ -190,23 +211,44 @@ export class CapturePanel {
       return;
     }
     const calendar = this.root.createEl('section', { cls: 'tangrow-capture-calendar' });
-    const calendarHeader = calendar.createDiv({ cls: 'tangrow-capture-calendar-heading' });
+    if (this.surface === 'sidebar') {
+      this.monthToggle = calendar.createEl('button', {
+        cls: 'tangrow-button tangrow-text-button tangrow-capture-month-toggle',
+        attr: { type: 'button', 'aria-controls': `${this.instanceId}-month-controls ${this.instanceId}-days` }
+      });
+      this.monthToggle.addEventListener('click', () => {
+        if (this.showWeek) this.focusCalendarDate(new Date(this.selectedDay ? `${this.selectedDay}T12:00:00` : Date.now()));
+        this.monthExpanded = !this.monthExpanded;
+        this.refresh();
+      });
+    }
+    this.monthControls = calendar.createDiv({ attr: { id: `${this.instanceId}-month-controls` } });
+    const calendarHeader = this.monthControls.createDiv({ cls: 'tangrow-capture-calendar-heading' });
     this.button(calendarHeader, 'Previous month', () => this.moveMonth(-1), 'chevron-left', 'tangrow-capture-icon-button');
     this.calendarTitle = calendarHeader.createEl('h3', { attr: { id: `${this.instanceId}-month`, 'aria-live': 'polite' } });
     this.button(calendarHeader, 'Next month', () => this.moveMonth(1), 'chevron-right', 'tangrow-capture-icon-button');
-    this.periodControls = calendar.createDiv({ cls: 'tangrow-period-controls', attr: { role: 'group' } });
+    if (this.surface === 'window') {
+      this.periodControls = this.monthControls.createDiv({ cls: 'tangrow-period-controls', attr: { role: 'group' } });
+    }
     this.weekdays = calendar.createDiv({ cls: 'tangrow-capture-weekdays', attr: { 'aria-hidden': 'true' } });
-    this.calendarGrid = calendar.createDiv({ cls: 'tangrow-capture-days', attr: { role: 'group', 'aria-labelledby': `${this.instanceId}-month` } });
-    const calendarFooter = calendar.createDiv({ cls: 'tangrow-capture-calendar-footer' });
+    this.calendarGrid = calendar.createDiv({ cls: 'tangrow-capture-days', attr: { id: `${this.instanceId}-days`, role: 'group' } });
+    const calendarFooter = this.calendarFooter = calendar.createDiv({ cls: 'tangrow-capture-calendar-footer' });
     this.monthCount = calendarFooter.createSpan({ cls: 'tangrow-muted' });
     const calendarActions = calendarFooter.createDiv({ cls: 'tangrow-capture-calendar-actions' });
-    this.button(calendarActions, 'Today', () => this.selectToday(), undefined, 'tangrow-text-button');
+    this.todayButton = this.button(calendarActions, 'Today', () => this.selectToday(), undefined, 'tangrow-text-button');
     this.allDaysButton = this.button(calendarActions, 'All days', () => {
       this.selectedDay = null;
       this.limit = PAGE_SIZE;
       this.refresh();
+      if (this.showWeek) {
+        const control = this.dayButtons.get(this.focusedDay) ?? this.dayButtons.get(captureDay(Date.now()));
+        control?.focus({ preventScroll: true });
+      }
     }, undefined, 'tangrow-text-button');
-    this.root.prepend(calendar);
+    if (this.surface === 'sidebar') this.journalButton = this.button(calendarActions, 'Journal for this day', () => {
+      if (this.selectedDay) return this.host.openPeriodicNote('daily', this.selectedDay);
+    }, 'book-open', 'tangrow-text-button');
+    else this.root.prepend(calendar);
 
     const timelineHeader = this.root.createDiv({ cls: 'tangrow-capture-timeline-heading' });
     this.timelineTitle = this.label(timelineHeader, 'h3', 'Capture timeline', 'tangrow-section-title');
@@ -214,9 +256,7 @@ export class CapturePanel {
     for (const value of ['pending', 'processed', 'all']) this.statusFilter.createEl('option', { value });
     this.statusFilter.value = this.captureFilter;
     this.statusFilter.addEventListener('change', () => {
-      this.captureFilter = this.statusFilter!.value as typeof this.captureFilter;
-      this.limit = PAGE_SIZE;
-      this.refresh();
+      this.setCaptureFilter(this.statusFilter!.value as typeof this.captureFilter);
     });
     this.timelineCount = timelineHeader.createSpan({ cls: 'tangrow-muted', attr: { 'aria-live': 'polite' } });
     this.timeline = this.root.createDiv({ cls: 'tangrow-capture-timeline' });
@@ -244,7 +284,7 @@ export class CapturePanel {
       this.refreshRecoveryDrafts();
       for (const { element, source, values } of this.labels) element.textContent = this.t(source, values);
       this.root.setAttribute('aria-label', this.t('Quick capture'));
-      this.editor?.setAttribute('placeholder', this.t('An idea, a question, a link...'));
+      this.editor?.setAttribute('placeholder', this.t(this.surface === 'today' ? 'Capture a thought…' : 'An idea, a question, a link...'));
       this.statusFilter?.setAttribute('aria-label', this.t('Capture status'));
       const labels = { pending: 'Pending captures', processed: 'Processed captures', all: 'All captures' };
       for (const option of Array.from(this.statusFilter?.options ?? [])) option.textContent = this.t(labels[option.value as keyof typeof labels]);
@@ -256,11 +296,11 @@ export class CapturePanel {
     }
     if (this.destination) this.destination.textContent = this.t('Destination: {path}', { path: this.host.settings.inboxFolder });
     this.syncComposer();
-    if (this.surface === 'immersive') return;
+    if (this.surface === 'today' || this.surface === 'immersive') return;
     const captures = this.host.snapshot().captures;
     const fingerprint = captures.map((capture) => [capture.path, capture.created, capture.modified, capture.name, capture.processed, capture.processing]);
-    const calendarSignature = JSON.stringify([this.language, this.year, this.monthIndex, this.selectedDay, this.focusedDay, captureDay(Date.now()), fingerprint]);
-    const timelineSignature = JSON.stringify([this.language, this.selectedDay, this.captureFilter, this.limit, fingerprint]);
+    const calendarSignature = JSON.stringify([this.language, this.year, this.monthIndex, this.monthExpanded, this.selectedDay, this.focusedDay, captureDay(Date.now()), fingerprint]);
+    const timelineSignature = JSON.stringify([this.language, this.host.settings.showComingSoon, this.selectedDay, this.captureFilter, this.limit, fingerprint]);
     if (calendarSignature !== this.calendarSignature) {
       this.calendarSignature = calendarSignature;
       this.renderCalendar(captures);
@@ -300,6 +340,11 @@ export class CapturePanel {
     this.root = undefined;
     this.editor = undefined;
     this.recoveryArea = undefined;
+    this.monthToggle = undefined;
+    this.monthControls = undefined;
+    this.calendarFooter = undefined;
+    this.todayButton = undefined;
+    this.journalButton = undefined;
     this.periodControls = undefined;
     this.statusFilter = undefined;
     this.labels = [];
@@ -401,11 +446,12 @@ export class CapturePanel {
     const drafts = this.editor?.readOnly ? [] : this.host.loadRecoveryDrafts();
     this.recoveryArea.empty();
     this.recoveryArea.hidden = !drafts.length;
-    if (drafts.length) showRecoveryDrafts(this.recoveryArea, new SidebarUI(() => this.host.settings.language), this.host, drafts);
+    if (drafts.length) showRecoveryDrafts(this.recoveryArea, this.ui, this.host, drafts);
   }
 
   private updateComposerControls(): void {
     const text = this.host.loadComposer().capture;
+    if (this.surface === 'today') this.root?.setAttribute('data-has-draft', String(Boolean(text.trim())));
     if (this.count) this.count.textContent = text.length ? this.t('{count} characters', { count: this.number(Array.from(text).length) }) : this.t('Saved as Markdown');
     if (this.saveButton) {
       this.saveButton.disabled = this.submitting || !!this.composition || !text.trim();
@@ -443,18 +489,37 @@ export class CapturePanel {
     }
   }
 
+  private get showWeek(): boolean { return this.surface === 'sidebar' && !this.monthExpanded; }
+
   private renderCalendar(captures: CaptureSummary[]): void {
     if (!this.calendarGrid || !this.calendarTitle) return;
-    const cells = captureCalendar(captures, this.year, this.monthIndex);
-    this.calendarTitle.textContent = new Date(this.year, this.monthIndex, 1, 12).toLocaleDateString(this.host.settings.language, { year: 'numeric', month: 'long' });
-    this.renderPeriodControls();
-    if (this.monthCount) this.monthCount.textContent = this.t('{count} captures this month', { count: this.number(cells.filter((cell) => cell.inMonth).reduce((sum, cell) => sum + cell.count, 0)) });
+    const week = this.showWeek;
+    const cells = week ? captureWeek(captures) : captureCalendar(captures, this.year, this.monthIndex);
+    if (this.monthToggle) {
+      this.monthToggle.empty();
+      this.monthToggle.createSpan({ text: this.t(week ? 'This week' : 'Hide month') });
+      setIcon(this.monthToggle.createSpan({ cls: 'tangrow-icon', attr: { 'aria-hidden': 'true' } }), week ? 'chevron-down' : 'chevron-up');
+      this.monthToggle.setAttribute('aria-expanded', String(!week));
+    }
+    if (this.monthControls) this.monthControls.hidden = week;
+    if (this.calendarFooter) this.calendarFooter.hidden = week && this.selectedDay === null;
+    if (this.todayButton) this.todayButton.hidden = week;
+    if (this.journalButton) this.journalButton.hidden = this.selectedDay === null;
+    if (this.monthCount) this.monthCount.hidden = week;
+    if (week) this.calendarGrid.removeAttribute('aria-labelledby');
+    else {
+      this.calendarGrid.setAttribute('aria-labelledby', `${this.instanceId}-month`);
+      this.calendarTitle.textContent = new Date(this.year, this.monthIndex, 1, 12).toLocaleDateString(this.host.settings.language, { year: 'numeric', month: 'long' });
+      this.renderPeriodControls();
+      if (this.monthCount) this.monthCount.textContent = this.t('{count} captures this month', { count: this.number(cells.filter((cell) => cell.inMonth).reduce((sum, cell) => sum + cell.count, 0)) });
+    }
     if (this.allDaysButton) this.allDaysButton.setAttribute('aria-pressed', String(this.selectedDay === null));
     const active = this.calendarGrid.ownerDocument.activeElement as HTMLElement | null;
     const activeDay = this.calendarGrid.contains(active) ? active?.dataset.captureDate : undefined;
     this.calendarGrid.empty();
     this.dayButtons.clear();
-    const focusDate = cells.some((cell) => cell.date === this.focusedDay) ? this.focusedDay : cells.find((cell) => cell.inMonth)?.date;
+    const defaultCell = week ? cells.find((cell) => cell.today) : cells.find((cell) => cell.inMonth);
+    const focusDate = cells.some((cell) => cell.date === this.focusedDay) ? this.focusedDay : defaultCell?.date;
     for (const cell of cells) {
       const date = new Date(`${cell.date}T12:00:00`);
       const fullDate = date.toLocaleDateString(this.host.settings.language, { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
@@ -477,14 +542,17 @@ export class CapturePanel {
   }
 
   private selectDay(date: string): void {
-    const selected = new Date(`${date}T12:00:00`);
     this.selectedDay = date;
-    this.focusedDay = date;
-    this.year = selected.getFullYear();
-    this.monthIndex = selected.getMonth();
+    this.focusCalendarDate(new Date(`${date}T12:00:00`));
     this.limit = PAGE_SIZE;
     this.refresh();
     this.dayButtons.get(date)?.focus({ preventScroll: true });
+  }
+
+  private focusCalendarDate(date: Date): void {
+    this.focusedDay = captureDay(date.getTime());
+    this.year = date.getFullYear();
+    this.monthIndex = date.getMonth();
   }
 
   private selectToday(): void { this.selectDay(captureDay(Date.now())); }
@@ -531,6 +599,7 @@ export class CapturePanel {
   }
 
   private navigateCalendar(event: KeyboardEvent, date: string): void {
+    if (this.showWeek && ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown'].includes(event.key)) return;
     const movement: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 };
     const next = new Date(`${date}T12:00:00`);
     const weekday = (next.getDay() + 6) % 7;
@@ -543,9 +612,8 @@ export class CapturePanel {
       next.setFullYear(month.year, month.monthIndex, day);
     } else return;
     event.preventDefault();
-    this.focusedDay = captureDay(next.getTime());
-    this.year = next.getFullYear();
-    this.monthIndex = next.getMonth();
+    if (this.showWeek && !this.dayButtons.has(captureDay(next.getTime()))) return;
+    this.focusCalendarDate(next);
     this.refresh();
     this.dayButtons.get(this.focusedDay)?.focus({ preventScroll: true });
   }
@@ -561,11 +629,22 @@ export class CapturePanel {
     const activePath = this.timeline.contains(active) ? active?.dataset.captureSource : undefined;
     this.timeline.empty();
     this.footer.empty();
+    if (this.surface === 'sidebar' && captures.length) this.ui.comingSoon(this.timeline, 'AI suggests where each capture goes');
     if (!filtered.length) {
-      const empty = this.timeline.createDiv({ cls: 'tangrow-empty' });
       const hasCaptures = captures.length > 0;
-      empty.createEl('strong', { text: this.t(hasCaptures ? 'No captures match this filter' : this.selectedDay ? 'No captures on this day' : 'Your first thought starts here') });
-      empty.createEl('p', { cls: 'tangrow-muted', text: this.t(hasCaptures ? 'Choose another status or date to browse your captures.' : this.selectedDay ? 'Choose another day, or save a new thought above.' : 'Saved captures will appear by their creation date.') });
+      if (hasCaptures && this.captureFilter === 'pending' && this.selectedDay === null) {
+        this.ui.empty(this.timeline, 'Nothing left to process', 'New thoughts go in the box above. Processed captures keep their original text.', 'check', [{
+          label: this.t('See {count} processed', { count: this.number(captures.length) }),
+          onClick: () => {
+            this.setCaptureFilter('processed');
+            this.statusFilter?.focus({ preventScroll: true });
+          }
+        }]);
+        return;
+      }
+      const title = hasCaptures ? 'No captures match this filter' : this.selectedDay ? 'No captures on this day' : 'Your first thought starts here';
+      const detail = hasCaptures ? 'Choose another status or date to browse your captures.' : this.selectedDay ? 'Choose another day, or save a new thought above.' : 'Saved captures will appear by their creation date.';
+      this.ui.empty(this.timeline, title, detail, 'inbox');
       return;
     }
     const visible = groupCapturesByDay(filtered).flatMap((group) => group.captures).slice(0, this.limit);

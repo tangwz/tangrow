@@ -13,8 +13,9 @@ import type { QuickKind } from '../src/ai';
 import type { RecoveryDraft } from '../src/draft-submissions';
 import { baseDefinitions, setupReadme } from '../src/bases';
 import { aggregateReport } from '../src/report-data';
-import type { ActionId, ComposerState, FocusSession, Locale, NoteKind, Settings, Snapshot, WritingDraft } from '../src/types';
-import { JOURNAL_PERIODS, type JournalPeriod } from '../src/periodic-notes';
+import type { WorkbenchProject, WorkbenchProjectType } from '../src/project-workbench-data';
+import type { ActionId, CardSource, ComposerState, FocusSession, Locale, NoteKind, Settings, Snapshot, WritingDraft, WritingSaveOrigin } from '../src/types';
+import { JOURNAL_PERIODS, type JournalPeriod, type PeriodicSettingsPatch } from '../src/periodic-notes';
 import type { FileView as MockFileView, ItemView as MockItemView, MarkdownView as MockMarkdownView, MockApp, Plugin as MockPlugin, TFile as MockFile, TFolder as MockFolder, createMockApp as MockAppFactory } from './obsidian-mock';
 
 type FolderSettingKey = keyof Pick<Settings, 'supportFolder' | 'inboxFolder' | 'projectFolder' | 'areaFolder' | 'resourcesFolder' | 'archiveFolder' | 'journalFolder'>;
@@ -27,21 +28,39 @@ interface TestPlugin extends MockPlugin {
   writes: Promise<unknown>;
   onload(): Promise<void>;
   onunload(): void;
+  openOnboarding(onStartup?: boolean): void;
+  finishOnboarding(): Promise<void>;
   setup(): Promise<void>;
   openNote(path: string, line?: number): Promise<void>;
   openBase(id: 'captures'): Promise<void>;
   snapshot(): Snapshot;
+  workbenchProjects(): WorkbenchProject[];
+  workbenchProjectTypes(): WorkbenchProjectType[];
+  setWorkbenchProjectType(projectPath: string, type: string | null): Promise<void>;
+  workbenchDrafts(): Snapshot['drafts'];
+  setWorkbenchProjectArea(projectPath: string, areaPath: string | null): Promise<void>;
+  setWorkbenchProjectStatus(projectPath: string, status: 'open' | 'done'): Promise<void>;
+  linkWorkbenchNote(notePath: string, projectPath: string): Promise<void>;
+  addAreaTask(areaPath: string, title: string): Promise<void>;
+  createAreaNote(areaPath: string, title: string): Promise<void>;
+  revealWorkbenchPath(path: string): Promise<void>;
+  addProjectTask(projectNotePath: string, title: string): Promise<void>;
+  completeTask(path: string, line: number, expectedLabel?: string): Promise<void>;
   action(id: ActionId): Promise<void>;
-  createNote(kind: NoteKind, title: string, projectFolder?: string): Promise<void>;
+  createNote(kind: NoteKind, title: string, projectFolder?: string, body?: string, projectType?: string): Promise<void>;
+  createCard(title: string, body: string, source?: CardSource): Promise<void>;
+  createHub(title: string): Promise<void>;
+  openCardFromCapture(path: string, beforeOpen?: () => boolean): Promise<boolean>;
   updateFolderSetting(key: FolderSettingKey, path: string): Promise<void>;
-  setLanguage(language: Locale): Promise<void>;
+  setLanguage(language: Locale, options?: { localizeManagedFiles?: boolean }): Promise<void>;
+  updateOrganizingPreferences(patch: { showComingSoon?: boolean; prepareDailyReview?: boolean }): Promise<void>;
   loadScratch(): string;
   saveScratch(value: string): void;
   loadWritingDraft(): WritingDraft;
   updateWritingDraft(patch: Partial<Pick<WritingDraft, 'text' | 'title'>>, expectedRevision: number, viewId?: string): boolean;
   beginWritingDraftComposition(viewId: string, expectedRevision: number): boolean;
   endWritingDraftComposition(viewId: string): void;
-  submitWritingDraft(expectedRevision: number): Promise<void>;
+  submitWritingDraft(expectedRevision: number, origin?: WritingSaveOrigin, rescue?: boolean, projectPath?: string): Promise<void>;
   loadComposer(): ComposerState;
   saveComposer(patch: Partial<ComposerState>): void;
   subscribe(listener: () => void): () => void;
@@ -53,6 +72,7 @@ interface TestPlugin extends MockPlugin {
   readCapture(path: string): Promise<string>;
   openPeriodicNote(period: JournalPeriod, date?: string, immersive?: boolean): Promise<void>;
   updateJournalSettings(period: JournalPeriod, format: string, template: string): Promise<void>;
+  updatePeriodicSettings(patch: PeriodicSettingsPatch): Promise<void>;
   bindNoteImmersionAction(): void;
   toggleNoteImmersion(view?: MockMarkdownView | null): void;
   startFocus(minutes: number): Promise<void>;
@@ -66,11 +86,11 @@ interface TestPlugin extends MockPlugin {
 }
 interface Harness {
   TangrowPlugin: new (app: MockApp) => TestPlugin;
-  CapturePanel: new (host: TestPlugin, surface: 'immersive' | 'window' | 'sidebar') => {
+  CapturePanel: new (host: TestPlugin, surface: 'immersive' | 'window' | 'sidebar' | 'today') => {
     mount(container: GateElement): void; destroy(): void; editor: GateElement;
   };
   TangrowSidebar: new (leaf: unknown, host: TestPlugin) => TestSidebar;
-  QuickAddModal: new (host: TestPlugin, kind: QuickKind, text: string) => {
+  QuickAddModal: new (host: TestPlugin, kind: QuickKind, text: string, source?: CardSource) => {
     onOpen(): void; onClose(): void; save(): Promise<void>; suggest(): Promise<void>; setKind(kind: QuickKind): void;
   };
   createMockApp: typeof MockAppFactory;
@@ -80,6 +100,7 @@ interface Harness {
   FileView: typeof MockFileView;
   ItemView: typeof MockItemView;
   notices: string[];
+  tooltipBehavior: { set(element: GateElement, text: string): void };
   Platform: { isDesktopApp: boolean; isMacOS: boolean; isMobile?: boolean; isAndroidApp?: boolean; isIosApp?: boolean };
   compositionTiming: { later(callback: () => void, owner: Window): void };
   openCaptureWindow(app: unknown, host: unknown): Promise<void>;
@@ -109,11 +130,15 @@ interface TestSidebar {
   onOpen(): Promise<void>;
   onClose(): Promise<void>;
   renderShell(): void;
+  observeStatusBar(): void;
   refresh(): void;
   registerInterval(): void;
   clearStudioControls(): void;
   mountStudio(): void;
+  mountFocus(): void;
+  refreshSection(state: Snapshot): void;
   refreshLanguage(): void;
+  renderTaskPreview(pane: GateElement, state: Snapshot, projects: WorkbenchProject[], today: Date): void;
   flushWritingDraft(): void;
 }
 
@@ -395,6 +420,29 @@ test('language switches update exact generated presentation reversibly without c
   assert.deepEqual(app.vault.createdPaths, created);
 });
 
+test('the welcome guide can change language without rewriting existing generated files', async () => {
+  const { plugin, app } = createPlugin();
+  plugin.settings.language = 'en';
+  await plugin.setup();
+  const original = currentContents(app);
+  await plugin.setLanguage('zh-CN', { localizeManagedFiles: false });
+  assert.equal(plugin.settings.language, 'zh-CN');
+  assert.deepEqual(currentContents(app), original);
+  assert.deepEqual(app.vault.processedPaths, []);
+});
+
+test('first load leaves generated files untouched while selecting the default language', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    for (const [path, content] of generatedFiles({ ...plugin.settings, language: 'en' })) app.vault.seedFile(path, content);
+    const original = currentContents(app);
+    await plugin.onload();
+    assert.equal(plugin.settings.language, 'zh-CN');
+    assert.deepEqual(currentContents(app), original);
+    assert.deepEqual(app.vault.processedPaths, []);
+  });
+});
+
 test('language switches never process customized Bases, customized support instructions or user notes', async () => {
   const { plugin, app } = createPlugin();
   plugin.settings.language = 'en';
@@ -436,6 +484,36 @@ test('failed language saves restore the locale before any generated file is proc
   assert.deepEqual(new Map(app.vault.getFiles().map((file) => [file.path, file.stat.mtime])), modified);
   await plugin.setLanguage('zh-CN');
   assert.deepEqual(currentContents(app), generatedFiles(plugin.settings));
+});
+
+test('organizing preferences serialize edits, roll back a failed save and reject locked edits', async () => {
+  const { plugin, app } = createPlugin();
+  const preferences = ({ showComingSoon, prepareDailyReview }: Settings) => ({ showComingSoon, prepareDailyReview });
+  const updates: ReturnType<typeof preferences>[] = [];
+  const unsubscribe = plugin.subscribe(() => updates.push(preferences(plugin.settings)));
+  await Promise.all([
+    plugin.updateOrganizingPreferences({ showComingSoon: false }),
+    plugin.updateOrganizingPreferences({ prepareDailyReview: true })
+  ]);
+  assert.deepEqual(updates, [
+    { showComingSoon: false, prepareDailyReview: false },
+    { showComingSoon: false, prepareDailyReview: true }
+  ]);
+  const saved = preferences((plugin.savedData as { settings: Settings }).settings);
+  assert.deepEqual(saved, { showComingSoon: false, prepareDailyReview: true });
+  plugin.saveFailures = 1;
+  await assert.rejects(plugin.updateOrganizingPreferences({ showComingSoon: true, prepareDailyReview: false }), /Simulated settings write failure/);
+  assert.deepEqual(preferences(plugin.settings), saved);
+  assert.deepEqual(updates.at(-1), saved);
+
+  const writes = plugin.saveCalls;
+  Object.assign(plugin.access, { canUse: () => false });
+  await assert.rejects(plugin.updateOrganizingPreferences({ showComingSoon: true }), /Activate Tangrow/);
+  assert.equal(plugin.saveCalls, writes);
+  assert.deepEqual(preferences((plugin.savedData as { settings: Settings }).settings), saved);
+  assert.deepEqual(app.vault.createdPaths, []);
+  assert.deepEqual(app.vault.processedPaths, []);
+  unsubscribe();
 });
 
 test('language switches retain scratch text and a paused focus session in memory and persisted data', async () => {
@@ -668,6 +746,70 @@ test('new project notes use project subfolders and existing destinations stay wi
   }
   assert.deepEqual(app.vault.createdPaths, created);
   assert.equal(original.content, '# Keep this project\n');
+});
+
+test('project type creation and edits change only the selected project type owner', async () => {
+  const { plugin, app } = createPlugin();
+  const root = '20-Project/Legacy';
+  const named = app.vault.seedFile(`${root}/Legacy.md`, '# Keep this text\n');
+  const owner = app.vault.seedFile(`${root}/README.md`, '---\ntangrow_project_type: "Writing"\ncustom: "keep"\n---\n\n# Old project summary\n');
+  const fallbackOnly = app.vault.seedFile('20-Project/No canon/Chapter.md', '# Existing work\n');
+  assert.deepEqual(plugin.workbenchProjectTypes(), [{ key: 'writing', name: 'Writing', count: 1 }]);
+  await plugin.createNote('project', 'New production', undefined, 'A new article.', '  Writing  ');
+  const created = app.vault.getAbstractFileByPath('20-Project/New production/New production.md');
+  assert.ok(created instanceof harness.TFile);
+  assert.equal(app.metadataCache.getFileCache(created).frontmatter?.tangrow_project_type, 'Writing');
+  assert.ok(created.content.endsWith('# New production\n\nA new article.\n'));
+  assert.deepEqual(plugin.workbenchProjectTypes(), [{ key: 'writing', name: 'Writing', count: 2 }]);
+  await plugin.createNote('project', 'Additional note', root, '', 'Not its own project');
+  const existingFolderNote = app.vault.getAbstractFileByPath(`${root}/Additional note.md`);
+  assert.ok(existingFolderNote instanceof harness.TFile);
+  assert.equal(app.metadataCache.getFileCache(existingFolderNote).frontmatter?.tangrow_project_type, undefined);
+
+  await plugin.setWorkbenchProjectType(root, '  Code  ');
+  assert.equal(app.metadataCache.getFileCache(owner).frontmatter?.tangrow_project_type, 'Code');
+  assert.equal(plugin.workbenchProjects().find((project) => project.path === root)?.typeNotePath, owner.path);
+  await plugin.setWorkbenchProjectType(root, null);
+  assert.deepEqual(app.metadataCache.getFileCache(owner).frontmatter, { custom: 'keep' });
+  assert.equal(plugin.workbenchProjects().find((project) => project.path === root)?.projectType, null);
+  await assert.rejects(plugin.setWorkbenchProjectType('20-Project/No canon', 'Code'), /Choose an existing project note/);
+  assert.equal(fallbackOnly.content, '# Existing work\n');
+  assert.equal(named.content, '# Keep this text\n');
+  assert.deepEqual(app.vault.processedPaths, [owner.path, owner.path]);
+});
+
+test('clearing a project type suppresses secondary canonical types without editing the secondary notes', async () => {
+  const { plugin, app } = createPlugin();
+  const path = '20-Project/Multiple';
+  const owner = app.vault.seedFile(`${path}/Multiple.md`, '---\ntangrow_project_type: "Primary"\n---\n\n# Main\n');
+  const secondary = app.vault.seedFile(`${path}/README.md`, '---\ntangrow_project_type: "Secondary"\n---\n\n# Keep\n');
+  const original = secondary.content;
+  assert.equal(plugin.workbenchProjects()[0]?.projectType, 'Primary');
+  await plugin.setWorkbenchProjectType(path, null);
+  const project = plugin.workbenchProjects()[0];
+  assert.equal(project?.projectType, null);
+  assert.equal(project?.typeNotePath, owner.path);
+  assert.equal(app.metadataCache.getFileCache(owner).frontmatter?.tangrow_project_type, null);
+  assert.deepEqual(plugin.workbenchProjectTypes(), []);
+  assert.equal(secondary.content, original);
+  assert.deepEqual(app.vault.processedPaths, [owner.path]);
+  await plugin.setWorkbenchProjectType(path, 'Replacement');
+  assert.deepEqual(plugin.workbenchProjectTypes(), [{ key: 'replacement', name: 'Replacement', count: 1 }]);
+  assert.equal(secondary.content, original);
+});
+
+test('assigning an unclassified draft removes it from the Drafts view while retaining its original path', async () => {
+  const { plugin, app } = createPlugin();
+  const draft = app.vault.seedFile('00-Inbox/Article.md', '---\ntangrow_kind: "draft"\n---\n\nArticle body.\n');
+  const project = app.vault.seedFile('20-Project/Production/Production.md', '# Production\n');
+  app.metadataCache.getFirstLinkpathDest = (link) => link === '20-Project/Production/Production' ? project : null;
+  assert.deepEqual(plugin.workbenchDrafts().map((entry) => entry.path), [draft.path]);
+  await plugin.linkWorkbenchNote(draft.path, '20-Project/Production');
+  assert.deepEqual(plugin.workbenchDrafts(), []);
+  assert.deepEqual(plugin.workbenchProjects()[0]?.notes.map((entry) => entry.path), [draft.path]);
+  assert.equal(app.vault.getAbstractFileByPath('00-Inbox/Article.md'), draft);
+  assert.ok(draft.content.endsWith('Article body.\n'));
+  assert.deepEqual(app.vault.createdPaths, []);
 });
 
 test('unfinished task summaries include in-progress checkboxes and exclude completed or cancelled ones', async () => {
@@ -996,6 +1138,36 @@ test('finishing IME composition publishes the final body and releases other Stud
   });
 });
 
+test('sidebar measures its own window status bar and stops observing on close', async () => {
+  const { plugin } = createPlugin();
+  const view = new harness.TangrowSidebar({}, plugin);
+  const properties = new Map<string, string>();
+  let height = 28;
+  let resize: () => void = () => undefined;
+  let disconnected = false;
+  const statusBar = { getBoundingClientRect: () => ({ height }) };
+  class Observer {
+    constructor(callback: () => void) { resize = callback; }
+    observe(element: unknown): void { assert.equal(element, statusBar); }
+    disconnect(): void { disconnected = true; }
+  }
+  view.contentEl = Object.assign(new EventTarget(), {
+    empty: () => undefined,
+    ownerDocument: {
+      defaultView: { ResizeObserver: Observer },
+      querySelector: (selector: string) => selector === '.status-bar' ? statusBar : null
+    },
+    style: { removeProperty: (name: string) => properties.delete(name), setProperty: properties.set.bind(properties) }
+  });
+  view.observeStatusBar();
+  assert.equal(properties.get('--tangrow-status-bar-height'), '28px');
+  height = 34;
+  resize();
+  assert.equal(properties.get('--tangrow-status-bar-height'), '34px');
+  await view.onClose();
+  assert.ok(disconnected);
+});
+
 class StudioElement extends EventTarget {
   value = '';
   isConnected = true;
@@ -1011,6 +1183,9 @@ class StudioElement extends EventTarget {
   createDiv(): StudioElement { return new StudioElement(); }
   createEl(): StudioElement { return new StudioElement(); }
   createSpan(): StudioElement { return new StudioElement(); }
+  empty(): void {}
+  setAttribute(_key: string, _value: string): void {}
+  querySelector(_selector: string): StudioElement | undefined { return undefined; }
   setSelectionRange(start: number, end: number): void {
     this.selectionStart = start;
     this.selectionEnd = end;
@@ -1224,7 +1399,7 @@ test('failed writing submissions retain the draft for retry and originless retri
     const draft = plugin.loadWritingDraft();
     app.vault.failCreates = 1;
     await assert.rejects(plugin.submitWritingDraft(draft.revision), /Simulated vault write failure/);
-    assert.deepEqual(plugin.loadWritingDraft(), draft);
+    assert.deepEqual(plugin.loadWritingDraft(), { ...draft, preparedProjectPath: null });
     assert.equal(draftFiles(app).length, 0);
     app.workspace.setNavigationLeaf({ view: { getViewType: () => 'markdown' }, openFile: async () => { throw new Error('Simulated navigation failure'); } });
     await plugin.submitWritingDraft(draft.revision);
@@ -1235,6 +1410,84 @@ test('failed writing submissions retain the draft for retry and originless retri
     assert.equal(draftFiles(app).length, 1);
     assert.equal(app.workspace.navigationRequests.length, 0);
     assert.equal(harness.notices.some((notice) => notice.includes('Simulated navigation failure')), false);
+  });
+});
+
+test('writing submissions keep the selected project across a failed save and retry', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    const project = app.vault.seedFile('20-Project/First.md', '# First project\n');
+    const second = app.vault.seedFile('20-Project/Second.md', '# Second project\n');
+    plugin.updateWritingDraft({ text: 'A project manuscript.', title: 'My manuscript' }, plugin.loadWritingDraft().revision);
+    const { revision } = plugin.loadWritingDraft();
+    app.vault.failCreates = 1;
+    await assert.rejects(plugin.submitWritingDraft(revision, undefined, false, project.path), /Simulated vault write failure/);
+    assert.equal(plugin.loadWritingDraft().preparedProjectPath, project.path);
+    assert.equal(draftFiles(app).length, 0);
+    const restarted = new harness.TangrowPlugin(app);
+    restarted.savedData = structuredClone(plugin.savedData);
+    await restarted.onload();
+    const restored = restarted.loadWritingDraft();
+    assert.equal(restored.preparedProjectPath, project.path);
+    await restarted.submitWritingDraft(restored.revision, undefined, false, second.path);
+    const drafts = draftFiles(app);
+    assert.equal(drafts.length, 1);
+    assert.equal(app.metadataCache.getFileCache(drafts[0]!).frontmatter?.tangrow_project, '[[20-Project/First]]');
+    assert.deepEqual(restarted.workbenchDrafts(), []);
+    assert.equal(project.content, '# First project\n');
+    assert.equal(second.content, '# Second project\n');
+  });
+});
+
+test('writing submissions qualify a same-title project link when Obsidian prefers short links', async () => {
+  for (const [projectTitle, draftTitle] of [['Launch', 'Launch'], ['Café', 'cafe\u0301']] as const) {
+    await withWindow(async (timers) => {
+      const { plugin, app } = createPlugin();
+      const projectFolder = `20-Project/${projectTitle}`;
+      const original = '# Project note\n';
+      const project = app.vault.seedFile(`${projectFolder}/${projectTitle}.md`, original);
+      const projectTarget = project.path.slice(0, -3);
+      app.metadataCache.fileToLinktext = (file) => file.basename;
+      app.metadataCache.getFirstLinkpathDest = (link, sourcePath) => {
+        if (link === projectTarget) return project;
+        const source = app.vault.getAbstractFileByPath(sourcePath);
+        return link === projectTitle && source instanceof harness.TFile ? source : null;
+      };
+      await plugin.onload();
+      plugin.updateWritingDraft({ text: 'A project manuscript.', title: draftTitle }, plugin.loadWritingDraft().revision);
+
+      await plugin.submitWritingDraft(plugin.loadWritingDraft().revision, undefined, false, projectFolder);
+
+      const [draft] = draftFiles(app);
+      assert.ok(draft);
+      assert.equal(draft.path, `00-Inbox/${draftTitle}.md`);
+      assert.equal(app.metadataCache.getFileCache(draft).frontmatter?.tangrow_project, `[[${projectTarget}]]`);
+      app.metadataCache.trigger('changed', draft);
+      timers.flush();
+      assert.ok(plugin.workbenchProjects().find(({ path }) => path === projectFolder)?.notes.some(({ path }) => path === draft.path));
+      assert.deepEqual(plugin.workbenchDrafts(), []);
+      assert.equal(project.content, original);
+    });
+  }
+});
+
+test('a failed writing save can choose a new project after the original project moves', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    const project = app.vault.seedFile('20-Project/First.md', '# First project\n');
+    const second = app.vault.seedFile('20-Project/Second.md', '# Second project\n');
+    plugin.updateWritingDraft({ text: 'Keep this manuscript.' }, plugin.loadWritingDraft().revision);
+    const { revision } = plugin.loadWritingDraft();
+    app.vault.failCreates = 1;
+    await assert.rejects(plugin.submitWritingDraft(revision, undefined, false, project.path), /Simulated vault write failure/);
+    await app.vault.rename(project, '20-Project/Moved.md');
+    await assert.rejects(plugin.submitWritingDraft(revision), /saved project is unavailable/);
+    assert.deepEqual(plugin.loadWritingDraft(), { text: 'Keep this manuscript.', title: '', revision });
+    assert.equal(draftFiles(app).length, 0);
+    await plugin.submitWritingDraft(revision, undefined, false, second.path);
+    const drafts = draftFiles(app);
+    assert.equal(drafts.length, 1);
+    assert.equal(app.metadataCache.getFileCache(drafts[0]!).frontmatter?.tangrow_project, '[[20-Project/Second]]');
   });
 });
 
@@ -1356,6 +1609,125 @@ test('failed shared capture submissions retain the draft and release the submiss
   });
 });
 
+test('project tasks resolve existing property aliases and overview wikilinks, and write only the requested checkbox edit', async () => {
+  const { plugin, app } = createPlugin();
+  const project = app.vault.seedFile('20-Project/Plan/Plan.md', '---\ntangrow_status: "open"\n---\n\n# Plan\n');
+  const folderTask = app.vault.seedFile('20-Project/Plan/Checklist.md', '- [ ] Prepare 📅 2026-12-12\n');
+  const linked = app.vault.seedFile('00-Inbox/Draft.md', '---\ntangrow_kind: "draft"\ntangrow_project: "[[Plan|my plan]]"\n---\n\n- [/] Review draft\n');
+  const query = '# Tasks\r\n\r\n```tasks\r\nnot done\r\n```\r\n\r\n- [x] Already done [[Plan|my plan]]\r\n';
+  const overview = app.vault.seedFile(plugin.settings.taskOverviewPath, query);
+  app.metadataCache.getFirstLinkpathDest = (link) => link === 'Plan' || link === project.path.slice(0, -3) ? project : null;
+
+  await plugin.addProjectTask(project.path, 'Draft the opening');
+  assert.equal(overview.content, `${query}- [ ] Draft the opening [[20-Project/Plan/Plan]]\r\n`);
+  assert.deepEqual(app.vault.processedPaths, [overview.path]);
+  await assert.rejects(plugin.addProjectTask(linked.path, 'Out of project root'), /Choose an existing project note/);
+  await assert.rejects(plugin.addProjectTask('', 'No target'), /Choose an existing project note/);
+
+  assert.equal(plugin.workbenchProjects()[0]?.tasks.find((task) => task.path === folderTask.path)?.labelPending, true);
+  await new Promise((resolve) => setImmediate(resolve));
+  const [plan] = plugin.workbenchProjects();
+  assert.ok(plan);
+  assert.equal(plan.notePath, project.path);
+  assert.deepEqual(plan.tasks.map((task) => [task.text, task.sourceKind, task.done]).sort(), [
+    ['Already done [[Plan|my plan]]', 'overview', true], ['Draft the opening [[20-Project/Plan/Plan]]', 'overview', false],
+    ['Prepare 📅 2026-12-12', 'folder', false], ['Review draft', 'linked', false]
+  ]);
+  const task = plan.tasks.find((candidate) => candidate.path === folderTask.path);
+  assert.ok(task);
+  assert.equal(task.labelPending, undefined);
+  await app.vault.process(folderTask, (content) => content.replace('Prepare', 'Changed'));
+  await assert.rejects(plugin.completeTask(task.path, task.line, task.text), /This task changed in its note/);
+  assert.equal(folderTask.content, '- [ ] Changed 📅 2026-12-12\n');
+  assert.equal(project.content, '---\ntangrow_status: "open"\n---\n\n# Plan\n');
+});
+
+test('PARA links, area tasks and completion affect only their explicitly selected records', async () => {
+  const { plugin, app } = createPlugin();
+  const projectPath = '20-Project/Plan';
+  const areaPath = '30-Area/Work';
+  const project = app.vault.seedFile(`${projectPath}/Plan.md`, '---\nstatus: "active"\ncustom: "keep"\n---\n\n# Plan\n');
+  const area = app.vault.seedFile(`${areaPath}/README.md`, '# Work\n');
+  const material = app.vault.seedFile('40-Resources/Topic/Source.md', '---\norigin: "keep"\n---\n\nOriginal research.\n');
+  const overview = app.vault.seedFile(plugin.settings.taskOverviewPath, '# Tasks\n');
+  const excluded = app.vault.seedFile('90-Archive/Archived.md', '# Do not update\n');
+  app.metadataCache.getFirstLinkpathDest = (link) => {
+    const target = app.vault.getAbstractFileByPath(`${link}.md`);
+    return target instanceof harness.TFile ? target : null;
+  };
+  plugin.settings.reportExcludedFolders = [projectPath];
+
+  await plugin.setWorkbenchProjectArea(projectPath, areaPath);
+  assert.equal(app.metadataCache.getFileCache(project).frontmatter?.tangrow_area, '[[30-Area/Work/README]]');
+  assert.equal(plugin.workbenchProjects()[0]?.areaPath, areaPath);
+  await plugin.linkWorkbenchNote(material.path, projectPath);
+  assert.deepEqual(app.metadataCache.getFileCache(material).frontmatter, { origin: 'keep', tangrow_project: '[[20-Project/Plan/Plan]]' });
+  assert.equal(plugin.workbenchProjects()[0]?.references[0]?.path, material.path);
+  await assert.rejects(plugin.linkWorkbenchNote(excluded.path, projectPath), /Choose an existing note to link/);
+  await plugin.addAreaTask(areaPath, 'Check next milestone');
+  assert.equal(overview.content, '# Tasks\n- [ ] Check next milestone [[30-Area/Work/README]]\n');
+  assert.equal(area.content, '# Work\n');
+
+  await plugin.setWorkbenchProjectStatus(projectPath, 'done');
+  assert.equal(plugin.workbenchProjects()[0]?.status, 'done');
+  assert.equal(project.path, `${projectPath}/Plan.md`);
+  await plugin.revealWorkbenchPath(projectPath);
+  assert.equal(app.workspace.locatedFiles.at(-1), projectPath);
+  await plugin.setWorkbenchProjectStatus(projectPath, 'open');
+  assert.equal(plugin.workbenchProjects()[0]?.status, 'open');
+  await plugin.setWorkbenchProjectArea(projectPath, null);
+  assert.equal(plugin.workbenchProjects()[0]?.areaPath, null);
+  assert.deepEqual(app.metadataCache.getFileCache(project).frontmatter, { status: 'open', custom: 'keep' });
+  assert.equal(excluded.content, '# Do not update\n');
+  assert.deepEqual(app.vault.createdPaths, []);
+});
+
+test('clearing a project area uses the on-disk canonical owner and preserves the fallback note', async () => {
+  const { plugin, app } = createPlugin();
+  const projectPath = '20-Project/Plan';
+  const primary = app.vault.seedFile(`${projectPath}/Plan.md`, '# Plan\n');
+  const owner = app.vault.seedFile(`${projectPath}/README.md`, '---\ntangrow_area: "[[30-Area/Work]]"\ncustom: "keep"\n---\n# Work plan\n');
+  const fallbackBody = '---\ntangrow_area: "[[30-Area/Home]]"\n---\n# Index\n';
+  const fallback = app.vault.seedFile(`${projectPath}/Index.md`, fallbackBody);
+  const work = app.vault.seedFile('30-Area/Work.md', '# Work\n');
+  const home = app.vault.seedFile('30-Area/Home.md', '# Home\n');
+  app.metadataCache.getFirstLinkpathDest = (link) => link === '30-Area/Work' ? work : link === '30-Area/Home' ? home : null;
+  assert.equal(plugin.workbenchProjects()[0]?.areaPath, work.path);
+
+  const getFileCache = app.metadataCache.getFileCache;
+  app.metadataCache.getFileCache = (file) => file === primary
+    ? { ...getFileCache(file), frontmatter: { tangrow_area: '[[30-Area/Work]]' } }
+    : getFileCache(file);
+  await plugin.setWorkbenchProjectArea(projectPath, null);
+  app.metadataCache.getFileCache = getFileCache;
+
+  assert.deepEqual(app.metadataCache.getFileCache(owner).frontmatter, { tangrow_area: null, custom: 'keep' });
+  assert.equal(plugin.workbenchProjects()[0]?.areaPath, null);
+  assert.equal(primary.content, '# Plan\n');
+  assert.equal(fallback.content, fallbackBody);
+  assert.deepEqual(app.vault.processedPaths, [owner.path]);
+
+  await plugin.setWorkbenchProjectArea(projectPath, work.path);
+  assert.equal(plugin.workbenchProjects()[0]?.areaPath, work.path);
+  assert.equal(fallback.content, fallbackBody);
+  assert.deepEqual(app.vault.processedPaths, [owner.path, owner.path]);
+});
+
+test('new area notes are additive in both folder and standalone note areas', async () => {
+  const { plugin, app } = createPlugin();
+  const areaFolder = app.vault.seedFolder('30-Area/Work');
+  const areaNote = app.vault.seedFile('30-Area/Health.md', '# Health\n');
+  await plugin.createAreaNote(areaFolder.path, 'Work update');
+  await plugin.createAreaNote(areaNote.path, 'Health update');
+  const folderNote = app.vault.getAbstractFileByPath('30-Area/Work/Work update.md');
+  const rootNote = app.vault.getAbstractFileByPath('30-Area/Health update.md');
+  assert.ok(folderNote instanceof harness.TFile && rootNote instanceof harness.TFile);
+  assert.ok(rootNote.content.endsWith('# Health update\n\n[[30-Area/Health]]\n'));
+  assert.equal(app.metadataCache.getFileCache(rootNote).frontmatter?.tangrow_area, undefined);
+  assert.equal(areaNote.content, '# Health\n');
+  assert.deepEqual(app.vault.processedPaths, []);
+});
+
 test('capture history exposes every record with its creation timestamp and lazy content reads', async () => {
   const { plugin, app } = createPlugin();
   const expected = new Map<string, number>();
@@ -1381,7 +1753,7 @@ test('recently opened notes seed from native history and file opens are distinct
     const second = app.vault.seedFile('00-Inbox/Second note.md', '# Second note\n');
     const modifiedOnly = app.vault.seedFile('00-Inbox/Modified only.md', '# Modified only\n');
     app.workspace.lastOpenFiles.push(second.path, first.path, second.path, '00-Inbox/Missing note.md');
-    plugin.savedData = { version: 2, settings: { ...plugin.settings, language: 'en' }, focus: null, scratch: '', composer: { capture: '', scratchTitle: '' } };
+    plugin.savedData = { version: 2, onboardingCompleted: true, settings: { ...plugin.settings, language: 'en' }, focus: null, scratch: '', composer: { capture: '', scratchTitle: '' } };
     await plugin.onload();
     app.workspace.emitLayoutReady();
     assert.deepEqual(plugin.snapshot().recentOpened.map((note) => note.path), [second.path, first.path]);
@@ -1407,7 +1779,7 @@ test('recently opened notes seed from native history and file opens are distinct
 test('recently opened notes track renames and deletions and remain bounded after persistence reload', async () => {
   await withWindow(async (timers) => {
     const { plugin, app } = createPlugin();
-    plugin.savedData = { version: 3, settings: { ...plugin.settings, language: 'en' }, focus: null, scratch: 'Keep scratch.', composer: { capture: 'Keep capture.', scratchTitle: 'Keep title.' }, recentOpened: [] };
+    plugin.savedData = { version: 3, onboardingCompleted: true, settings: { ...plugin.settings, language: 'en' }, focus: null, scratch: 'Keep scratch.', composer: { capture: 'Keep capture.', scratchTitle: 'Keep title.' }, recentOpened: [] };
     await plugin.onload();
     const notes = Array.from({ length: 55 }, (_, index) => app.vault.seedFile(`00-Inbox/History/Note ${index}.md`, `# Note ${index}\n`));
     for (const note of notes) app.workspace.trigger('file-open', note);
@@ -1447,6 +1819,58 @@ test('recently opened notes track renames and deletions and remain bounded after
     timers.flush();
     await plugin.writes;
     assert.deepEqual(plugin.snapshot().recentOpened, []);
+  });
+});
+
+test('the welcome guide runs once per vault and completion opens Captures', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    const automatic: boolean[] = [];
+    plugin.openOnboarding = (onStartup) => automatic.push(onStartup ?? false);
+    plugin.savedData = { settings: { ...plugin.settings, language: 'en', autoOpen: false } };
+    await plugin.onload();
+    app.workspace.emitLayoutReady();
+    assert.deepEqual(automatic, [true]);
+
+    const landings: string[] = [];
+    const sidebar = new harness.TangrowSidebar({}, plugin);
+    const leaf = { view: sidebar };
+    Object.assign(sidebar, { showSection: (entry: string) => landings.push(entry) });
+    const setting = {
+      close() {
+        assert.equal(this, setting);
+        assert.equal((plugin.savedData as { onboardingCompleted: boolean }).onboardingCompleted, true);
+        landings.push('settings closed');
+      }
+    };
+    Object.assign(app, { setting });
+    Object.assign(app.workspace, {
+      ensureSideLeaf: async (_viewType: string, side: string, { active }: { active: boolean }) => {
+        assert.equal(side, 'right');
+        assert.equal(active, false);
+        return leaf;
+      },
+      setActiveLeaf: (activeLeaf: unknown, options: unknown) => {
+        assert.equal(activeLeaf, leaf);
+        assert.deepEqual(options, { focus: true });
+        landings.push('captures focused');
+      }
+    });
+    plugin.saveFailures = 1;
+    await assert.rejects(plugin.finishOnboarding(), /Simulated settings write failure/);
+    assert.equal((plugin.savedData as { onboardingCompleted: boolean }).onboardingCompleted, false);
+    assert.deepEqual(landings, []);
+    await plugin.finishOnboarding();
+    assert.deepEqual(landings, ['captures', 'settings closed', 'captures focused']);
+    assert.equal((plugin.savedData as { onboardingCompleted: boolean }).onboardingCompleted, true);
+
+    const nextApp = harness.createMockApp();
+    const reopened = new harness.TangrowPlugin(nextApp);
+    reopened.savedData = structuredClone(plugin.savedData);
+    reopened.openOnboarding = (onStartup) => automatic.push(onStartup ?? false);
+    await reopened.onload();
+    nextApp.workspace.emitLayoutReady();
+    assert.deepEqual(automatic, [true]);
   });
 });
 
@@ -1831,10 +2255,10 @@ test('Scratchpad language refresh keeps the composing inputs and editing lease w
       querySelector: (): null => null
     };
     Object.assign(view, {
-      section: 'compose', composeTab: 'scratchpad', scratchComposition: { control: text, dispose() {}, flush() { return undefined; } }, contentEl: content,
+      section: 'projects', projectTab: 'scratchpad', scratchComposition: { control: text, dispose() {}, flush() { return undefined; } }, contentEl: content,
       workspacePane: { querySelectorAll: () => [] },
       pane: { contains: (control: unknown) => control === text || control === title, querySelectorAll: () => [] },
-      setupBanner: { empty: () => undefined }, studioHeading: heading, studioCaption: caption,
+      studioHeading: heading, studioCaption: caption,
       selectSection: (): void => { selectedSection++; throw new Error('Studio section selection would discard composing controls.'); },
       clearStudioControls: (): void => { clearedControls++; throw new Error('Studio controls must remain mounted during composition.'); }
     });
@@ -1971,6 +2395,49 @@ test('journal configuration validates paths and restores settings when persisten
   assert.deepEqual(app.vault.createdPaths, []);
 });
 
+test('periodic settings validate and persist one candidate while preserving untouched values', async () => {
+  const { plugin, app } = createPlugin();
+  app.vault.seedFolder('Existing Journals');
+  app.vault.seedFile('Templates/Daily.md', '# {{title}}');
+  plugin.settings.journalTemplates.quarterly = 'Templates/Moved.md';
+  const original = structuredClone(plugin.settings);
+  const candidate = {
+    journalFolder: ' Existing Journals/ ',
+    formats: { daily: '[Days]/YYYY-MM-DD', weekly: 'GGGG/[Weeks]/GGGG-[W]WW' },
+    templates: { daily: ' Templates/Daily.md ' }
+  };
+
+  await assert.rejects(plugin.updatePeriodicSettings({ ...candidate, journalFolder: 'Absent' }), /Choose an existing folder/);
+  await assert.rejects(plugin.updatePeriodicSettings({ ...candidate, formats: { weekly: '[/absolute]/YYYY' } }), /safe relative vault path/);
+  await assert.rejects(plugin.updatePeriodicSettings({ ...candidate, templates: { monthly: 'Templates/Missing.md' } }), /existing Markdown journal template/);
+  assert.deepEqual(plugin.settings, original);
+  assert.equal(plugin.saveCalls, 0);
+
+  plugin.saveFailures = 1;
+  await assert.rejects(plugin.updatePeriodicSettings(candidate), /settings write failure/);
+  assert.deepEqual(plugin.settings, original);
+  assert.equal(plugin.saveCalls, 1);
+
+  await plugin.updatePeriodicSettings(candidate);
+  assert.equal(plugin.saveCalls, 2);
+  assert.equal(plugin.settings.journalFolder, 'Existing Journals');
+  assert.equal(plugin.settings.journalFormat, candidate.formats.daily);
+  assert.equal(plugin.settings.journalFormats.weekly, candidate.formats.weekly);
+  assert.deepEqual(plugin.settings.journalTemplates, { ...original.journalTemplates, daily: 'Templates/Daily.md' });
+  assert.deepEqual((plugin.savedData as { settings: Settings }).settings, plugin.settings);
+  assert.deepEqual(app.vault.createdPaths, []);
+});
+
+test('queued periodic updates merge against each current settings snapshot', async () => {
+  const { plugin } = createPlugin();
+  await Promise.all([
+    plugin.updatePeriodicSettings({ formats: { daily: '[Days]/YYYY-MM-DD' } }),
+    plugin.updatePeriodicSettings({ formats: { monthly: '[Months]/YYYY-MM' } })
+  ]);
+  assert.equal(plugin.settings.journalFormat, '[Days]/YYYY-MM-DD');
+  assert.equal(plugin.settings.journalFormats.monthly, '[Months]/YYYY-MM');
+});
+
 test('the note header immersion action stays attached to its native view when the sidebar has focus', () => {
   const { plugin, app } = createPlugin();
   const note = app.vault.seedFile('00-Inbox/Existing.md', '# Existing\n');
@@ -2005,20 +2472,24 @@ test('the note header immersion action stays attached to its native view when th
 class GateElement extends StudioElement {
   attributes = new Map<string, string>();
   children: GateElement[] = [];
+  classes: string[] = [];
+  focused = false;
   parent?: GateElement;
+  hidden = false;
   dataset: Record<string, string> = {};
   prepend(child: GateElement): void { this.children = [child, ...this.children.filter(entry => entry !== child)]; }
   constructor(readonly tag = 'div') { super(); }
-  createEl(tag = 'div', options: { attr?: Record<string, string>; text?: string; value?: string } = {}): GateElement {
+  createEl(tag = 'div', options: { attr?: Record<string, string>; cls?: string; text?: string; value?: string } = {}): GateElement {
     const child = new GateElement(tag);
     child.attributes = new Map(Object.entries(options.attr ?? {}));
+    child.classes = options.cls?.split(/\s+/).filter(Boolean) ?? [];
     child.textContent = options.text ?? '';
     child.value = options.value ?? '';
     child.parent = this;
     this.children.push(child);
     return child;
   }
-  createDiv(): GateElement { return this.createEl(); }
+  createDiv(options = {}): GateElement { return this.createEl('div', options); }
   createSpan(options = {}): GateElement { return this.createEl('span', options); }
   addClass(): void {}
   removeClass(): void {}
@@ -2030,7 +2501,8 @@ class GateElement extends StudioElement {
   getAttribute(key: string): string | null { return this.attributes.get(key) ?? null; }
   removeAttribute(key: string): void { this.attributes.delete(key); }
   all(): GateElement[] { return [this, ...this.children.flatMap(child => child.all())]; }
-  focus(): void {}
+  get lastElementChild(): GateElement | null { return this.children.at(-1) ?? null; }
+  focus(): void { this.focused = true; }
   click(): void { if (!this.disabled) this.dispatchEvent(new Event('click')); }
   querySelectorAll(tags: string): GateElement[] { return this.all().filter(el => tags.split(',').some(tag => tag.trim() === el.tag)); }
   querySelector(tag: string): GateElement | undefined { return this.all().find(child => child.tag === tag); }
@@ -2041,6 +2513,117 @@ class GateElement extends StudioElement {
     await new Promise(resolve => setImmediate(resolve));
   }
 }
+
+test('task tooltip keeps the raw text separate from the accessible row name', () => {
+  const { plugin } = createPlugin();
+  plugin.settings.language = 'en';
+  const view = new harness.TangrowSidebar({}, plugin);
+  const pane = new GateElement();
+  const tasks = [
+    { path: 'Tasks.md', line: 0, text: 'Publish 🔺 🔁 every week #QA', done: false },
+    { path: 'Tasks.md', line: 1, text: 'Outline <!-- private note -->', done: false }
+  ];
+  const original = harness.tooltipBehavior.set;
+  harness.tooltipBehavior.set = (element, text) => element.setAttribute('aria-label', text);
+  try {
+    view.renderTaskPreview(pane, { ...plugin.snapshot(), tasks }, [], new Date(2026, 10, 28));
+  } finally { harness.tooltipBehavior.set = original; }
+
+  const targets = pane.all().filter(element => element.tag === 'button' && element.getAttribute('aria-labelledby'));
+  const names = targets.map(button => {
+    const id = button.getAttribute('aria-labelledby');
+    const name = button.children.find(child => child.getAttribute('id') === id);
+    assert.ok(name);
+    assert.equal(name.getAttribute('hidden'), '');
+    return name.textContent;
+  });
+  assert.equal(new Set(targets.map(button => button.getAttribute('aria-labelledby'))).size, 4);
+  assert.deepEqual(names, ['Complete: Publish', 'Publish, Highest priority, Weekly, #QA', 'Complete: Outline', 'Outline']);
+  assert.deepEqual(targets.map(button => button.getAttribute('aria-label')),
+    ['Mark done in the note', tasks[0]?.text, 'Mark done in the note', tasks[1]?.text]);
+});
+
+test('sidebar captures start with the composer and a week, with an expandable month and a date-specific journal', async () => {
+  await withWindow(async () => {
+    const { plugin } = createPlugin();
+    plugin.settings.language = 'en';
+    const opened: Array<[JournalPeriod, string | undefined]> = [];
+    plugin.openPeriodicNote = async (period, date) => { opened.push([period, date]); };
+    const panel = new harness.CapturePanel(plugin, 'sidebar');
+    const root = new GateElement();
+    panel.mount(root);
+    try {
+      const calendar = root.querySelector('section')!;
+      assert.ok(root.all().indexOf(panel.editor) < root.all().indexOf(calendar));
+      const toggle = root.all().find((element) => element.getAttribute('aria-expanded') === 'false')!;
+      const days = () => root.all().filter((element) => element.dataset.captureDate);
+      const journal = root.all().find((element) => element.getAttribute('aria-label') === 'Journal for this day')!;
+      assert.equal(toggle.children[0]?.textContent, 'This week');
+      assert.equal(days().length, 7);
+      assert.equal(journal.hidden, true);
+
+      toggle.click();
+      assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+      assert.equal(toggle.children[0]?.textContent, 'Hide month');
+      assert.equal(days().length, 42);
+      assert.equal(journal.hidden, true);
+      assert.ok(!root.all().some((element) => element.getAttribute('aria-label')?.startsWith('Open weekly note')));
+      const historical = days()[15]!;
+      historical.click();
+      assert.equal(journal.hidden, false);
+      await root.clickButton('Journal for this day');
+      assert.deepEqual(opened, [['daily', historical.dataset.captureDate]]);
+      await root.clickButton('All days');
+      toggle.click();
+      assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+      assert.equal(days().length, 7);
+
+      const selected = days()[0]!;
+      selected.click();
+      assert.equal(days()[0]?.getAttribute('aria-pressed'), 'true');
+      assert.equal(journal.hidden, false);
+      await root.clickButton('Journal for this day');
+      assert.deepEqual(opened, [['daily', historical.dataset.captureDate], ['daily', selected.dataset.captureDate]]);
+      await root.clickButton('All days');
+      assert.equal(journal.hidden, true);
+      assert.ok(days().every((element) => element.getAttribute('aria-pressed') === 'false'));
+    } finally { panel.destroy(); }
+  });
+});
+
+test('today capture mounts a one-line composer and saves through the shared draft', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    plugin.savedData = { settings: { language: 'en' } };
+    await plugin.onload();
+    assert.ok(plugin.access.startTrial().ok);
+    const root = new GateElement();
+    const today = new harness.CapturePanel(plugin, 'today');
+    const sidebar = new harness.CapturePanel(plugin, 'sidebar');
+    today.mount(root);
+    sidebar.mount(new GateElement());
+    try {
+      const panel = root.children[0]!;
+      assert.equal(today.editor.getAttribute('rows'), '1');
+      assert.equal(today.editor.getAttribute('placeholder'), 'Capture a thought…');
+      assert.equal(root.querySelector('section'), undefined);
+      assert.ok(!root.all().some((element) => element.getAttribute('aria-label') === 'Immersive capture'));
+      assert.equal(panel.getAttribute('data-has-draft'), 'false');
+      today.editor.value = 'Captured from Today';
+      today.editor.dispatchEvent(new Event('input'));
+      assert.equal(sidebar.editor.value, 'Captured from Today');
+      assert.equal(panel.getAttribute('data-has-draft'), 'true');
+      await root.clickButton('Save capture');
+      assert.equal(captureFiles(app).length, 1);
+      assert.equal(sidebar.editor.value, '');
+      assert.equal(panel.getAttribute('data-has-draft'), 'false');
+    } finally {
+      today.destroy();
+      sidebar.destroy();
+      plugin.onunload();
+    }
+  });
+});
 
 test('capture preedit stays in its window until commit, and closing discards an unfinished candidate', async () => {
   await withWindow(async timers => {
@@ -2809,13 +3392,213 @@ test('Escape in a composing capture synchronizes the latest committed text from 
   });
 });
 
-function openQuickAdd(plugin: TestPlugin, kind: QuickKind, text: string) {
-  const modal = new harness.QuickAddModal(plugin, kind, text);
+function openQuickAdd(plugin: TestPlugin, kind: QuickKind, text: string, source?: CardSource) {
+  type KeyHandler = (event: Pick<KeyboardEvent, 'isComposing' | 'keyCode'>) => boolean | void;
+  const modal = new harness.QuickAddModal(plugin, kind, text, source);
   const root = new GateElement();
-  Object.assign(modal, { modalEl: new GateElement(), contentEl: root, scope: { register() {} }, setTitle() {}, close: () => modal.onClose() });
+  const hotkeys = new Map<string, KeyHandler>();
+  Object.assign(modal, {
+    modalEl: new GateElement(), contentEl: root,
+    scope: { register: (_modifiers: string[], key: string, handler: KeyHandler) => { hotkeys.set(key, handler); } },
+    setTitle() {}, close: () => modal.onClose()
+  });
   modal.onOpen();
-  return { modal, root, editor: root.querySelector('textarea')! };
+  return { modal, root, editor: root.querySelector('textarea')!, hotkeys };
 }
+
+test('quick project creation offers existing types and keeps a newly typed value across view changes', async () => {
+  await withWindow(async () => {
+    const { plugin } = createPlugin();
+    plugin.settings.language = 'en';
+    plugin.workbenchProjectTypes = () => [{ key: 'writing', name: 'Writing', count: 2 }];
+    const calls: unknown[][] = [];
+    plugin.createNote = async (...args) => { calls.push(args); };
+    const { modal, root } = openQuickAdd(plugin, 'project', 'Publish\n\nPlan');
+    const typeInput = () => root.all().find((element) => element.getAttribute('aria-label') === 'Project type (optional)');
+    const suggestions = root.all().find((element) => element.getAttribute('aria-label') === 'Existing project types')!;
+    suggestions.value = 'Writing';
+    suggestions.dispatchEvent(new Event('change'));
+    assert.equal(typeInput()?.value, 'Writing');
+    typeInput()!.value = '  Podcast  ';
+    typeInput()!.dispatchEvent(new Event('input'));
+    modal.setKind('note');
+    assert.equal(typeInput(), undefined);
+    modal.setKind('project');
+    assert.equal(typeInput()?.value, '  Podcast  ');
+    await modal.save();
+    assert.deepEqual(calls, [['project', 'Publish', undefined, 'Plan', 'Podcast']]);
+  });
+});
+
+test('quick project creation omits project type when creating inside an existing project folder', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    plugin.settings.language = 'en';
+    const folder = app.vault.seedFolder(`${plugin.settings.projectFolder}/Existing`);
+    const calls: unknown[][] = [];
+    plugin.createNote = async (...args) => { calls.push(args); };
+    const { modal, root } = openQuickAdd(plugin, 'project', 'Related project note');
+    const type = root.all().find((element) => element.getAttribute('aria-label') === 'Project type (optional)')!;
+    type.value = 'Local type';
+    type.dispatchEvent(new Event('input'));
+    const location = root.all().find((element) => element.getAttribute('aria-label') === 'Project location')!;
+    location.value = folder.path;
+    location.dispatchEvent(new Event('change'));
+    assert.equal(type.parent?.parent?.hidden, true);
+    await modal.save();
+    assert.deepEqual(calls, [['project', 'Related project note', folder.path, '', undefined]]);
+  });
+});
+
+test('quick project creation blocks save while the project type is composing', async () => {
+  await withWindow(async () => {
+    const { plugin } = createPlugin();
+    plugin.settings.language = 'en';
+    const calls: unknown[][] = [];
+    plugin.createNote = async (...args) => { calls.push(args); };
+    const { modal, root, hotkeys } = openQuickAdd(plugin, 'project', 'Publish');
+    const enter = hotkeys.get('Enter')!;
+    const type = root.all().find((element) => element.getAttribute('aria-label') === 'Project type (optional)')!;
+    type.dispatchEvent(new Event('compositionstart'));
+    type.value = 'boke';
+    type.dispatchEvent(Object.assign(new Event('input'), { isComposing: true }));
+    enter({ isComposing: true, keyCode: 229 });
+    enter({ isComposing: false, keyCode: 13 });
+    await modal.save();
+    assert.deepEqual(calls, []);
+    type.value = '播客';
+    type.dispatchEvent(new Event('compositionend'));
+    enter({ isComposing: true, keyCode: 13 });
+    assert.deepEqual(calls, []);
+    enter({ isComposing: false, keyCode: 13 });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(calls, [['project', 'Publish', undefined, '', '播客']]);
+  });
+});
+
+test('distilling a capture opens an editable card with its required source link and leaves the source untouched', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    plugin.settings.language = 'en';
+    const sourceBody = 'First paragraph about [context](./Context.md).\n\n> A second paragraph.\n';
+    const sourceText = `---\ntangrow_kind: "capture"\ntangrow_processed_at: "2026-11-27T12:00:00Z"\ntangrow_capture_result: "[[Existing result]]"\n---\n\n# Capture 1\n\n${sourceBody}`;
+    const source = app.vault.seedFile('00-Inbox/Capture 1.md', sourceText);
+    app.vault.seedFile('00-Inbox/Context.md', '# Context\n');
+    const opened: ReturnType<typeof openQuickAdd>[] = [];
+    const steps: string[] = [];
+    Object.assign(plugin, { openQuickAdd: (kind: QuickKind, text: string, cardSource: CardSource) => {
+      steps.push('open');
+      opened.push(openQuickAdd(plugin, kind, text, cardSource));
+    } });
+
+    assert.equal(await plugin.openCardFromCapture(source.path, () => { steps.push('close processing'); return true; }), true);
+    assert.deepEqual(steps, ['close processing', 'open']);
+    const dialog = opened[0];
+    assert.ok(dialog);
+    assert.equal(dialog.editor.value, `Capture 1\n\n${sourceBody}`);
+    assert.ok(dialog.root.all().some((element) => element.textContent === `Source capture: ${source.path}`));
+    assert.deepEqual(app.vault.createdPaths, []);
+
+    dialog.editor.value = 'A distinct idea\n\nMy argument after reading [context](./Context.md).';
+    await dialog.modal.save();
+
+    const cardPath = `${plugin.settings.cardFolder}/A distinct idea.md`;
+    const card = app.vault.getAbstractFileByPath(cardPath);
+    assert.ok(card instanceof harness.TFile);
+    assert.deepEqual(app.metadataCache.getFileCache(card).frontmatter?.tangrow_sources, ['[[00-Inbox/Capture 1]]']);
+    assert.ok(card.content.endsWith('# A distinct idea\n\nMy argument after reading [context](../00-Inbox/Context.md).\n'));
+    assert.equal(source.content, sourceText);
+    assert.deepEqual(app.vault.createdPaths, [plugin.settings.cardFolder, cardPath]);
+    assert.deepEqual(app.vault.processedPaths, []);
+  });
+});
+
+test('distilling a capture under its original title qualifies the source when Obsidian prefers short links', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    const sourceText = '---\ntangrow_kind: "capture"\n---\n\n# Capture\n\nCaptured idea.\n';
+    const source = app.vault.seedFile('00-Inbox/Capture.md', sourceText);
+    app.metadataCache.fileToLinktext = (file) => file.basename;
+    let dialog: ReturnType<typeof openQuickAdd> | undefined;
+    Object.assign(plugin, { openQuickAdd: (kind: QuickKind, text: string, cardSource: CardSource) => {
+      dialog = openQuickAdd(plugin, kind, text, cardSource);
+    } });
+
+    assert.equal(await plugin.openCardFromCapture(source.path), true);
+    assert.ok(dialog);
+    assert.equal(dialog.editor.value, 'Capture\n\nCaptured idea.\n');
+    await dialog.modal.save();
+
+    const card = app.vault.getAbstractFileByPath(`${plugin.settings.cardFolder}/Capture.md`);
+    assert.ok(card instanceof harness.TFile);
+    assert.deepEqual(app.metadataCache.getFileCache(card).frontmatter?.tangrow_sources, ['[[00-Inbox/Capture]]']);
+    assert.equal(source.content, sourceText);
+  });
+});
+
+test('a same-title card preserves its source at the vault root with an explicit relative link', async () => {
+  const { plugin, app } = createPlugin();
+  plugin.settings.cardFolder = 'Knowledge/Cards';
+  const source = app.vault.seedFile('Capture.md', '---\ntangrow_kind: "capture"\n---\n\nCaptured idea.\n');
+  app.metadataCache.fileToLinktext = (file) => file.basename;
+
+  await plugin.createCard('Capture', 'Captured idea.', { path: source.path, captureFile: source as unknown as CardSource['captureFile'] });
+
+  const card = app.vault.getAbstractFileByPath('Knowledge/Cards/Capture.md');
+  assert.ok(card instanceof harness.TFile);
+  assert.deepEqual(app.metadataCache.getFileCache(card).frontmatter?.tangrow_sources, ['[[../../Capture]]']);
+});
+
+test('capture derivation can be canceled and rejects a reclassified or replaced source', async () => {
+  const { plugin, app } = createPlugin();
+  const source = app.vault.seedFile('00-Inbox/Capture.md', '---\ntangrow_kind: "capture"\n---\n\nCaptured idea.\n');
+  let opened = 0;
+  Object.assign(plugin, { openQuickAdd: () => { opened++; } });
+  assert.equal(await plugin.openCardFromCapture(source.path, () => false), false);
+  assert.equal(opened, 0);
+
+  const oldCache = app.metadataCache.getFileCache(source);
+  app.metadataCache.getFileCache = () => oldCache;
+  source.content = source.content.replace('"capture"', '"note"');
+  await assert.rejects(plugin.openCardFromCapture(source.path), /This capture no longer exists/);
+  const cardSource: CardSource = { path: source.path, captureFile: source as unknown as CardSource['captureFile'] };
+  await assert.rejects(plugin.createCard('Stale derivation', 'Copied text', cardSource), /This capture no longer exists/);
+  await app.vault.delete(source);
+  app.vault.seedFile(source.path, '---\ntangrow_kind: "capture"\n---\n\nReplacement idea.\n');
+  await assert.rejects(plugin.createCard('Replaced derivation', 'Copied text', cardSource), /This capture no longer exists/);
+  assert.equal(opened, 0);
+  assert.deepEqual(app.vault.createdPaths, []);
+});
+
+test('capture derivation checks source identity again after preparing the card folder', async () => {
+  const { plugin, app } = createPlugin();
+  const source = app.vault.seedFile('00-Inbox/Capture.md', '---\ntangrow_kind: "capture"\n---\n\nAn earlier idea.\n');
+  const createFolder = app.vault.createFolder.bind(app.vault);
+  app.vault.createFolder = async (path) => {
+    await createFolder(path);
+    await app.vault.delete(source);
+    app.vault.seedFile(source.path, '---\ntangrow_kind: "capture"\n---\n\nA different idea.\n');
+  };
+  await assert.rejects(plugin.createCard('No stale link', 'Earlier idea', { path: source.path, captureFile: source as unknown as CardSource['captureFile'] }), /This capture no longer exists/);
+  assert.deepEqual(app.vault.createdPaths, [plugin.settings.cardFolder]);
+});
+
+test('creating a hub uses the configured card folder and creates a new file even when its title already exists', async () => {
+  const { plugin, app } = createPlugin();
+  plugin.settings.cardFolder = '55-Knowledge';
+  const existing = app.vault.seedFile('55-Knowledge/Research notes.md', '# My existing research\n');
+  await plugin.createHub('Research notes');
+  const path = '55-Knowledge/Research notes (2).md';
+  const hub = app.vault.getAbstractFileByPath(path);
+  assert.ok(hub instanceof harness.TFile);
+  assert.equal(app.metadataCache.getFileCache(hub).frontmatter?.tangrow_kind, 'hub');
+  assert.equal(existing.content, '# My existing research\n');
+  assert.deepEqual(app.vault.createdPaths, [path]);
+  assert.deepEqual(app.vault.processedPaths, []);
+  plugin.settings.knowledgeEnabled = false;
+  await assert.rejects(plugin.createHub('Disabled'), /Knowledge features are disabled/);
+  assert.deepEqual(app.vault.createdPaths, [path]);
+});
 
 function recoverySection(root: GateElement, text: string): GateElement {
   const section = root.all().find(node => node.tag === 'section' && node.children.some(el => el.tag === 'textarea' && el.attributes.has('readonly') && el.value === text));
@@ -3303,4 +4086,91 @@ for (const timerFired of [false, true]) test(`a normal Quick Add save at expiry 
     assert.deepEqual((plugin.savedData as { recoveryDrafts: RecoveryDraft[] }).recoveryDrafts, []);
     quick.modal.onClose();
   }));
+});
+
+function mountFocusView(plugin: TestPlugin) {
+  const view = new harness.TangrowSidebar({}, plugin);
+  const pane = new GateElement();
+  Object.assign(view, { pane });
+  view.mountFocus();
+  const refresh = () => view.refreshSection(plugin.snapshot());
+  const button = (label: string) => {
+    const control = pane.all().find((element) => element.tag === 'button' && element.getAttribute('aria-label') === label);
+    assert.ok(control, label);
+    return control;
+  };
+  refresh();
+  return { pane, refresh, button };
+}
+
+test('focus uses a single preset row and follows the configured duration until the user chooses another preset', async () => {
+  const { plugin } = createPlugin();
+  plugin.settings.language = 'en';
+  plugin.settings.focusMinutes = 32;
+  const { pane, refresh, button } = mountFocusView(plugin);
+  const row = pane.all().find((element) => element.getAttribute('aria-label') === 'Session length');
+  assert.ok(row);
+  assert.deepEqual(row.all().filter((element) => element.tag === 'button').map((element) => element.getAttribute('aria-label')),
+    ['15 minutes', '25 minutes', 'Default duration: 32 minutes', '45 minutes', 'Custom']);
+  assert.equal(button('Default duration: 32 minutes').getAttribute('aria-pressed'), 'true');
+  assert.equal(button('Start 32 min').lastElementChild?.textContent, 'Start 32 min');
+  assert.equal(pane.querySelector('input'), undefined);
+
+  plugin.settings.focusMinutes = 45;
+  refresh();
+  assert.equal(button('Default duration: 45 minutes').getAttribute('aria-pressed'), 'true');
+  assert.equal(pane.all().filter((element) => element.getAttribute('aria-label') === '45 minutes').length, 0);
+  await pane.clickButton('15 minutes');
+  plugin.settings.focusMinutes = 55;
+  refresh();
+  assert.equal(button('15 minutes').getAttribute('aria-pressed'), 'true');
+  assert.equal(button('Default duration: 55 minutes').getAttribute('aria-pressed'), 'false');
+  assert.equal(button('Start 15 min').lastElementChild?.textContent, 'Start 15 min');
+});
+
+test('custom focus stays in the same row, rejects invalid values, and supports keyboard cancel and start', async () => {
+  const { plugin } = createPlugin();
+  plugin.settings.language = 'en';
+  const { pane, refresh, button } = mountFocusView(plugin);
+  const customSlot = button('Custom').parent;
+  await pane.clickButton('Custom');
+  const input = pane.querySelector('input');
+  assert.ok(input);
+  assert.equal(input.parent, customSlot);
+  assert.equal(input.focused, true);
+  const key = (name: string) => Object.assign(new Event('keydown', { cancelable: true }), { key: name });
+  for (const value of ['', '0', '12.5', '241']) {
+    input.value = value;
+    input.dispatchEvent(new Event('input'));
+    assert.equal(input.getAttribute('aria-invalid'), 'true');
+    assert.equal(button('Begin focus').disabled, true);
+    input.dispatchEvent(key('Enter'));
+    assert.equal(plugin.focus, null);
+  }
+  input.dispatchEvent(key('Escape'));
+  assert.equal(button('Custom').focused, true);
+  assert.equal(button('Default duration: 25 minutes').getAttribute('aria-pressed'), 'true');
+  await pane.clickButton('Custom');
+  const valid = pane.querySelector('input');
+  assert.ok(valid);
+  valid.value = '37';
+  valid.dispatchEvent(new Event('input'));
+  assert.equal(valid.getAttribute('aria-invalid'), 'false');
+  assert.equal(button('Start 37 min').disabled, false);
+  valid.dispatchEvent(key('Enter'));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(plugin.focus?.durationMs, 37 * 60_000);
+
+  refresh();
+  assert.equal(pane.querySelector('input'), undefined);
+  assert.deepEqual(pane.all().filter((element) => element.classes.includes('mod-cta')).map((element) => element.getAttribute('aria-label')), ['Finish & record']);
+  await pane.clickButton('Pause');
+  refresh();
+  assert.equal(plugin.focus?.endsAt, null);
+  assert.ok(button('Resume'));
+  await pane.clickButton('Resume');
+  assert.notEqual(plugin.focus?.endsAt, null);
+  refresh();
+  await pane.clickButton('Discard session');
+  assert.equal(plugin.focus, null);
 });

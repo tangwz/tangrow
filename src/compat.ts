@@ -1,6 +1,6 @@
-import type { App, TFile } from 'obsidian';
+import type { App, TAbstractFile } from 'obsidian';
 
-type SettingsAccess = { open: () => void; openTabById: (id: string) => unknown };
+type SettingsAccess = { open: () => void; close: () => void; openTabById: (id: string) => unknown };
 type CommandAccess = { commands: Record<string, unknown>; executeCommandById: (id: string) => boolean };
 
 // These optional host features are not part of the published API. Keep them isolated.
@@ -14,6 +14,11 @@ export function openNativeSettings(app: App, tab: string): boolean {
   } catch { return false; }
 }
 
+export function closeNativeSettings(app: App): void {
+  const settings = (app as unknown as { setting?: Partial<SettingsAccess> }).setting;
+  try { settings?.close?.(); } catch { /* the guide can open above settings */ }
+}
+
 export function runNativeCommand(app: App, ids: readonly string[]): boolean {
   const access = (app as unknown as { commands?: Partial<CommandAccess> }).commands;
   if (!access?.commands || typeof access.executeCommandById !== 'function') return false;
@@ -24,11 +29,14 @@ export function runNativeCommand(app: App, ids: readonly string[]): boolean {
   return false;
 }
 
-export async function revealInFileList(app: App, file: TFile): Promise<boolean> {
-  const leaf = await app.workspace.ensureSideLeaf('file-explorer', 'left', { active: false });
-  const view = leaf.view as unknown as { revealInFolder?: (file: TFile) => Promise<void> | void };
-  if (typeof view.revealInFolder !== 'function') return false;
-  try { await view.revealInFolder(file); return true; } catch { return false; }
+export async function revealInFileList(app: App, file: TAbstractFile): Promise<boolean> {
+  try {
+    const leaf = await app.workspace.ensureSideLeaf('file-explorer', 'left', { active: false });
+    const view = leaf.view as unknown as { revealInFolder?: (file: TAbstractFile) => Promise<void> | void };
+    if (typeof view.revealInFolder !== 'function') return false;
+    await view.revealInFolder(file);
+    return true;
+  } catch { return false; }
 }
 
 export function openActivationSettings(app: App, pluginId: string): boolean {

@@ -1,24 +1,27 @@
 import type { Section } from './types';
 
-export type WorkbenchTab = 'today' | 'compose' | 'knowledge' | 'ai' | 'more';
-export type ComposeTab = 'captures' | 'journal' | 'scratchpad' | 'manuscripts';
+export type WorkbenchTab = 'today' | 'captures' | 'knowledge' | 'projects' | 'more';
+export type ProjectTab = 'list' | 'areas' | 'drafts' | 'scratchpad' | 'manuscripts';
 export type KnowledgeTab = 'materials' | 'cards' | 'hubs' | 'review';
-export type MoreTab = 'pins' | 'focus' | 'habits' | 'tools' | 'databases';
-export type WorkbenchEntry = WorkbenchTab | Section | 'record/journal' | 'write/manuscripts' | 'more/assistant';
+export type MoreTab = 'pins' | 'focus' | 'habits' | 'tools' | 'databases' | 'assistant';
+export type WorkbenchEntry = WorkbenchTab | Section | 'compose' | 'record/journal' | 'write/manuscripts' | 'more/assistant';
 
 export type WorkbenchDestination =
-  | { tab: 'compose'; page?: ComposeTab }
+  | { tab: 'projects'; page?: ProjectTab }
   | { tab: 'more'; page?: MoreTab }
-  | { tab: 'today' | 'knowledge' | 'ai' };
+  | { tab: 'today'; focus?: 'journal' }
+  | { tab: 'captures' | 'knowledge' };
 
 export function workbenchDestination(entry: WorkbenchEntry): WorkbenchDestination {
   switch (entry) {
     case 'tools': return { tab: 'today' };
-    case 'capture': return { tab: 'compose', page: 'captures' };
-    case 'studio': return { tab: 'compose', page: 'scratchpad' };
-    case 'record/journal': return { tab: 'compose', page: 'journal' };
-    case 'write/manuscripts': return { tab: 'compose', page: 'manuscripts' };
-    case 'more/assistant': return { tab: 'ai' };
+    case 'capture':
+    case 'compose': return { tab: 'captures' };
+    case 'studio': return { tab: 'projects', page: 'scratchpad' };
+    case 'record/journal': return { tab: 'today', focus: 'journal' };
+    case 'write/manuscripts': return { tab: 'projects', page: 'manuscripts' };
+    case 'ai':
+    case 'more/assistant': return { tab: 'more', page: 'assistant' };
     case 'pins':
     case 'focus':
     case 'habits': return { tab: 'more', page: entry };

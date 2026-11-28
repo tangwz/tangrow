@@ -3,6 +3,7 @@ import { AccessGate } from './access-gate';
 import type { QuickKind } from './ai';
 import { describeError } from './i18n';
 import { dayKey, safeTitle } from './model';
+import { renderProjectTypeInput } from './project-type-input';
 import { taskText } from './task-tools';
 import type { CardSource, SidebarHost } from './types';
 import { SidebarUI, icon } from './ui';
@@ -39,6 +40,9 @@ export class QuickAddModal extends Modal {
   private due = '';
   private target: 'overview' | 'daily' = 'overview';
   private projectFolder = '';
+  private projectType = '';
+  private projectTypeInput?: HTMLInputElement;
+  private projectTypeComposing = false;
   private keepOpen = false;
   private saving = false;
   private suggesting?: AbortController;
@@ -57,7 +61,11 @@ export class QuickAddModal extends Modal {
     this.closed = false;
     this.modalEl.addClass('tangrow-quick-modal');
     this.contentEl.addClass('tangrow-dialog', 'tangrow-quick');
-    this.scope.register(['Mod'], 'Enter', () => { void this.save(); return false; });
+    this.scope.register(['Mod'], 'Enter', (event) => {
+      if (event.isComposing || event.keyCode === 229 || this.projectTypeComposing) return;
+      void this.save();
+      return false;
+    });
     quickKinds(this.host.settings.knowledgeEnabled).forEach((entry, index) => this.scope.register(['Mod'], String(index + 1), () => { this.setKind(entry.id); return false; }));
     this.gate = new AccessGate(this.host, this.contentEl, locked => this.protectDraft(locked), () => this.render());
     this.unsubscribeRecovery = this.host.subscribeRecoveryDrafts(() => {
@@ -85,6 +93,8 @@ export class QuickAddModal extends Modal {
     this.unsubscribeRecovery?.();
     this.suggesting?.abort();
     this.editor = undefined;
+    this.projectTypeInput = undefined;
+    this.projectTypeComposing = false;
     this.contentEl.empty();
     this.onDismiss?.();
   }
@@ -113,7 +123,7 @@ export class QuickAddModal extends Modal {
   }
 
   private setKind(kind: QuickKind): void {
-    if (this.saving || !this.editable() || this.kind === kind || (kind === 'card' && !this.host.settings.knowledgeEnabled)) return;
+    if (this.saving || this.projectTypeComposing || !this.editable() || this.kind === kind || (kind === 'card' && !this.host.settings.knowledgeEnabled)) return;
     this.kind = kind;
     this.render();
   }
@@ -148,6 +158,8 @@ export class QuickAddModal extends Modal {
     const kinds = quickKinds(this.host.settings.knowledgeEnabled);
     const entry = kinds.find((item) => item.id === this.kind) ?? kinds[0]!;
     this.setTitle(this.ui.t('Quick add'));
+    this.projectTypeInput = undefined;
+    this.projectTypeComposing = false;
     this.contentEl.empty();
     const tabs = this.contentEl.createDiv({ cls: 'tangrow-quick-tabs', attr: { role: 'tablist', 'aria-label': this.ui.t('What to add') } });
     kinds.forEach((item, index) => {
@@ -171,7 +183,9 @@ export class QuickAddModal extends Modal {
     this.contentEl.createEl('p', { cls: 'tangrow-muted tangrow-quick-hint', text: this.ui.t(entry.hint) });
 
     const options = this.contentEl.createDiv({ cls: 'tangrow-quick-options' });
-    if (this.kind === 'card' && this.source) {
+    if (this.kind === 'card' && this.source?.captureFile) {
+      options.createEl('p', { cls: 'tangrow-destination', text: this.ui.t('Source capture: {path}', { path: this.source.path }) });
+    } else if (this.kind === 'card' && this.source) {
       const row = options.createEl('label', { cls: 'tangrow-quick-row' });
       const source = row.createEl('input', { type: 'checkbox' });
       source.checked = this.includeSource;
@@ -211,7 +225,29 @@ export class QuickAddModal extends Modal {
       }
       select.value = this.projectFolder;
       if (select.value !== this.projectFolder) this.projectFolder = '';
-      select.addEventListener('change', () => { this.projectFolder = select.value; update(); });
+      const typeField = options.createDiv({ cls: 'tangrow-quick-project-type' });
+      const input = this.projectTypeInput = renderProjectTypeInput(typeField, this.ui,
+        this.host.workbenchProjectTypes().map(({ name }) => name), this.projectType, (value) => {
+          if (this.projectTypeInput !== input || this.saving || this.projectTypeComposing) return;
+          this.projectType = value;
+          this.suggesting?.abort();
+        });
+      input.addEventListener('compositionstart', () => {
+        if (this.projectTypeInput !== input || this.saving) return;
+        this.projectTypeComposing = true;
+        this.suggesting?.abort();
+      });
+      input.addEventListener('compositionend', () => {
+        if (this.projectTypeInput !== input || !this.projectTypeComposing) return;
+        this.projectTypeComposing = false;
+        if (!this.saving) this.projectType = input.value;
+      });
+      typeField.hidden = !!this.projectFolder;
+      select.addEventListener('change', () => {
+        this.projectFolder = select.value;
+        typeField.hidden = !!this.projectFolder;
+        update();
+      });
     }
 
     const suggestion = this.contentEl.createDiv({ cls: 'tangrow-quick-suggestion', attr: { 'aria-live': 'polite' } });
@@ -279,7 +315,7 @@ export class QuickAddModal extends Modal {
   }
 
   private async save(): Promise<void> {
-    if (this.saving || !this.editable() || !this.host.requireAccess()) return;
+    if (this.saving || this.projectTypeComposing || !this.editable() || !this.host.requireAccess()) return;
     if (this.recovering && this.host.loadRecoveryDrafts().some(draft => draft.id === this.draftId && draft.saving)) return;
     if (this.editor) this.text = this.editor.value;
     if (this.problem() !== null) return;
@@ -290,6 +326,7 @@ export class QuickAddModal extends Modal {
     this.suggesting?.abort();
     this.syncRecovery();
     this.contentEl.querySelectorAll<HTMLButtonElement | HTMLTextAreaElement>('button, textarea').forEach((control) => { control.disabled = true; });
+    if (this.projectTypeInput) this.projectTypeInput.disabled = true;
     try {
       if (this.kind === 'capture') await this.host.capture(this.text);
       else if (this.kind === 'task') {
@@ -300,7 +337,9 @@ export class QuickAddModal extends Modal {
           if (this.editor) this.editor.value = this.text;
           await this.syncRecovery();
         }
-      } else if (this.kind === 'project') await this.host.createNote('project', first, this.projectFolder || undefined, body);
+      } else if (this.kind === 'project') {
+        await this.host.createNote('project', first, this.projectFolder || undefined, body, this.projectFolder ? undefined : this.projectType.trim() || undefined);
+      }
       else if (this.kind === 'card') {
         const source = this.source && { ...this.source, includeLink: this.includeSource };
         await this.host.createCard(first, body, source);

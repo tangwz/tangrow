@@ -4,6 +4,9 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
+import { reportCaptureCoverage } from '../src/card-report-data';
+import type { WorkbenchArea, WorkbenchProject } from '../src/project-workbench-data';
+import type { ReportRange, ReportSnapshot } from '../src/report-contract';
 import type { CaptureRequest, Settings, Snapshot } from '../src/types';
 import type { MockApp, Plugin as MockPlugin, TFile as MockFile, createMockApp as MockAppFactory } from './obsidian-mock';
 
@@ -11,6 +14,9 @@ interface TestPlugin extends MockPlugin {
   settings: Settings;
   snapshot(): Snapshot;
   processCapture(path: string, request: CaptureRequest): Promise<string | null>;
+  loadReport(range: ReportRange): Promise<ReportSnapshot>;
+  workbenchProjects(): WorkbenchProject[];
+  workbenchAreas(): WorkbenchArea[];
 }
 interface Harness {
   TangrowPlugin: new (app: MockApp) => TestPlugin;
@@ -43,6 +49,32 @@ function fields(file: MockFile): Record<string, unknown> {
 }
 function body(file: MockFile): string { return file.content.slice(harness.getFrontMatterInfo(file.content).contentStart); }
 function notes(app: MockApp): MockFile[] { return app.vault.getMarkdownFiles().filter((file) => fields(file).tangrow_capture_action_id); }
+
+async function assertTaskOwnershipAndProvenance(
+  app: MockApp, plugin: TestPlugin, overview: MockFile, source: MockFile, association: MockFile, role: 'project' | 'area'
+): Promise<void> {
+  const lines = overview.content.split('\n');
+  const line = lines.findIndex((text) => text.startsWith('- [ ]'));
+  const offset = lines.slice(0, line).reduce((sum, text) => sum + text.length + 1, 0);
+  const links = [...lines[line]!.matchAll(/\[\[([^\]]+)\]\]/gu)].map((match) => {
+    const start = match.index!;
+    const end = start + match[0].length;
+    return { link: match[1]!, original: match[0], position: { start: { line, col: start, offset: offset + start }, end: { line, col: end, offset: offset + end } } };
+  });
+  const readCache = app.metadataCache.getFileCache;
+  app.metadataCache.getFileCache = (file) => ({ ...readCache(file), ...(file === overview ? { links } : {}) });
+  app.metadataCache.getFirstLinkpathDest = (path) => app.vault.getMarkdownFiles().find((file) => file.path === path || file.path === `${path}.md`) ?? null;
+  Object.assign(app.metadataCache, { resolvedLinks: {} });
+
+  const report = await plugin.loadReport(90);
+  assert.deepEqual(report.records.find((record) => record.path === overview.path)?.captureTaskSources, [source.path]);
+  assert.equal(reportCaptureCoverage(report).withResult, 1);
+  plugin.snapshot();
+  await new Promise((resolve) => setImmediate(resolve));
+  const entities = role === 'project' ? plugin.workbenchProjects() : plugin.workbenchAreas();
+  const owner = entities.find((entity) => entity.notePath === association.path);
+  assert.deepEqual(owner?.tasks.map((task) => [task.path, task.line, task.sourceKind]), [[overview.path, line, 'overview']]);
+}
 
 test('turning a capture into a note preserves the source body and unknown properties with two-way links', async () => {
   const { app, plugin, source } = setup();
@@ -159,6 +191,142 @@ test('task conversion appends a single checkbox and source link without rewritin
   assert.equal(app.vault.getMarkdownFiles().length, 2);
 });
 
+test('task conversion keeps the selected project link through an interrupted operation', async () => {
+  const { app, plugin, source } = setup();
+  const content = '# Existing tasks\n\n```tasks\nnot done\n```\n';
+  const overview = app.vault.seedFile(plugin.settings.taskOverviewPath, content);
+  const project = app.vault.seedFile('20-Project/Launch/Launch.md', '# Launch');
+  const apply = app.vault.process.bind(app.vault);
+  app.vault.process = async (file, transform) => {
+    if (file === overview) throw new Error('Task write failed');
+    return apply(file, transform);
+  };
+  const request: CaptureRequest = { action: 'task', title: 'Follow up', projectPath: project.path };
+  await assert.rejects(plugin.processCapture(source.path, request), /Task write failed/);
+  assert.equal(overview.content, content);
+  await assert.rejects(plugin.processCapture(source.path, { action: 'task', title: request.title }), /unfinished/);
+
+  app.vault.process = apply;
+  await plugin.processCapture(source.path, { action: 'resume' });
+  assert.ok(overview.content.startsWith(content));
+  assert.equal((overview.content.match(/^- \[ \]/gm) ?? []).length, 1);
+  const projectLink = `[[${app.metadataCache.fileToLinktext(project, overview.path)}]]`;
+  assert.ok(overview.content.includes(`Follow up ${projectLink} [[${source.path}]] <!-- tangrow-capture:`));
+  assert.equal(project.content, '# Launch');
+  assert.equal(fields(source).tangrow_capture_processing, undefined);
+  await assertTaskOwnershipAndProvenance(app, plugin, overview, source, project, 'project');
+});
+
+test('PARA filing creates only a new note in an existing area or resource folder', async () => {
+  for (const kind of ['area', 'resource'] as const) {
+    const { app, plugin, source } = setup();
+    const original = body(source);
+    const root = kind === 'area' ? plugin.settings.areaFolder : plugin.settings.resourcesFolder;
+    const entry = kind === 'area' ? app.vault.seedFolder(`${root}/Health`) : app.vault.seedFile(`${root}/Sources.md`, '# Reference entry');
+    const folder = kind === 'area' ? entry.path : root;
+    const destination = { kind, path: entry.path };
+    const path = await plugin.processCapture(source.path, { action: 'note', title: 'Keep this', destination });
+    assert.equal(path, `${folder}/Keep this.md`);
+    assert.deepEqual(app.vault.createdPaths, [path]);
+    assert.equal(body(source), original);
+    assert.equal(fields(source).tangrow_capture_result, `[[${path}]]`);
+    assert.equal(fields(notes(app)[0]!).tangrow_source, `[[${source.path}]]`);
+    assert.equal(fields(notes(app)[0]!).tangrow_project, undefined);
+  }
+});
+
+test('same-title PARA filing links the result back to the original capture', async () => {
+  const { app, plugin, source } = setup();
+  const original = body(source);
+  const folder = app.vault.seedFolder(`${plugin.settings.resourcesFolder}/Research`);
+  const resultPath = `${folder.path}/${source.basename}.md`;
+  const hostLink = app.fileManager.generateMarkdownLink;
+  app.fileManager.generateMarkdownLink = (file, from) => file === source && from === resultPath
+    ? `[[${file.basename}]]` : hostLink(file, from);
+
+  const path = await plugin.processCapture(source.path, {
+    action: 'note', title: source.basename, destination: { kind: 'resource', path: folder.path }
+  });
+
+  const result = notes(app)[0]!;
+  assert.equal(path, resultPath);
+  assert.equal(result.path, resultPath);
+  assert.equal(fields(result).tangrow_source, '[[00-Inbox/Capture]]');
+  assert.equal(fields(source).tangrow_capture_result, `[[${resultPath}]]`);
+  assert.equal(fields(source).tangrow_capture_processing, undefined);
+  assert.equal(body(source), original);
+  assert.deepEqual(app.vault.createdPaths, [resultPath]);
+});
+
+test('invalid PARA selections cannot prepare an action or create a destination folder', async () => {
+  const { app, plugin, source } = setup();
+  const nested = app.vault.seedFolder(`${plugin.settings.areaFolder}/Work/Nested`);
+  const outside = app.vault.seedFolder('Unrelated');
+  const original = source.content;
+  for (const path of [nested.path, outside.path, `${plugin.settings.areaFolder}/Missing`, '../escape']) {
+    await assert.rejects(plugin.processCapture(source.path, { action: 'note', title: 'Keep this', destination: { kind: 'area', path } }));
+    assert.equal(source.content, original);
+    assert.deepEqual(app.vault.createdPaths, []);
+  }
+});
+
+test('PARA filing resumes the saved destination and does not recreate a missing selected folder', async () => {
+  const { app, plugin, source } = setup();
+  const folder = app.vault.seedFolder(`${plugin.settings.resourcesFolder}/Systems`);
+  const request: CaptureRequest = { action: 'note', title: 'Reliability', destination: { kind: 'resource', path: folder.path } };
+  app.vault.failCreates = 1;
+  await assert.rejects(plugin.processCapture(source.path, request), /write failure/);
+  await assert.rejects(plugin.processCapture(source.path, { action: 'note', title: request.title }), /unfinished/);
+  app.vault.entries.delete(folder.path);
+  await assert.rejects(plugin.processCapture(source.path, { action: 'resume' }), /existing area or resource/);
+  assert.deepEqual(app.vault.createdPaths, []);
+  app.vault.seedFolder(folder.path);
+  plugin.settings.resourcesFolder = 'New resource root';
+  const path = await plugin.processCapture(source.path, { action: 'resume' });
+  assert.equal(path, `${folder.path}/Reliability.md`);
+  assert.deepEqual(app.vault.createdPaths, [path]);
+});
+
+test('PARA filing rejects a saved target in a different existing folder', async () => {
+  const { app, plugin, source } = setup();
+  const area = app.vault.seedFolder(`${plugin.settings.areaFolder}/Health.md`);
+  const unrelated = app.vault.seedFolder('Unrelated');
+  app.vault.failCreates = 1;
+  await assert.rejects(plugin.processCapture(source.path, { action: 'note', title: 'Keep this', destination: { kind: 'area', path: area.path } }), /write failure/);
+  const receipt = fields(source).tangrow_capture_processing as { target: string };
+  for (const folder of [plugin.settings.areaFolder, unrelated.path]) {
+    await app.fileManager.processFrontMatter(source, (fields) => {
+      fields.tangrow_capture_processing = { ...receipt, target: `${folder}/Keep this.md` };
+    });
+    const beforeResume = source.content;
+    await assert.rejects(plugin.processCapture(source.path, { action: 'resume' }), /saved capture action is invalid/);
+    assert.equal(source.content, beforeResume);
+    assert.deepEqual(app.vault.createdPaths, []);
+  }
+});
+
+test('task conversion appends the chosen area link from the saved action after a failure', async () => {
+  const { app, plugin, source } = setup();
+  const overview = app.vault.seedFile(plugin.settings.taskOverviewPath, '# Existing tasks\n');
+  const area = app.vault.seedFile(`${plugin.settings.areaFolder}/Work/README.md`, '# Work');
+  const request: CaptureRequest = { action: 'task', title: 'Follow up', areaPath: area.path };
+  const apply = app.vault.process.bind(app.vault);
+  app.vault.process = async (file, transform) => {
+    if (file === overview) throw new Error('Task write failed');
+    return apply(file, transform);
+  };
+  await assert.rejects(plugin.processCapture(source.path, request), /Task write failed/);
+  await assert.rejects(plugin.processCapture(source.path, { action: 'task', title: request.title }), /unfinished/);
+  app.vault.process = apply;
+  await plugin.processCapture(source.path, { action: 'resume' });
+  assert.equal((overview.content.match(/^- \[ \]/gm) ?? []).length, 1);
+  const areaLink = `[[${app.metadataCache.fileToLinktext(area, overview.path)}]]`;
+  assert.ok(overview.content.includes(`Follow up ${areaLink} [[${source.path}]] <!-- tangrow-capture:`));
+  assert.equal(area.content, '# Work');
+  assert.equal(fields(source).tangrow_capture_processing, undefined);
+  await assertTaskOwnershipAndProvenance(app, plugin, overview, source, area, 'area');
+});
+
 test('linking a project and marking processed only update the selected capture properties', async () => {
   for (const action of ['project', 'done'] as const) {
     const { app, plugin, source } = setup();
@@ -238,7 +406,7 @@ test('a failed result write retains the durable action and resumes it after a fr
   assert.equal(fields(notes(app)[0]!).tangrow_capture_action_id, receipt.id);
 });
 
-for (const action of ['note', 'task'] as const) {
+for (const action of ['note', 'task', 'filing'] as const) {
   test(`${action}: failed completion can find a moved result without a metadata index or duplicate writes`, async () => {
     const { app, plugin, source } = setup();
     const overview = app.vault.seedFile(plugin.settings.taskOverviewPath, '# Existing tasks.\n');
@@ -249,10 +417,13 @@ for (const action of ['note', 'task'] as const) {
       await update(file, change);
     };
     const original = body(source);
-    await assert.rejects(plugin.processCapture(source.path, { action, title: 'Write once' }), /Completion state failed/);
+    const request: CaptureRequest = action === 'filing' ? {
+      action: 'note', title: 'Write once', destination: { kind: 'area', path: app.vault.seedFolder(`${plugin.settings.areaFolder}/Work`).path }
+    } : { action, title: 'Write once' };
+    await assert.rejects(plugin.processCapture(source.path, request), /Completion state failed/);
     assert.ok(fields(source).tangrow_capture_processing);
     assert.equal(body(source), original);
-    const result = action === 'note' ? notes(app)[0]! : overview;
+    const result = action === 'task' ? overview : notes(app)[0]!;
     const savedContent = result.content;
     const freshApp = harness.createMockApp();
     for (const file of app.vault.getMarkdownFiles()) freshApp.vault.seedFile(file === result ? `Moved/${file.name}` : file.path, file.content);

@@ -2,7 +2,7 @@ import { parseNoteTimestamp } from './capture-data';
 import { hasValidSupportFolder } from './folders';
 import { dedupeKnowledgeLinks, type CardRelationship } from './knowledge-index';
 import { dayKey, inFolder, recentDays } from './model';
-import type { ReportRange, ReportRecord, ReportSnapshot } from './report-contract';
+import type { ReportRange, ReportRecord, ReportResource, ReportSnapshot } from './report-contract';
 import { reportPathIncluded, reportTrendDay } from './report-data';
 import { isClipRecord, reportJournalDay } from './report-metrics';
 import type { Settings } from './types';
@@ -232,10 +232,30 @@ export function reportDrafts(snapshot: ReportSnapshot): DraftReportRow[] {
 type MaterialReason = 'literature' | 'clip' | 'resource' | 'derived';
 export interface MaterialReportRow { note: ReportRecord; reason: MaterialReason; cards: number | null; citations: number | null }
 
+export type WorkbenchMaterialGroup =
+  | { kind: 'resource'; resource: ReportResource; materials: MaterialReportRow[] }
+  | { kind: 'clippings' | 'other'; materials: MaterialReportRow[] };
+
+export function groupWorkbenchMaterials(materials: readonly MaterialReportRow[], resources: readonly ReportResource[]): WorkbenchMaterialGroup[] {
+  const known = new Map(resources.map((resource) => [resource.path, { kind: 'resource' as const, resource, materials: [] as MaterialReportRow[] }]));
+  const clippings: WorkbenchMaterialGroup = { kind: 'clippings', materials: [] };
+  const other: WorkbenchMaterialGroup = { kind: 'other', materials: [] };
+  for (const material of materials) {
+    let path = material.note.path;
+    while (path && !known.has(path)) {
+      const slash = path.lastIndexOf('/');
+      path = slash === -1 ? '' : path.slice(0, slash);
+    }
+    const group = known.get(path) ?? (material.reason === 'clip' ? clippings : other);
+    group.materials.push(material);
+  }
+  return [...known.values(), clippings, other].filter((group) => group.materials.length > 0);
+}
+
 const NON_MATERIAL_KINDS = new Set(['card', 'hub', 'draft', 'capture', 'project', 'task', 'focus', 'habit']);
 const JOURNAL_KINDS = new Set(['daily', 'weekly', 'monthly', 'quarterly', 'yearly']);
 
-function materialReason(note: ReportRecord, settings: Settings, linksReady: boolean): MaterialReason | null {
+export function materialReason(note: ReportRecord, settings: Settings, linksReady: boolean): MaterialReason | null {
   const fields = note.frontmatter;
   const kind = fields?.tangrow_kind;
   if (NON_MATERIAL_KINDS.has(String(kind)) || JOURNAL_KINDS.has(String(fields?.journal).trim().toLowerCase()) || reportJournalDay(note, settings)) return null;

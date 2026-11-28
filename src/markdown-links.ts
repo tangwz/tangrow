@@ -48,6 +48,13 @@ export function readMarkdownLinkTarget(value: string): string | null {
   return value.slice(destination.start, destination.end).replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~])/g, '$1');
 }
 
+/** Qualify a wikilink when creating a same-name Markdown note would make a bare basename ambiguous. */
+export function newNoteCollisionWikiTarget(source: { basename: string; path: string }, newNotePath: string): string | null {
+  const newBasename = newNotePath.slice(newNotePath.lastIndexOf('/') + 1, -3);
+  if (source.basename.normalize('NFC').toLowerCase() !== newBasename.normalize('NFC').toLowerCase()) return null;
+  return source.path.includes('/') ? source.path.slice(0, -3) : `${'../'.repeat(newNotePath.split('/').length - 1)}${source.basename}`;
+}
+
 function relativeDestination(link: string, sourcePath: string, targetPath: string, resolve?: ResolveLink): string {
   if (!link || /^[#?/\\]/.test(link) || /^[a-z][a-z\d+.-]*:/i.test(link)) return link;
   const suffix = link.search(/(?<!\\)[?#]/);

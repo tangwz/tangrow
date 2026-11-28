@@ -1,10 +1,12 @@
-import { Notice, Setting, TFile } from 'obsidian';
+import { Notice, Setting } from 'obsidian';
+import { DEFAULT_AI_MODEL } from '../ai';
 import type TangrowPlugin from '../main';
-import type { FolderSettingKey } from '../folders';
-import { safeFolder } from '../model';
-import { JOURNAL_PERIODS } from '../periodic-notes';
 import { DEFAULT_SETTINGS, type Locale } from '../types';
-import { AI_SUGGESTIONS, ITEMS, PERIODIC_NOTES, TEMPLATES, type SectionId } from './catalog';
+import { AI_SUGGESTIONS, ITEMS, type SectionId } from './catalog';
+import { renderPeriodicSettings } from './periodic';
+import { renderVaultStructure } from './vault-structure';
+
+const MODEL_PRESETS = [DEFAULT_AI_MODEL, 'claude-sonnet-5-5', 'claude-haiku-5-5'];
 
 export interface SettingRows {
   row(container: HTMLElement, id: string): Setting;
@@ -45,13 +47,14 @@ export interface RenderedSection {
   dispose(): void;
 }
 
-export function renderSection(container: HTMLElement, id: Exclude<SectionId, 'activation'>, plugin: TangrowPlugin, refresh: () => void): RenderedSection {
+export function renderSection(container: HTMLElement, id: Exclude<SectionId, 'activation' | 'welcome'>, plugin: TangrowPlugin, refresh: () => void): RenderedSection {
   const t = plugin.t.bind(plugin);
   const rows = settingRows(plugin, id);
   const pending: (() => void)[] = [];
   // Fields that follow changes made elsewhere, such as the report view, while this section is open.
   const syncs: (() => void)[] = [];
   let disposed = false;
+  let form: RenderedSection | undefined;
   if (id === 'guide') {
     const row = rows.row(container, 'tutorial');
     row.controlEl.createEl('a', {
@@ -59,10 +62,7 @@ export function renderSection(container: HTMLElement, id: Exclude<SectionId, 'ac
       href: 'https://github.com/tangwz/tangrow#%E4%BD%BF%E7%94%A8%E6%96%B9%E5%BC%8F',
       attr: { target: '_blank', rel: 'noopener noreferrer' }
     });
-    return { refresh: () => {}, dispose: () => {} };
-  }
-  if (id === 'purchase') {
-    for (const item of ITEMS.filter((item) => item.section === id)) rows.row(container, item.id);
+    for (const item of ITEMS) if (item.section === id && item.id !== 'tutorial') rows.row(container, item.id);
     return { refresh: () => {}, dispose: () => {} };
   }
 
@@ -96,12 +96,6 @@ export function renderSection(container: HTMLElement, id: Exclude<SectionId, 'ac
 
   function text(row: Setting, value: string): HTMLInputElement {
     return row.controlEl.createEl('input', { type: 'text', value, attr: { 'aria-label': row.nameEl.textContent ?? '' } });
-  }
-
-  function applyText(row: Setting, value: string, save: (value: string) => Promise<void>, placeholder = ''): void {
-    const control = text(row, value);
-    control.placeholder = placeholder;
-    button(row, 'Apply', () => save(control.value));
   }
 
   function toggle(key: string, get: () => boolean, save: (value: boolean) => Promise<void>, parent?: HTMLElement): void {
@@ -185,11 +179,47 @@ export function renderSection(container: HTMLElement, id: Exclude<SectionId, 'ac
     syncs.push(sync);
   }
 
-  function folder(key: FolderSettingKey, parent?: HTMLElement): void {
-    applyText(addRow(key, parent), plugin.settings[key], async (value) => {
-      await plugin.updateFolderSetting(key, value);
-      new Notice(t('Path saved. Existing Bases keep their filters: edit them manually or choose a new companion folder and run setup.'));
-    });
+  function model(row: Setting): void {
+    const control = row.controlEl.createEl('select', { attr: { 'aria-label': t('Model') } });
+    for (const preset of MODEL_PRESETS) {
+      control.createEl('option', { text: preset === DEFAULT_AI_MODEL ? t('{model} (default)', { model: preset }) : preset, attr: { value: preset } });
+    }
+    control.createEl('option', { text: t('Custom…'), attr: { value: '' } });
+    const custom = row.controlEl.createDiv({ cls: 'tangrow-settings-model-custom' });
+    const input = custom.createEl('input', { type: 'text', attr: { 'aria-label': t('Custom model ID') } });
+    const save = custom.createEl('button', { text: t('Save model'), attr: { type: 'button' } });
+    const error = row.infoEl.createDiv({ cls: 'tangrow-settings-error', attr: { role: 'status' } });
+    let saving = false;
+    const sync = () => {
+      const current = plugin.settings.aiModel;
+      control.value = MODEL_PRESETS.includes(current) ? current : '';
+      custom.hidden = control.value !== '';
+      input.value = custom.hidden ? '' : current;
+    };
+    const write = async (value: string, fromCustom: boolean) => {
+      if (saving || !canEdit()) return;
+      saving = control.disabled = input.disabled = save.disabled = true;
+      error.textContent = '';
+      try {
+        if (value.trim() !== plugin.settings.aiModel) await plugin.updateAiSettings({ aiModel: value });
+        sync();
+      } catch (failure) {
+        error.textContent = plugin.error(failure);
+        if (!fromCustom) sync();
+      } finally {
+        saving = control.disabled = input.disabled = save.disabled = false;
+      }
+    };
+    control.onchange = async () => {
+      if (!canEdit()) { sync(); return; }
+      error.textContent = '';
+      custom.hidden = control.value !== '';
+      if (custom.hidden) await write(control.value, false);
+      else input.focus();
+    };
+    input.oninput = () => { error.textContent = ''; };
+    save.onclick = () => write(input.value, true);
+    sync();
   }
 
   switch (id) {
@@ -207,46 +237,28 @@ export function renderSection(container: HTMLElement, id: Exclude<SectionId, 'ac
           });
       });
       toggle('autoOpen', () => plugin.settings.autoOpen, (autoOpen) => plugin.saveSettings({ autoOpen }));
-      const periodic = fields.createDiv();
-      periodic.createEl('h3', { text: t(PERIODIC_NOTES) });
-      periodic.createEl('p', { text: t('Paths are relative to the Journal folder. Weekly notes use ISO weeks (Monday first); use GGGG and WW for their week-year and week number.') });
-      folder('journalFolder', periodic);
-      for (const period of JOURNAL_PERIODS) {
-        const initial = period === 'daily' ? plugin.settings.journalFormat : plugin.settings.journalFormats[period];
-        applyText(addRow(`format-${period}`, periodic), initial, async (value) => {
-          await plugin.updateJournalSettings(period, value);
-          new Notice(t('Journal settings saved.'));
-        });
-      }
-      const templates = fields.createEl('details');
-      templates.createEl('summary', { text: t(TEMPLATES) });
-      for (const period of JOURNAL_PERIODS) {
-        applyText(addRow(`template-${period}`, templates), plugin.settings.journalTemplates[period], async (value) => {
-          await plugin.updateJournalSettings(period, undefined, value);
-          new Notice(t('Journal settings saved.'));
-        }, t('No template'));
-      }
       break;
     }
-    case 'folders':
-      for (const key of ['inboxFolder', 'projectFolder', 'areaFolder', 'resourcesFolder', 'archiveFolder', 'supportFolder'] as const) folder(key);
-      applyText(addRow('taskOverviewPath'), plugin.settings.taskOverviewPath, async (value) => {
-        const path = safeFolder(value);
-        const note = plugin.app.vault.getAbstractFileByPath(path);
-        if (!(note instanceof TFile) || note.extension !== 'md') throw new Error('Set an existing Tasks note path in Tangrow settings.');
-        await plugin.saveSettings({ taskOverviewPath: path });
-        new Notice(t('Task overview path saved.'));
-      });
-      break;
-    case 'sidebar': {
+    case 'folders': form = renderVaultStructure(fields, plugin, canEdit); break;
+    case 'periodic': form = renderPeriodicSettings(fields, plugin, canEdit); break;
+    case 'sidebar':
+      toggle('knowledgeEnabled', () => plugin.settings.knowledgeEnabled, (enabled) => plugin.updateKnowledgeEnabled(enabled));
       integer('focusMinutes', 240, () => plugin.settings.focusMinutes, (focusMinutes) => plugin.saveSettings({ focusMinutes }));
+      toggle('wideByDefault', () => plugin.settings.wideByDefault, (wideByDefault) => plugin.saveSettings({ wideByDefault }));
+      break;
+    case 'ai': {
+      const planning = fields.createDiv();
+      const engine = planning.createEl('h3', { text: t('Organizing engine') });
+      const hint = engine.createSpan({ cls: 'tangrow-settings-status', text: t('Coming soon') });
+      const syncHint = () => { hint.hidden = !plugin.settings.showComingSoon; };
+      syncs.push(syncHint);
+      syncHint();
+      toggle('prepareDailyReview', () => plugin.settings.prepareDailyReview, (prepareDailyReview) => plugin.updateOrganizingPreferences({ prepareDailyReview }), planning);
+      toggle('showComingSoon', () => plugin.settings.showComingSoon, (showComingSoon) => plugin.updateOrganizingPreferences({ showComingSoon }), planning);
       const ai = fields.createDiv();
       ai.createEl('h3', { text: t(AI_SUGGESTIONS) });
       toggle('aiEnabled', () => plugin.settings.aiEnabled, (aiEnabled) => plugin.updateAiSettings({ aiEnabled }), ai);
-      applyText(addRow('aiModel', ai), plugin.settings.aiModel, async (aiModel) => {
-        await plugin.updateAiSettings({ aiModel });
-        new Notice(t('Model saved.'));
-      });
+      model(addRow('aiModel', ai));
       const key = addRow('aiApiKey', ai);
       const updateKeyDescription = () => key.setDesc(t(plugin.hasAiKey()
         ? (plugin.aiKeyProtected() ? "A key is saved in Obsidian's secret storage. Enter a new one to replace it, or save an empty value to remove it." : "A key is saved in this plugin's data.json. Enter a new one to replace it, or save an empty value to remove it.")
@@ -263,13 +275,15 @@ export function renderSection(container: HTMLElement, id: Exclude<SectionId, 'ac
         updateKeyDescription();
         new Notice(t(value.trim() ? 'API key saved.' : 'API key removed.'));
       });
+      const agent = fields.createDiv();
+      agent.createEl('h3', { text: t('AI workflows (Claudian)') });
+      const status = addRow('claudian', agent).controlEl.createSpan({ cls: 'tangrow-settings-status' });
+      const statusLabels = { missing: 'Claudian is not installed or enabled', incompatible: 'This Claudian version is not supported', idle: 'No Claudian chat is focused', ready: 'Claudian chat ready' } as const;
+      const syncClaudian = () => { status.textContent = t(statusLabels[plugin.agentStatus()]); };
+      syncs.push(syncClaudian);
+      syncClaudian();
       break;
     }
-    case 'views':
-      toggle('wideByDefault', () => plugin.settings.wideByDefault, (wideByDefault) => plugin.saveSettings({ wideByDefault }));
-      toggle('knowledgeEnabled', () => plugin.settings.knowledgeEnabled, (enabled) => plugin.updateKnowledgeEnabled(enabled));
-      folder('cardFolder');
-      break;
     case 'reports': {
       toggle('trackEditingActivity', () => plugin.settings.trackEditingActivity, (trackEditingActivity) => plugin.updateReportSettings({ trackEditingActivity }));
       integer('activityGoalMinutes', 1440, () => plugin.settings.activityGoalMinutes, (activityGoalMinutes) => plugin.updateReportSettings({ activityGoalMinutes }));
@@ -289,11 +303,15 @@ export function renderSection(container: HTMLElement, id: Exclude<SectionId, 'ac
       break;
   }
   updateGate();
-  const unsubscribe = syncs.length ? plugin.subscribe(() => { for (const sync of syncs) sync(); }) : undefined;
+  const unsubscribe = form || syncs.length ? plugin.subscribe(() => {
+    form?.refresh();
+    for (const sync of syncs) sync();
+  }) : undefined;
   return {
-    refresh: updateGate,
+    refresh: () => { updateGate(); form?.refresh(); },
     dispose: () => {
       disposed = true;
+      form?.dispose();
       unsubscribe?.();
       for (const commit of pending) commit();
     }

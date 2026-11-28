@@ -1,8 +1,9 @@
-import type { App, WorkspaceLeaf } from 'obsidian';
-import type { ReportPreferences, ReportRange, ReportRecord, ReportSnapshot, ReportStatusChange } from './report-contract';
+import type { App, TFile, WorkspaceLeaf } from 'obsidian';
+import type { ReportPreferences, ReportRange, ReportRecord, ReportResource, ReportSnapshot, ReportStatusChange } from './report-contract';
 import type { CardFilter, CardReport, MaterialReportRow } from './card-report-data';
 import type { CardReviewQueue } from './card-review';
 import type { JournalPeriod } from './periodic-notes';
+import type { WorkbenchArea, WorkbenchLinkCandidate, WorkbenchProject, WorkbenchProjectType } from './project-workbench-data';
 import type { CaptureSuggestion, QuickKind } from './ai';
 import type { RecoveryDraft, RecoveryLabel } from './draft-submissions';
 import type { AgentStatus, WorkflowId, WorkflowRun } from './claudian';
@@ -10,7 +11,7 @@ import type { AgentStatus, WorkflowId, WorkflowRun } from './claudian';
 export type Locale = 'zh-CN' | 'en';
 export type Section = 'tools' | 'capture' | 'pins' | 'studio' | 'focus' | 'habits' | 'ai';
 export type NoteKind = 'note' | 'project' | 'draft' | 'card';
-export interface CardSource { path: string; anchor?: string; includeLink?: boolean }
+export interface CardSource { path: string; anchor?: string; includeLink?: boolean; captureFile?: TFile }
 export type ActionId = 'copy-link' | 'copy-path' | 'file-location' | 'fold' | 'unfold' | 'page-width' | 'all-width' | 'refresh' | 'cover' | 'timestamp' | 'toggle-pin' | 'settings' | 'appearance' | 'file-list' | 'stack-tabs' | 'hide-panel' | 'random-note' | 'daily-note' | 'report' | 'title-date' | 'toggle-theme' | 'task-overview';
 export type BaseId = 'notes' | 'recent' | 'projects' | 'areas' | 'resources' | 'inbox' | 'sources' | 'captures' | 'pins' | 'drafts' | 'focus' | 'habits' | 'tasks';
 
@@ -36,6 +37,8 @@ export interface Settings extends ReportPreferences {
   habits: Habit[];
   aiEnabled: boolean;
   aiModel: string;
+  showComingSoon: boolean;
+  prepareDailyReview: boolean;
   /** Used only when the host has no secret storage. */
   aiApiKey: string;
 }
@@ -63,27 +66,30 @@ export const DEFAULT_SETTINGS: Settings = {
   habits: [],
   aiEnabled: false,
   aiModel: 'claude-opus-5-5',
+  showComingSoon: true,
+  prepareDailyReview: false,
   aiApiKey: '',
   reportExcludedFolders: [],
   trackEditingActivity: true,
   activityGoalMinutes: 60
 };
 export interface ComposerState { capture: string; scratchTitle: string }
-export interface WritingDraft { text: string; title: string; revision: number; editingView?: string }
+export interface WritingDraft { text: string; title: string; revision: number; editingView?: string; preparedProjectPath?: string | null }
 export interface WritingSaveOrigin {
   leaf: WorkspaceLeaf;
   editor: HTMLTextAreaElement;
 }
 export interface NoteSummary { path: string; name: string; folder: string; modified: number; kind?: string; status?: string }
 export interface CaptureSummary extends NoteSummary { created: number; processed?: boolean; processing?: boolean }
+export interface CaptureFilingDestination { kind: 'area' | 'resource'; path: string }
 export type CaptureRequest =
-  | { action: 'note'; title: string; projectPath?: string }
-  | { action: 'task'; title: string }
+  | { action: 'note'; title: string; projectPath?: string; destination?: CaptureFilingDestination }
+  | { action: 'task'; title: string; projectPath?: string; areaPath?: string }
   | { action: 'project'; projectPath: string }
   | { action: 'done' }
   | { action: 'pending' }
   | { action: 'resume' };
-export interface TaskSummary { path: string; line: number; text: string; done: boolean }
+export interface TaskSummary { path: string; line: number; text: string; done: boolean; labelPending?: true }
 export interface FocusSession {
   id: string;
   startedAt: number;
@@ -118,6 +124,19 @@ export interface SidebarHost {
   setLanguage(language: Locale): Promise<void>;
   settings: Settings;
   snapshot(): Snapshot;
+  workbenchProjects(): WorkbenchProject[];
+  workbenchProjectTypes(): WorkbenchProjectType[];
+  setWorkbenchProjectType(projectPath: string, type: string | null): Promise<void>;
+  workbenchDrafts(): NoteSummary[];
+  workbenchAreas(): WorkbenchArea[];
+  workbenchResources(): ReportResource[];
+  workbenchLinkCandidates(): WorkbenchLinkCandidate[];
+  setWorkbenchProjectArea(projectPath: string, areaPath: string | null): Promise<void>;
+  linkWorkbenchNote(notePath: string, projectPath: string): Promise<void>;
+  addAreaTask(areaPath: string, title: string): Promise<void>;
+  openNewAreaNote(areaPath: string): void;
+  setWorkbenchProjectStatus(projectPath: string, status: 'open' | 'done'): Promise<void>;
+  revealWorkbenchPath(path: string): Promise<void>;
   loadReport(range: ReportRange): Promise<ReportSnapshot>;
   openCardReport(filter?: CardFilter): Promise<void>;
   loadWorkbenchCards(): Promise<{ knowledge: CardReport; report: CardReport; materials: MaterialReportRow[]; hubs: ReportRecord[] }>;
@@ -131,11 +150,14 @@ export interface SidebarHost {
   action(id: ActionId): Promise<void>;
   openNote(path: string, line?: number, anchor?: string): Promise<void>;
   openBase(id: BaseId): Promise<void>;
-  createNote(kind: NoteKind, title: string, projectFolder?: string, body?: string): Promise<void>;
+  createNote(kind: NoteKind, title: string, projectFolder?: string, body?: string, projectType?: string): Promise<void>;
   createCard(title: string, body: string, source?: CardSource): Promise<void>;
   addTask(text: string, options?: { due?: string; target?: 'overview' | 'daily' }): Promise<string>;
-  completeTask(path: string, line: number): Promise<void>;
+  addProjectTask(projectNotePath: string, title: string): Promise<void>;
+  completeTask(path: string, line: number, expectedLabel?: string): Promise<void>;
   openQuickAdd(kind?: QuickKind, text?: string): void;
+  openCardFromCapture(path: string, beforeOpen?: () => boolean): Promise<boolean>;
+  openNewHub(): void;
   aiReady(): boolean;
   suggestCapture(text: string, signal?: AbortSignal): Promise<CaptureSuggestion>;
   agentStatus(): AgentStatus;
@@ -163,7 +185,7 @@ export interface SidebarHost {
   updateWritingDraft(patch: Partial<Pick<WritingDraft, 'text' | 'title'>>, expectedRevision: number, viewId?: string): boolean;
   beginWritingDraftComposition(viewId: string, expectedRevision: number): boolean;
   endWritingDraftComposition(viewId: string): void;
-  submitWritingDraft(expectedRevision: number, origin?: WritingSaveOrigin, rescue?: boolean): Promise<void>;
+  submitWritingDraft(expectedRevision: number, origin?: WritingSaveOrigin, rescue?: boolean, projectPath?: string): Promise<void>;
   setup(): Promise<void>;
   startFocus(minutes: number): Promise<void>;
   pauseFocus(): Promise<void>;

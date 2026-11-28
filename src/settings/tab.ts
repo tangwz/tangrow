@@ -1,8 +1,10 @@
-import { PluginSettingTab } from 'obsidian';
+import { PluginSettingTab, TFolder, setIcon } from 'obsidian';
+import { closeNativeSettings } from '../compat';
 import type TangrowPlugin from '../main';
 import { renderAccessStatus, renderActivation } from './activation';
 import { GROUPS, SECTION_IDS, SECTIONS, searchSettings, type SectionId, type SettingItem } from './catalog';
 import { renderSection } from './sections';
+import { PARA_FOLDER_KEYS } from './vault-structure-data';
 
 const OPEN_ACTIVATION = 'tangrow:open-activation';
 
@@ -20,9 +22,10 @@ export function focusSetting(container: HTMLElement, id: string): void {
 }
 
 export class TangrowSettings extends PluginSettingTab {
-  private section?: SectionId;
+  private section?: Exclude<SectionId, 'welcome'>;
   private visible = false;
   private unsubscribe?: () => void;
+  private unsubscribeHome?: () => void;
   private tick?: number;
   private disposeSection?: () => void;
   private refreshAccess?: () => void;
@@ -44,6 +47,9 @@ export class TangrowSettings extends PluginSettingTab {
       this.unsubscribe = this.host.access.subscribe((event) => {
         if (event === 'change') this.refreshAccess?.();
       });
+      this.unsubscribeHome = this.host.subscribe(() => {
+        if (!this.section) this.refreshAccess?.();
+      });
       this.tick = this.containerEl.ownerDocument.defaultView?.setInterval(() => this.refreshAccess?.(), 60000);
     }
     this.render();
@@ -52,6 +58,8 @@ export class TangrowSettings extends PluginSettingTab {
   hide(): void {
     this.unsubscribe?.();
     this.unsubscribe = undefined;
+    this.unsubscribeHome?.();
+    this.unsubscribeHome = undefined;
     this.containerEl.ownerDocument.defaultView?.clearInterval(this.tick);
     this.tick = undefined;
     this.disposeSection?.();
@@ -63,6 +71,13 @@ export class TangrowSettings extends PluginSettingTab {
   }
 
   private navigate(section?: SectionId, item?: SettingItem): void {
+    if (section === 'welcome') {
+      if (this.visible) {
+        closeNativeSettings(this.host.app);
+        this.host.openOnboarding();
+      }
+      return;
+    }
     this.section = section;
     if (!this.visible) return;
     const page = this.render();
@@ -131,23 +146,46 @@ export class TangrowSettings extends PluginSettingTab {
       }
     } else {
       page.createEl('h2', { text: 'Tangrow', attr: { tabindex: '-1' } });
+      const showStatus: (() => void)[] = [];
       for (const [group, name] of Object.entries(GROUPS)) {
         const sectionList = page.createDiv({ cls: 'tangrow-settings-section-list' });
         sectionList.createEl('h3', { text: t(name) });
         for (const id of SECTION_IDS.filter((id) => SECTIONS[id].group === group)) {
-          const row = sectionList.createEl('button', { cls: 'tangrow-settings-link' });
+          const row = sectionList.createEl('button', { cls: 'tangrow-settings-link tangrow-settings-entry', attr: { type: 'button' } });
           row.createSpan({ text: t(SECTIONS[id].name) });
-          if (id === 'activation') {
-            const status = row.createSpan({ cls: 'tangrow-settings-status' });
-            this.refreshAccess = () => renderAccessStatus(status, this.host);
-          }
           row.createSpan({ cls: 'setting-item-description', text: t(SECTIONS[id].description) });
+          const status = row.createSpan({ cls: 'tangrow-settings-status tangrow-settings-entry-status' });
+          showStatus.push(() => {
+            if (id === 'activation') renderAccessStatus(status, this.host);
+            else status.textContent = this.summary(id);
+          });
+          const chevron = row.createSpan({ cls: 'tangrow-settings-entry-icon', attr: { 'aria-hidden': 'true' } });
+          setIcon(chevron, 'chevron-right');
           row.onclick = () => this.navigate(id);
         }
       }
+      this.refreshAccess = () => { for (const refresh of showStatus) refresh(); };
     }
 
     this.refreshAccess?.();
     return page;
+  }
+
+  private summary(section: Exclude<SectionId, 'activation'>): string {
+    const t = this.host.t.bind(this.host);
+    const settings = this.host.settings;
+    switch (section) {
+      case 'welcome': return t('Run again');
+      case 'defaults': return settings.language === 'en' ? 'English' : t('Simplified Chinese');
+      case 'folders': {
+        const count = PARA_FOLDER_KEYS.filter((key) => this.host.app.vault.getAbstractFileByPath(settings[key]) instanceof TFolder).length;
+        return t('PARA {count}/{total}', { count, total: PARA_FOLDER_KEYS.length });
+      }
+      case 'periodic': return t('D · W · M · Q · Y');
+      case 'sidebar': return t(settings.knowledgeEnabled ? 'Knowledge on' : 'Knowledge off');
+      case 'ai': return t(settings.aiEnabled ? 'Suggestions on' : 'Suggestions off');
+      case 'reports': return t(settings.trackEditingActivity ? 'Activity on' : 'Activity off');
+      default: return '';
+    }
   }
 }

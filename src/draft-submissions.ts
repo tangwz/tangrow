@@ -1,7 +1,7 @@
 import { getFrontMatterInfo, parseYaml, TFile, type App } from 'obsidian';
 import { safeFolder } from './model';
 
-export interface DraftSubmission { id: string; path: string | null }
+export interface DraftSubmission { id: string; path: string | null; project?: { path: string; notePath: string } }
 export interface DraftSubmissions { capture: DraftSubmission | null; writing: DraftSubmission | null }
 export type SubmissionKind = 'capture' | 'draft';
 export type RecoveryLabel = 'Quick capture' | 'Quick add';
@@ -10,20 +10,23 @@ export interface StoredRecoveryDraft extends RecoveryDraft { submission: DraftSu
 
 const uuid = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i;
 
-function readSubmission(entry: unknown): DraftSubmission | null {
+function readSubmission(entry: unknown, allowProject = false): DraftSubmission | null {
   if (entry === null || entry === undefined) return null;
   if (typeof entry !== 'object' || Array.isArray(entry)) throw new Error('Saved submission state is invalid.');
-  const { id, path } = entry as Partial<DraftSubmission>;
+  const { id, path, project } = entry as Partial<DraftSubmission>;
   if (typeof id !== 'string' || !uuid.test(id)
     || (path !== null && (typeof path !== 'string' || !path.endsWith('.md') || safeFolder(path) !== path))) throw new Error('Saved submission state is invalid.');
-  return { id, path };
+  if (project !== undefined && (!allowProject || path === null || !project || typeof project !== 'object'
+    || typeof project.path !== 'string' || safeFolder(project.path) !== project.path
+    || typeof project.notePath !== 'string' || !project.notePath.endsWith('.md') || safeFolder(project.notePath) !== project.notePath)) throw new Error('Saved submission state is invalid.');
+  return project ? { id, path, project: { path: project.path, notePath: project.notePath } } : { id, path };
 }
 
 export function readDraftSubmissions(value: unknown): DraftSubmissions {
   if (value === undefined) return { capture: null, writing: null };
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Saved submission state is invalid.');
   const data = value as Partial<DraftSubmissions>;
-  return { capture: readSubmission(data.capture), writing: readSubmission(data.writing) };
+  return { capture: readSubmission(data.capture), writing: readSubmission(data.writing, true) };
 }
 
 export function readRecoveryDrafts(value: unknown): Map<string, StoredRecoveryDraft> {
