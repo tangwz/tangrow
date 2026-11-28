@@ -20,6 +20,7 @@ const openPanels = new WeakMap<SidebarHost, Set<CapturePanel>>();
 
 export class CapturePanel {
   private readonly instanceId = `tangrow-capture-${crypto.randomUUID()}`;
+  private readonly ui = new SidebarUI(() => this.host.settings.language);
   private conflict?: { id: string; text: string };
   private gate?: AccessGate;
   private root?: HTMLElement;
@@ -401,7 +402,7 @@ export class CapturePanel {
     const drafts = this.editor?.readOnly ? [] : this.host.loadRecoveryDrafts();
     this.recoveryArea.empty();
     this.recoveryArea.hidden = !drafts.length;
-    if (drafts.length) showRecoveryDrafts(this.recoveryArea, new SidebarUI(() => this.host.settings.language), this.host, drafts);
+    if (drafts.length) showRecoveryDrafts(this.recoveryArea, this.ui, this.host, drafts);
   }
 
   private updateComposerControls(): void {
@@ -561,11 +562,12 @@ export class CapturePanel {
     const activePath = this.timeline.contains(active) ? active?.dataset.captureSource : undefined;
     this.timeline.empty();
     this.footer.empty();
+    if (this.surface === 'sidebar' && captures.length) this.ui.comingSoon(this.timeline, 'AI suggests where each capture goes');
     if (!filtered.length) {
-      const empty = this.timeline.createDiv({ cls: 'tangrow-empty' });
       const hasCaptures = captures.length > 0;
-      empty.createEl('strong', { text: this.t(hasCaptures ? 'No captures match this filter' : this.selectedDay ? 'No captures on this day' : 'Your first thought starts here') });
-      empty.createEl('p', { cls: 'tangrow-muted', text: this.t(hasCaptures ? 'Choose another status or date to browse your captures.' : this.selectedDay ? 'Choose another day, or save a new thought above.' : 'Saved captures will appear by their creation date.') });
+      const title = hasCaptures ? 'No captures match this filter' : this.selectedDay ? 'No captures on this day' : 'Your first thought starts here';
+      const detail = hasCaptures ? 'Choose another status or date to browse your captures.' : this.selectedDay ? 'Choose another day, or save a new thought above.' : 'Saved captures will appear by their creation date.';
+      this.ui.empty(this.timeline, title, detail, 'inbox');
       return;
     }
     const visible = groupCapturesByDay(filtered).flatMap((group) => group.captures).slice(0, this.limit);

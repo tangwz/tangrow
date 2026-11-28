@@ -82,7 +82,6 @@ export class TangrowSidebar extends ItemView {
   private selectedManuscript?: string;
   private journalPeriod: JournalPeriod = 'daily';
   private journalDay?: string;
-  private shellLabels: Array<{ element: HTMLElement; source: string; tooltip?: boolean }> = [];
   private taskDraft = '';
   private taskSaving = false;
   private recentOpenedLimit = 8;
@@ -218,10 +217,10 @@ export class TangrowSidebar extends ItemView {
       setTooltip(badge, this.ui.t('Your notes and companion data stay in this vault.'));
     }
     this.contentEl.querySelector('.tangrow-nav')?.setAttribute('aria-label', this.ui.t('Companion workspaces'));
-    for (const { element, source, tooltip } of this.shellLabels) {
-      const text = this.ui.t(source);
-      if (tooltip) { element.setAttribute('aria-label', text); setTooltip(element, text); }
-      else element.textContent = text;
+    const add = this.contentEl.querySelector<HTMLButtonElement>('.tangrow-header-add');
+    if (add) {
+      add.setAttribute('aria-label', this.ui.t('New'));
+      setTooltip(add, this.ui.t('New'));
     }
     for (const item of SECTIONS) {
       const control = this.navButtons.get(item.id);
@@ -253,17 +252,14 @@ export class TangrowSidebar extends ItemView {
     const brand = header.createDiv({ cls: 'tangrow-brand' });
     icon(brand, 'sprout');
     brand.createEl('strong', { text: 'Tangrow' });
-    this.shellLabels = [];
     const headerTools = header.createDiv({ cls: 'tangrow-header-tools' });
     const badge = headerTools.createSpan({ cls: 'tangrow-local-badge', text: this.ui.t('LOCAL') });
     setTooltip(badge, this.ui.t('Your notes and companion data stay in this vault.'));
     const add = headerTools.createEl('button', {
-      cls: 'tangrow-header-add mod-cta',
+      cls: 'tangrow-header-add',
       attr: { type: 'button', 'aria-label': this.ui.t('New'), 'aria-haspopup': 'menu', 'aria-expanded': 'false', 'aria-controls': `${this.viewId}-create-menu` }
     });
-    icon(add, 'plus');
-    const addLabel = add.createSpan({ text: this.ui.t('New') });
-    add.createSpan({ text: '▾', attr: { 'aria-hidden': 'true' } });
+    icon(add, 'plus').setAttribute('aria-hidden', 'true');
     setTooltip(add, this.ui.t('New'));
     add.addEventListener('click', () => {
       if (this.dismissCreateMenu) this.dismissCreateMenu(true);
@@ -274,7 +270,6 @@ export class TangrowSidebar extends ItemView {
       event.preventDefault();
       this.openCreateMenu(add, event.key === 'ArrowUp');
     });
-    this.shellLabels.push({ element: add, source: 'New', tooltip: true }, { element: addLabel, source: 'New' });
     this.trialDeadline = this.contentEl.createEl('p', { cls: 'tangrow-muted' });
     this.refreshTrialDeadline();
     this.noteLabel = this.contentEl.createDiv({ cls: 'tangrow-context', attr: { 'aria-live': 'polite', hidden: '' } });
@@ -524,12 +519,12 @@ export class TangrowSidebar extends ItemView {
   }
 
   private renderNestedTabs<T extends string>(label: string, tabs: Record<T, string>, active: T, select: (tab: T) => void): void {
-    const nav = this.workspacePane.createDiv({ cls: 'tangrow-chips tangrow-subnav', attr: { role: 'group', 'aria-label': this.ui.t(label) } });
+    const nav = this.workspacePane.createDiv({ cls: 'tangrow-subnav', attr: { role: 'group', 'aria-label': this.ui.t(label) } });
     nav.dataset.workbenchLabel = label;
     for (const tab of Object.keys(tabs) as T[]) {
-      const chip = nav.createEl('button', { cls: 'tangrow-chip', text: this.ui.t(tabs[tab]), attr: { type: 'button', 'aria-pressed': String(tab === active) } });
-      chip.dataset.workbenchLabel = tabs[tab];
-      chip.addEventListener('click', () => {
+      const control = nav.createEl('button', { cls: 'tangrow-subnav-item', text: this.ui.t(tabs[tab]), attr: { type: 'button', 'aria-pressed': String(tab === active) } });
+      control.dataset.workbenchLabel = tabs[tab];
+      control.addEventListener('click', () => {
         if (tab === active) return;
         select(tab);
         this.workspacePane.querySelector<HTMLButtonElement>('.tangrow-subnav button[aria-pressed="true"]')?.focus({ preventScroll: true });
@@ -574,7 +569,7 @@ export class TangrowSidebar extends ItemView {
     if (needsSetup && !this.setupBanner.hasChildNodes()) {
       this.setupBanner.createEl('strong', { text: this.ui.t('Add your companion views') });
       this.ui.paragraph(this.setupBanner, 'Create additive Bases in the support folder. Your existing notes stay where they are.');
-      this.ui.button(this.setupBanner, 'Set up Bases', () => this.host.setup(), { icon: 'database', cls: 'mod-cta' });
+      this.ui.button(this.setupBanner, 'Set up Bases', () => this.host.setup(), { icon: 'database' });
     }
     this.refreshSection(snapshot);
     if (enabled && (this.section === 'today' || this.section === 'knowledge')) this.workbenchCards.refresh(this.section === 'knowledge' && this.knowledgeTab === 'review');
@@ -622,6 +617,7 @@ export class TangrowSidebar extends ItemView {
     journal.dataset.tangrowAction = 'today-journal';
     this.actionButton(shortcuts, 'report', 'Open report', 'chart-no-axes-combined');
     if (this.host.settings.knowledgeEnabled) this.workbenchCards.renderToday(this.pane);
+    this.ui.comingSoon(this.pane, 'AI proposals to confirm');
     const manuscript = this.manuscript(state) ?? state.drafts[0];
     if (manuscript) {
       this.ui.sectionHeading(this.pane, 'Continue writing');

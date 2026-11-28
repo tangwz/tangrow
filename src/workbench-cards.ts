@@ -106,7 +106,7 @@ export class WorkbenchCards {
 
   private reportButton(parent: HTMLElement, source: string, filter: CardFilter, count: number | null): void {
     const label = `${this.ui.t(source)} · ${count === null ? this.ui.t('Pending confirmation') : this.ui.number(count)}`;
-    const button = this.ui.userButton(parent, label, () => this.host.openCardReport(filter), { cls: 'tangrow-chip', disabled: count === null });
+    const button = this.ui.userButton(parent, label, () => this.host.openCardReport(filter), { level: 'text', disabled: count === null });
     button.dataset.tangrowAction = `home-card-report-${filter}`;
   }
 
@@ -116,14 +116,14 @@ export class WorkbenchCards {
     this.ui.sectionHeading(heading, 'Card activity');
     if (!this.renderStatus(section)) return;
     const { knowledge, report } = this.data!;
-    const total = this.ui.userButton(heading, this.ui.t('View all · {count}', { count: this.ui.number(knowledge.counts.all) }), () => this.showKnowledge('cards'), { cls: 'tangrow-text-button' });
+    const total = this.ui.userButton(heading, this.ui.t('View all · {count}', { count: this.ui.number(knowledge.counts.all) }), () => this.showKnowledge('cards'), { level: 'text' });
     total.dataset.tangrowAction = 'home-cards';
     const links = section.createDiv({ cls: 'tangrow-chips tangrow-card-links' });
     this.reportButton(links, 'Created in the last 7 days', 'week', report.counts.week);
     this.reportButton(links, 'Awaiting connections', 'isolated', report.linksReady ? report.counts.isolated : null);
     this.reportButton(links, 'Manuscript candidates only', 'candidate', report.linksReady ? report.counts.candidate : null);
     if (knowledge.counts.all === 0) {
-      this.ui.button(section, 'New card', () => this.host.openQuickAdd('card'), { icon: 'plus', cls: 'mod-cta tangrow-full-width' });
+      this.ui.button(section, 'New card', () => this.host.openQuickAdd('card'), { icon: 'plus', cls: 'tangrow-full-width' });
       return;
     }
     this.renderReview(section, false);
@@ -139,6 +139,7 @@ export class WorkbenchCards {
     const { knowledge, materials, hubs } = this.data!;
     if (tab === 'review') {
       this.renderReview(parent, true);
+      this.ui.comingSoon(parent, 'AI drafts today’s review');
       return;
     }
     const heading = parent.createDiv({ cls: 'tangrow-list-heading' });
@@ -152,26 +153,28 @@ export class WorkbenchCards {
     heading.createSpan({ cls: 'tangrow-muted', text: this.ui.number(rows.length) });
     if (tab === 'cards') {
       const actions = parent.createDiv({ cls: 'tangrow-chips tangrow-card-links' });
-      this.ui.button(actions, 'New card', () => this.host.openQuickAdd('card'), { icon: 'plus', cls: 'tangrow-chip' });
-      this.ui.button(actions, 'Open card report', () => this.host.openCardReport('all'), { icon: 'chart-no-axes-combined', cls: 'tangrow-chip' });
+      this.ui.button(actions, 'New card', () => this.host.openQuickAdd('card'), { icon: 'plus' });
+      this.ui.button(actions, 'Open card report', () => this.host.openCardReport('all'), { icon: 'chart-no-axes-combined', level: 'text' });
     }
-    if (!rows.length) {
-      this.ui.paragraph(parent, 'No notes in this view.');
-      return;
+    if (!rows.length) this.ui.paragraph(parent, 'No notes in this view.');
+    else {
+      const lastPage = Math.ceil(rows.length / PAGE_SIZE);
+      const page = Math.min(this.pages[tab] ?? 1, lastPage);
+      for (const { note, detail } of rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)) this.note(parent, note, detail);
+      if (lastPage > 1) {
+        const pager = parent.createDiv({ cls: 'tangrow-workbench-pager' });
+        for (const [direction, step, icon] of [['Previous page', -1, 'chevron-left'], ['Next page', 1, 'chevron-right']] as const) {
+          const control = this.ui.button(pager, direction, () => {
+            this.pages[tab] = page + step;
+            this.onChange();
+          }, { icon, cls: 'tangrow-chip', disabled: page + step < 1 || page + step > lastPage });
+          control.dataset.tangrowAction = direction;
+        }
+        pager.createSpan({ cls: 'tangrow-muted', text: this.ui.t('Page {page} of {total}', { page: this.ui.number(page), total: this.ui.number(lastPage) }) });
+      }
     }
-    const lastPage = Math.ceil(rows.length / PAGE_SIZE);
-    const page = Math.min(this.pages[tab] ?? 1, lastPage);
-    for (const { note, detail } of rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)) this.note(parent, note, detail);
-    if (lastPage < 2) return;
-    const pager = parent.createDiv({ cls: 'tangrow-workbench-pager' });
-    for (const [direction, step, icon] of [['Previous page', -1, 'chevron-left'], ['Next page', 1, 'chevron-right']] as const) {
-      const control = this.ui.button(pager, direction, () => {
-        this.pages[tab] = page + step;
-        this.onChange();
-      }, { icon, cls: 'tangrow-chip', disabled: page + step < 1 || page + step > lastPage });
-      control.dataset.tangrowAction = direction;
-    }
-    pager.createSpan({ cls: 'tangrow-muted', text: this.ui.t('Page {page} of {total}', { page: this.ui.number(page), total: this.ui.number(lastPage) }) });
+    if (tab === 'cards') this.ui.comingSoon(parent, rows.length ? 'AI finds connections for a card' : 'AI drafts candidate cards');
+    if (tab === 'hubs') this.ui.comingSoon(parent, 'AI suggests which hub a card belongs to');
   }
 
   private renderStatus(parent: HTMLElement): boolean {
@@ -235,7 +238,7 @@ export class WorkbenchCards {
           this.queue = this.host.loadCardReview(this.queue.day) ?? this.queue;
         }
         this.onChange();
-      }, { icon: 'check', cls: 'tangrow-chip' });
+      }, { icon: 'check', level: full ? 'primary' : 'secondary' });
       mark.dataset.tangrowAction = 'mark-card-reviewed';
       const target = this.manuscript();
       const use = this.ui.button(actions, target ? 'Use in selected manuscript' : 'Choose a manuscript', async () => {

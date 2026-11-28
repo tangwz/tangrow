@@ -213,6 +213,33 @@ test('the capture timeline defaults to pending, exposes resumable actions and in
   assert.match(panel.timeline.querySelector('strong')!.textContent, /No captures match/);
 });
 
+test('the capture timeline shows one passive coming soon hint across filters and language changes', () => {
+  const service = host();
+  const panel = new harness.CapturePanel(service);
+  const root = new Element();
+  Object.assign(panel, { root, timeline: root.createDiv(), timelineCount: root.createSpan(), footer: root.createDiv() });
+  const entries = [capture('Pending'), capture('Finished', { processed: true })];
+
+  panel.renderTimeline(entries);
+  let hints = root.querySelectorAll('.tangrow-coming-soon');
+  assert.equal(hints.length, 1);
+  assert.equal(hints[0]?.querySelector('.tangrow-coming-soon-label')?.textContent, 'Coming soon');
+  assert.equal(hints[0]?.querySelector('button'), null);
+  assert.equal(hints[0]?.querySelector('a'), null);
+  assert.equal(hints[0]?.getAttribute('tabindex'), null);
+
+  service.settings.language = 'zh-CN';
+  panel.captureFilter = 'processed';
+  panel.renderTimeline(entries);
+  hints = root.querySelectorAll('.tangrow-coming-soon');
+  assert.equal(hints.length, 1);
+  assert.equal(hints[0]?.querySelector('.tangrow-coming-soon-description')?.textContent, 'AI 为每条速记建议去向');
+  assert.equal(hints[0]?.querySelector('.tangrow-coming-soon-label')?.textContent, '即将推出');
+
+  panel.renderTimeline([]);
+  assert.equal(root.querySelectorAll('.tangrow-coming-soon').length, 0);
+});
+
 test('the processing dialog validates project selection and opens the result only on a separate user action', async () => {
   const service = host();
   const project = service.app.vault.seedFile('20-Project/Launch/Launch.md', '# Launch');

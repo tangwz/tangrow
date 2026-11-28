@@ -79,10 +79,15 @@
 .tangrow-activity-record-badge.is-note { background: var(--tangrow-heatmap-notes); }
 .tangrow-activity-record-badge.is-pin { border: 1px solid var(--tangrow-heatmap-pins); }
 
-.tangrow-sidebar {
+.tangrow-sidebar,
+.tangrow-capture-panel,
+.tangrow-capture-window {
   --tangrow-tint: color-mix(in srgb, var(--interactive-accent) 8%, var(--background-primary));
   --tangrow-line: var(--background-modifier-border);
-  --tangrow-radius: 10px;
+  --tangrow-radius: var(--radius-m);
+}
+
+.tangrow-sidebar {
   container-type: inline-size;
   padding: 18px 14px 24px;
   overflow-y: auto;
@@ -106,7 +111,7 @@
 
 .tangrow-header { justify-content: space-between; padding: 0 2px 10px; }
 .tangrow-brand { color: var(--text-normal); font-size: 17px; letter-spacing: -0.4px; }
-.tangrow-brand > .tangrow-icon { color: var(--interactive-accent); }
+.tangrow-brand > .tangrow-icon { color: var(--text-muted); }
 .tangrow-header-tools { display: flex; align-items: center; gap: 8px; }
 .tangrow-local-badge {
   font-size: 9px;
@@ -117,24 +122,21 @@
   border-radius: 999px;
   padding: 3px 8px;
 }
-.tangrow-header-add {
+.tangrow-sidebar .tangrow-header-add {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  min-height: 30px;
-  padding: 4px 9px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-s);
   box-shadow: none;
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
+  background: transparent;
+  color: var(--text-muted);
   cursor: pointer;
 }
-.tangrow-header-add:hover { background: var(--interactive-accent-hover); }
+.tangrow-sidebar .tangrow-header-add:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
 .tangrow-header-add .tangrow-icon svg { width: 16px; height: 16px; stroke-width: 2.2px; }
 .tangrow-context { min-width: 0; color: var(--text-muted); margin: 0 2px 12px; font-size: 11px; }
 .tangrow-context[hidden] { display: none; }
@@ -180,7 +182,7 @@
   outline: none;
   background: var(--background-modifier-hover);
 }
-.tangrow-create-menu-item .tangrow-icon { color: var(--interactive-accent); }
+.tangrow-create-menu-item .tangrow-icon { color: var(--text-muted); }
 .tangrow-create-menu-label { flex: 1; }
 .tangrow-create-menu-shortcut { color: var(--text-faint); font-size: 11px; }
 
@@ -188,15 +190,13 @@
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 2px;
-  padding: 3px;
-  background: var(--background-secondary);
-  border: 1px solid var(--tangrow-line);
-  border-radius: 12px;
+  border-bottom: 1px solid var(--tangrow-line);
   margin-bottom: 18px;
 }
 .tangrow-nav.is-knowledge-disabled { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.tangrow-nav-item[hidden] { display: none; }
-.tangrow-nav-item {
+.tangrow-sidebar .tangrow-nav-item[hidden] { display: none; }
+.tangrow-sidebar .tangrow-nav-item {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -206,7 +206,7 @@
   min-height: 42px;
   padding: 5px 1px 4px;
   border: none;
-  border-radius: 9px;
+  border-radius: var(--radius-s);
   box-shadow: none;
   background: transparent;
   color: var(--text-muted);
@@ -216,14 +216,18 @@
 }
 .tangrow-nav-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tangrow-nav-item.is-active {
-  background: var(--background-primary);
   color: var(--text-normal);
-  box-shadow: 0 1px 3px rgb(0 0 0 / 8%);
   font-weight: 600;
 }
-.tangrow-nav-item:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
-.tangrow-nav-item.is-active:hover { background: var(--background-primary); }
-.tangrow-nav-item.is-active .tangrow-icon { color: var(--interactive-accent); }
+.tangrow-sidebar .tangrow-nav-item:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+.tangrow-nav-item.is-active::after {
+  content: '';
+  position: absolute;
+  inset: auto 22% -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--interactive-accent);
+}
 .tangrow-nav-item .tangrow-icon svg { width: 15px; height: 15px; }
 .tangrow-pane { min-width: 0; }
 .tangrow-section-title { margin: 23px 0 9px; font-size: 12px; font-weight: 650; color: var(--text-normal); letter-spacing: 0; }
@@ -255,6 +259,7 @@
   white-space: normal;
   cursor: pointer;
 }
+:is(.tangrow-sidebar, .tangrow-capture-panel) .tangrow-button:where(:not(.mod-cta)) { background: transparent; box-shadow: none; }
 .tangrow-button > span:not(.tangrow-icon) { overflow-wrap: anywhere; }
 .tangrow-button:hover:not(:disabled) { background: var(--background-modifier-hover); border-color: var(--background-modifier-border-hover); }
 .tangrow-button[aria-pressed="true"] { background: var(--tangrow-tint); border-color: var(--interactive-accent); }
@@ -277,14 +282,13 @@
   gap: 3px;
   min-height: 56px;
   padding: 9px 9px 8px;
-  border-radius: 10px;
-  background: var(--background-secondary);
-  border-color: transparent;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
 }
-.tangrow-button.tangrow-metric:hover:not(:disabled) { background: var(--tangrow-tint); border-color: color-mix(in srgb, var(--interactive-accent) 40%, transparent); }
+.tangrow-button.tangrow-metric:hover:not(:disabled) { background: var(--background-modifier-hover); }
 .tangrow-metric > strong { font-size: 19px; font-weight: 600; letter-spacing: -0.5px; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .tangrow-metric > span { max-width: 100%; color: var(--text-muted); font-size: 10px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tangrow-metric:first-child > strong { color: var(--text-accent); }
 
 /* Pills: tool groups, sources, dates. */
 .tangrow-chips { display: flex; flex-wrap: wrap; gap: 5px; }
@@ -299,7 +303,7 @@
   border: 1px solid var(--tangrow-line);
   border-radius: 999px;
   box-shadow: none;
-  background: var(--background-primary);
+  background: transparent;
   color: var(--text-muted);
   font-size: 11px;
   line-height: 1.3;
@@ -313,17 +317,31 @@
   font-weight: 600;
 }
 .tangrow-chip .tangrow-icon svg { width: 13px; height: 13px; }
-.tangrow-subnav { margin: 0 0 14px; }
-.tangrow-subnav > button { max-width: 100%; white-space: normal; }
+.tangrow-sidebar .tangrow-subnav { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 0 0 14px; }
+.tangrow-sidebar .tangrow-subnav > :is(.tangrow-subnav-item, .tangrow-chip) {
+  max-width: 100%;
+  min-height: 26px;
+  height: auto;
+  padding: 3px 0;
+  border: none;
+  border-radius: var(--radius-s);
+  box-shadow: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  text-align: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.tangrow-sidebar .tangrow-subnav > :is(.tangrow-subnav-item, .tangrow-chip):hover { color: var(--text-normal); }
+.tangrow-sidebar .tangrow-subnav > :is(.tangrow-subnav-item, .tangrow-chip)[aria-pressed="true"] { color: var(--text-normal); font-weight: 650; }
 .tangrow-more-report { margin-bottom: 14px; }
 .tangrow-today-overview { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .tangrow-today-shortcuts { margin-top: 10px; }
 .tangrow-workbench-card {
   min-width: 0;
   margin-top: 16px;
-  border: 1px solid var(--tangrow-line);
-  border-radius: var(--tangrow-radius);
-  padding: 10px;
 }
 .tangrow-workbench-card > .tangrow-section-title:first-child,
 .tangrow-workbench-card > .tangrow-list-heading:first-child > .tangrow-section-title,
@@ -379,6 +397,7 @@
 .tangrow-setup[hidden] { display: none; }
 .tangrow-setup > strong { font-size: 12px; }
 .tangrow-setup .tangrow-button { margin-top: 9px; width: 100%; justify-content: center; }
+.tangrow-sidebar .tangrow-setup { background: transparent; }
 .tangrow-composer { border: 1px solid var(--tangrow-line); border-radius: var(--tangrow-radius); overflow: hidden; background: var(--background-primary); }
 .tangrow-composer:focus-within { border-color: var(--interactive-accent); box-shadow: 0 0 0 2px var(--tangrow-tint); }
 .tangrow-composer .tangrow-textarea {
@@ -406,24 +425,49 @@
 .tangrow-list-heading { justify-content: space-between; margin-top: 23px; margin-bottom: 8px; }
 .tangrow-list-heading .tangrow-section-title { margin: 0; }
 .tangrow-text-button { padding: 4px 2px; min-height: 24px; border: none; background: transparent; font-size: 10px; color: var(--text-muted); }
-.tangrow-text-button:hover:not(:disabled) { background: transparent; color: var(--text-accent); }
+.tangrow-text-button:hover:not(:disabled) { background: transparent; color: var(--text-normal); }
 .tangrow-note-list { display: flex; flex-direction: column; gap: 2px; }
-.tangrow-note-row { display: grid; grid-template-columns: 16px 1fr; column-gap: 9px; row-gap: 4px; border: none; border-bottom: 1px solid var(--tangrow-line); border-radius: 0; padding: 11px 3px; width: 100%; }
+.tangrow-note-row { display: grid; grid-template-columns: 16px minmax(0, 1fr); column-gap: 9px; row-gap: 4px; border: none; border-radius: var(--radius-s); padding: 8px 6px; width: 100%; }
 .tangrow-note-row > .tangrow-icon { grid-row: 1 / 3; align-self: start; color: var(--text-faint); padding-top: 1px; }
 .tangrow-note-row > .tangrow-note-folder { grid-column: 2; color: var(--text-faint); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tangrow-empty { display: flex; flex-direction: column; align-items: center; padding: 28px 14px; text-align: center; border: 1px dashed var(--tangrow-line); border-radius: var(--tangrow-radius); gap: 11px; margin: 10px 0; }
-.tangrow-empty > .tangrow-icon { color: var(--text-faint); }
-.tangrow-empty > .tangrow-icon svg { width: 24px; height: 24px; }
-.tangrow-empty > strong { font-size: 12px; font-weight: 500; }
-.tangrow-empty > p { margin: -2px 0 0; max-width: 230px; }
+.tangrow-empty { display: grid; gap: 8px; padding: 6px 0 4px; margin: 10px 0; min-width: 0; overflow-wrap: anywhere; }
+.tangrow-empty > .tangrow-icon {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  color: var(--text-muted);
+}
+.tangrow-empty > strong { font-size: var(--font-ui-small); font-weight: 650; }
+.tangrow-empty > p { margin: 0; line-height: 1.6; }
+.tangrow-empty-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.tangrow-empty-actions > .tangrow-button { min-width: 0; max-width: 100%; }
+.tangrow-coming-soon {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 6px 0;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+.tangrow-coming-soon-description { overflow-wrap: anywhere; }
+.tangrow-coming-soon-label {
+  padding: 0 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
 .tangrow-full-width { width: 100%; }
-.tangrow-focus-card { display: flex; flex-direction: column; align-items: center; border: 1px solid var(--tangrow-line); border-radius: 14px; padding: 27px 16px 20px; margin: 17px 0; background: linear-gradient(160deg, var(--tangrow-tint), var(--background-primary) 65%); }
+.tangrow-focus-card { display: flex; flex-direction: column; align-items: center; border: 1px solid var(--tangrow-line); border-radius: var(--tangrow-radius); padding: 27px 16px 20px; margin: 17px 0; }
 .tangrow-eyebrow { font-size: 9px; letter-spacing: 1.8px; color: var(--text-muted); font-weight: 600; }
 .tangrow-clock { font-variant-numeric: tabular-nums; font-size: clamp(40px, 18cqw, 64px); font-weight: 350; letter-spacing: -2px; line-height: 1.4; margin-top: 10px; }
 .tangrow-focus-card > .tangrow-muted { font-size: 11px; margin: 0 0 18px; }
-.tangrow-focus-progress { width: 80%; height: 4px; border: none; border-radius: 3px; accent-color: var(--interactive-accent); }
+.tangrow-focus-progress { width: 80%; height: 4px; border: none; border-radius: 3px; accent-color: var(--text-muted); }
 .tangrow-focus-progress::-webkit-progress-bar { background: var(--background-modifier-border); border-radius: 3px; }
-.tangrow-focus-progress::-webkit-progress-value { background: var(--interactive-accent); border-radius: 3px; }
+.tangrow-focus-progress::-webkit-progress-value { background: var(--text-muted); border-radius: 3px; }
 .tangrow-focus-note { max-width: 100%; margin-top: 19px; border: none; background: transparent; color: var(--text-muted); padding: 0; min-height: 20px; font-size: 10px; }
 .tangrow-focus-note > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tangrow-focus-controls > .tangrow-text-button { margin: 10px auto 0; }
@@ -455,7 +499,7 @@
 .tangrow-dialog :is(button, input):focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; }
 
 @container (max-width: 260px) {
-  .tangrow-nav-item { min-height: 32px; }
+  .tangrow-sidebar .tangrow-nav-item { min-height: 32px; }
   .tangrow-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .tangrow-today-overview { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .tangrow-local-badge { display: none; }
@@ -473,9 +517,10 @@
   .tangrow-brand { min-width: 0; }
   .tangrow-brand > strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tangrow-header-tools { flex-shrink: 0; }
-  .tangrow-header-add > span:not(.tangrow-icon) { display: none; }
   .tangrow-nav-label { display: none; }
   .tangrow-today-shortcuts { grid-template-columns: 1fr; }
+  .tangrow-coming-soon { grid-template-columns: auto minmax(0, 1fr); }
+  .tangrow-coming-soon-label { grid-column: 2; justify-self: start; }
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -780,9 +825,6 @@ button.tangrow-report-day:hover { outline: 1px solid var(--text-accent); outline
 /* Capture calendar and timeline */
 .tangrow-capture-panel,
 .tangrow-capture-window {
-  --tangrow-tint: color-mix(in srgb, var(--interactive-accent) 8%, var(--background-primary));
-  --tangrow-line: var(--background-modifier-border);
-  --tangrow-radius: 10px;
   color: var(--text-normal);
   font-size: var(--font-ui-small);
 }
@@ -799,8 +841,9 @@ button.tangrow-report-day:hover { outline: 1px solid var(--text-accent); outline
 .tangrow-capture-calendar { border: 1px solid var(--tangrow-line); border-radius: 10px; padding: 8px 8px 6px; margin: 0 0 16px; background: var(--background-primary); }
 .tangrow-capture-calendar-heading { display: grid; grid-template-columns: 24px minmax(0, 1fr) 24px; gap: 6px; align-items: center; margin-bottom: 6px; }
 .tangrow-capture-calendar-heading h3 { margin: 0; text-align: center; color: var(--text-normal); font-size: 12px; font-weight: 600; letter-spacing: 0; }
+.tangrow-capture-panel .tangrow-capture-calendar { border: none; padding: 0; background: transparent; }
 .tangrow-period-controls { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
-.tangrow-period-controls > .tangrow-period-button { flex: 1 0 auto; justify-content: center; min-height: 24px; padding: 3px 6px; font-size: 10px; background: var(--background-secondary); }
+.tangrow-period-controls > .tangrow-period-button { flex: 1 0 auto; justify-content: center; min-height: 24px; padding: 3px 6px; font-size: 10px; }
 .tangrow-capture-calendar-heading .tangrow-capture-icon-button { width: 24px; height: 24px; min-height: 24px; padding: 3px; }
 .tangrow-capture-icon-button { width: 28px; height: 28px; min-height: 28px; padding: 5px; border: none; background: transparent; justify-content: center; }
 .tangrow-capture-icon-button > .tangrow-capture-button-label { display: none; }
@@ -831,12 +874,11 @@ button.tangrow-report-day:hover { outline: 1px solid var(--text-accent); outline
 }
 .tangrow-capture-day:hover { background: var(--background-modifier-hover); border-color: var(--tangrow-line); }
 .tangrow-capture-day.is-other-month { color: var(--text-faint); opacity: 0.6; }
-.tangrow-capture-day.is-today { border-color: color-mix(in srgb, var(--interactive-accent) 55%, transparent); color: var(--text-accent); font-weight: 650; }
-.tangrow-capture-day.is-selected { background: var(--interactive-accent); border-color: var(--interactive-accent); color: var(--text-on-accent); opacity: 1; }
-.tangrow-capture-day.is-selected:hover { background: var(--interactive-accent-hover); }
+.tangrow-capture-day.is-today { border-color: var(--text-muted); font-weight: 650; }
+.tangrow-capture-day.is-selected { background: var(--tangrow-tint); border-color: var(--interactive-accent); color: var(--text-normal); opacity: 1; }
+.tangrow-capture-day.is-selected:hover { background: var(--background-modifier-hover); }
 .tangrow-capture-day-number { font-variant-numeric: tabular-nums; }
-.tangrow-capture-day-count { display: inline-flex; align-items: center; justify-content: center; min-width: 13px; height: 11px; padding: 0 3px; border-radius: 4px; color: var(--text-accent); background: var(--tangrow-tint); font-size: 8px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.tangrow-capture-day.is-selected .tangrow-capture-day-count { background: color-mix(in srgb, var(--text-on-accent) 20%, transparent); color: var(--text-on-accent); }
+.tangrow-capture-day-count { color: var(--text-muted); font-size: 8px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .tangrow-capture-calendar-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 5px; border-top: 1px solid var(--tangrow-line); margin-top: 6px; padding-top: 4px; }
 .tangrow-capture-calendar-footer > .tangrow-muted { margin: 0; font-size: 9px; }
 .tangrow-capture-calendar-actions { display: flex; align-items: center; gap: 9px; margin-left: auto; }
@@ -848,14 +890,15 @@ button.tangrow-report-day:hover { outline: 1px solid var(--text-accent); outline
 .tangrow-capture-timeline { min-width: 0; }
 .tangrow-capture-timeline-day { margin: 0 0 22px; }
 .tangrow-capture-timeline-day > h4 { font-size: 10px; font-weight: 500; color: var(--text-muted); margin: 0 0 9px 2px; line-height: 1.5; }
-.tangrow-capture-entry { position: relative; min-width: 0; border: 1px solid var(--tangrow-line); border-radius: var(--tangrow-radius); background: var(--background-primary); padding: 11px 12px 12px; margin-top: 8px; }
+.tangrow-capture-entry { position: relative; min-width: 0; border-radius: var(--radius-s); padding: 8px 6px; margin-top: 4px; }
+.tangrow-capture-entry:hover { background: var(--background-modifier-hover); }
 .tangrow-capture-entry-heading { display: flex; align-items: center; justify-content: space-between; gap: 9px; min-height: 23px; margin-bottom: 6px; }
 .tangrow-capture-entry-heading > time { color: var(--text-faint); font-size: 10px; font-variant-numeric: tabular-nums; }
 .tangrow-capture-open-source { color: var(--text-muted); gap: 3px; font-size: 9px; min-height: 23px; }
 .tangrow-capture-open-source .tangrow-icon svg { width: 12px; height: 12px; }
 .tangrow-capture-entry-title { display: block; color: var(--text-normal); font-size: 11px; font-weight: 550; line-height: 1.6; overflow-wrap: anywhere; }
 .tangrow-capture-filter { width: 100%; margin-bottom: 8px; }
-.tangrow-capture-entry-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.tangrow-capture-entry-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 8px; margin-top: 8px; }
 .tangrow-capture-process-form { display: grid; gap: 8px; }
 .tangrow-capture-process-form label { display: block; margin-bottom: 4px; }
 .tangrow-capture-process-form :is(input, select) { width: 100%; }
