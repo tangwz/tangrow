@@ -14,7 +14,7 @@ import { WorkbenchCards } from './workbench-cards';
 import { captureDay } from './capture-data';
 import { JOURNAL_LABELS, JOURNAL_PERIODS, journalInterval, type JournalPeriod } from './periodic-notes';
 import { sortTaskDisplay, taskDueLabel, type TaskDisplay } from './task-display';
-import { SidebarUI, icon } from './ui';
+import { SidebarUI, icon, nameTooltipButton } from './ui';
 import { workbenchDestination, type ComposeTab, type KnowledgeTab, type MoreTab, type WorkbenchEntry, type WorkbenchTab } from './workbench-navigation';
 
 export const VIEW_TYPE = 'tangrow-sidebar';
@@ -730,9 +730,10 @@ export class TangrowSidebar extends ItemView {
     for (const { task, display } of sortTaskDisplay(openTasks, today).slice(0, 6)) {
       const label = display.title || this.ui.t('Untitled task');
       const row = list.createDiv({ cls: 'tangrow-task-item' });
-      const check = row.createEl('button', { cls: 'tangrow-task-check', attr: { type: 'button', 'aria-label': this.ui.t('Complete: {task}', { task: label }) } });
+      const check = row.createEl('button', { cls: 'tangrow-task-check', attr: { type: 'button' } });
       check.dataset.tangrowAction = `task-check-${task.path}:${task.line}`;
       setTooltip(check, this.ui.t('Mark done in the note'));
+      nameTooltipButton(check, this.ui.t('Complete: {task}', { task: label }));
       check.addEventListener('click', () => {
         if (check.disabled) return;
         check.disabled = true;
@@ -765,6 +766,7 @@ export class TangrowSidebar extends ItemView {
       items.push({ text: this.ui.t(display.recurrence.toLowerCase() === 'every week' ? 'Weekly' : 'Repeats'), iconName: 'repeat' });
     }
     for (const tag of display.tags) items.push({ text: tag });
+    nameTooltipButton(open, [label, ...items.map((item) => item.accessibleText ?? item.text)].join(', '));
     if (!items.length) return;
     const meta = open.createSpan({ cls: 'tangrow-task-meta' });
     for (const { text, iconName, cls } of items) {
@@ -772,7 +774,6 @@ export class TangrowSidebar extends ItemView {
       if (iconName) icon(item, iconName).setAttribute('aria-hidden', 'true');
       item.createSpan({ text });
     }
-    open.setAttribute('aria-label', [label, ...items.map((item) => item.accessibleText ?? item.text)].join(', '));
   }
 
   private mountCapture(): void {
