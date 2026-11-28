@@ -1,6 +1,6 @@
 # Tangrow：记录、知识与写作的统一设计
 
-状态：设计提案，部分已实现。已实现的有五区导航、知识区列表、新建卡片与选中文本提炼为卡片、每日卡片回顾和卡片报表明细；这些没有严格按第 10 节的分期顺序落地，其余部分待实现。更新于 2026-11-26（同步整理引擎的决策）。
+状态：设计提案，部分已实现。已实现的有五区导航、知识区列表、新建卡片与选中文本提炼为卡片、每日卡片回顾和卡片报表明细；这些没有严格按第 10 节的分期顺序落地，其余部分待实现。更新于 2026-11-28（修订速记处理：四个动作、PARA 落点、保存后标记已处理，见 5.2）。
 
 [v4 交互原型](../output/design/zettelkasten-v4.html) 可直接打开[创作](../output/design/zettelkasten-v4.html?scenario=compose#prototype)、[AI](../output/design/zettelkasten-v4.html?scenario=ai#prototype)、[今天主页](../output/design/zettelkasten-v4.html?scenario=today#prototype)、[报表总览](../output/design/zettelkasten-v4.html?scenario=overview#prototype)或[卡片明细](../output/design/zettelkasten-v4.html?scenario=report#prototype)。演示日期固定为 2026-11-17，便于核对日期窗口与回顾队列。[v3](../output/design/zettelkasten-v3.html) 与 [v2](../output/design/zettelkasten-v2.html) 保留为历史参考。
 
@@ -190,9 +190,9 @@ Journal 视图可显示“当日创建的速记／卡片／稿件”，但必须
 | 本次处理 | 写入结果 | 原速记状态 |
 | --- | --- | --- |
 | 转为笔记 | 一篇普通笔记，建在所选的项目、领域或资源目录，未选时建在收件箱，并链接原速记（领域、资源为规划中的落点） | 已处理 |
-| 追加到任务总览 | 追加到配置好的任务目标，并附原速记链接；选了项目或领域时任务行带上它的链接 | 已处理 |
+| 追加到任务总览 | 追加到配置好的任务目标，并附原速记链接；选了项目或领域时任务行带上它的链接（规划中） | 已处理 |
 | 关联项目 | 只写入这条速记的 `tangrow_project` | 已处理 |
-| 提炼为卡片 | 新卡片，来源记为这条速记 | 不变 |
+| 提炼为卡片（规划中） | 新卡片，来源记为这条速记 | 不变 |
 | 仅标记已处理 | 仅更新处理时间，退出待处理列表 | 已处理 |
 
 “转为笔记”表单只编辑标题、正文和落点，不增加笔记类型选择。落点是 PARA 位置，可搜索；只新建，原速记留在原处。阅读理解和独立观点都先作为普通笔记留下，需要时再在知识区明确类型或提炼卡片。[整理引擎](AI-ENGINE.md)的 PARA 归位同样只新建、经用户逐项确认。“追加到任务总览”只确认行动文字，沿用配置好的任务目标；原型示例为 10-Life(Meta)/12-Tasks.md。
