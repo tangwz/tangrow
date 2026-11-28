@@ -7,6 +7,18 @@ export const JOURNAL_LABELS: Record<JournalPeriod, string> = {
   daily: 'Daily note', weekly: 'Weekly note', monthly: 'Monthly note', quarterly: 'Quarterly note', yearly: 'Yearly note'
 };
 
+type JournalPathSettings = Pick<Settings, 'journalFolder' | 'journalFormat' | 'journalFormats'>;
+
+export interface PeriodicSettingsPatch {
+  journalFolder?: string;
+  formats?: Partial<Record<JournalPeriod, string>>;
+  templates?: Partial<Record<JournalPeriod, string>>;
+}
+
+export function journalFormat(settings: JournalPathSettings, period: JournalPeriod): string {
+  return period === 'daily' ? settings.journalFormat : settings.journalFormats[period];
+}
+
 export interface JournalInterval {
   period: JournalPeriod;
   title: string;
@@ -62,14 +74,20 @@ export function journalInterval(period: JournalPeriod, value: string): JournalIn
   return { period, title, start: dayKey(start.getTime()), end: dayKey(end.getTime()), date: start, week, weekYear, quarter };
 }
 
-export function journalPath(settings: Settings, period: JournalPeriod, value: string, format: (date: Date, pattern: string) => string): string {
+export function journalPath(settings: JournalPathSettings, period: JournalPeriod, value: string, format: (date: Date, pattern: string) => string): string {
   const interval = journalInterval(period, value);
-  const pattern = period === 'daily' ? settings.journalFormat : settings.journalFormats[period];
+  const pattern = journalFormat(settings, period);
   const relative = format(interval.date, pattern);
   try {
     if (!relative.trim() || relative !== relative.trim() || relative.endsWith('/')) throw new Error();
     return `${safeFolder(settings.journalFolder)}/${safeFolder(relative)}.md`;
   } catch { throw new Error('The journal format must resolve to a safe relative vault path.'); }
+}
+
+export function previewJournalPath(settings: JournalPathSettings, period: JournalPeriod, value: string, format: (date: Date, pattern: string) => string): string {
+  const pattern = journalFormat(settings, period);
+  if (!pattern.trim() || pattern.length >= 100) throw new Error('Use a date format of 1-99 characters.');
+  return journalPath(settings, period, value, format);
 }
 
 export function journalTemplate(template: string, interval: JournalInterval): string {

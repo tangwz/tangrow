@@ -80,6 +80,8 @@ export function readSettings(value: unknown): Settings {
   if (typeof raw.wideByDefault === 'boolean') result.wideByDefault = raw.wideByDefault;
   if (typeof raw.knowledgeEnabled === 'boolean') result.knowledgeEnabled = raw.knowledgeEnabled;
   if (typeof raw.aiEnabled === 'boolean') result.aiEnabled = raw.aiEnabled;
+  if (typeof raw.showComingSoon === 'boolean') result.showComingSoon = raw.showComingSoon;
+  if (typeof raw.prepareDailyReview === 'boolean') result.prepareDailyReview = raw.prepareDailyReview;
   result.aiModel = readAiModel(raw.aiModel);
   if (typeof raw.aiApiKey === 'string' && raw.aiApiKey.length <= 400) result.aiApiKey = raw.aiApiKey.trim();
   if (typeof raw.trackEditingActivity === 'boolean') result.trackEditingActivity = raw.trackEditingActivity;

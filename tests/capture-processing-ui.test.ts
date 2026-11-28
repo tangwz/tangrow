@@ -68,6 +68,7 @@ interface Panel {
   footer: Element;
   captureFilter: 'pending' | 'processed' | 'all';
   selectedDay: string | null;
+  refresh(): void;
   renderTimeline(captures: CaptureSummary[]): void;
 }
 interface Dialog {
@@ -238,6 +239,26 @@ test('the capture timeline shows one passive coming soon hint across filters and
 
   panel.renderTimeline([]);
   assert.equal(root.querySelectorAll('.tangrow-coming-soon').length, 0);
+});
+
+test('the capture timeline refreshes the coming soon hint when its preference changes', () => {
+  const service = host();
+  const entries = [capture('Pending')];
+  Object.assign(service, { snapshot: () => ({ captures: entries }) });
+  const panel = new harness.CapturePanel(service);
+  const root = new Element();
+  Object.assign(panel, {
+    mounted: true, root, timeline: root.createDiv(), timelineCount: root.createSpan(), footer: root.createDiv(), language: service.settings.language
+  });
+  panel.refresh();
+  assert.equal(root.querySelectorAll('.tangrow-coming-soon').length, 1);
+  service.settings.showComingSoon = false;
+  panel.refresh();
+  assert.equal(root.querySelectorAll('.tangrow-coming-soon').length, 0);
+  assert.equal(panel.timeline.querySelectorAll('article').length, 1);
+  service.settings.showComingSoon = true;
+  panel.refresh();
+  assert.equal(root.querySelectorAll('.tangrow-coming-soon').length, 1);
 });
 
 test('the processing dialog validates project selection and opens the result only on a separate user action', async () => {

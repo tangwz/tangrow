@@ -1114,6 +1114,28 @@ button.tangrow-report-day:hover { outline: 1px solid var(--text-accent); outline
   text-align: start;
   white-space: normal;
 }
+.tangrow-settings button.tangrow-settings-entry {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  column-gap: var(--size-4-2);
+  align-items: center;
+  background: transparent;
+  box-shadow: none;
+  border-block-end: 1px solid var(--background-modifier-border);
+  border-radius: 0;
+  padding-inline: var(--size-4-2);
+  overflow-wrap: anywhere;
+}
+.tangrow-settings button.tangrow-settings-entry:hover { background: var(--background-modifier-hover); }
+.tangrow-settings .tangrow-settings-entry .setting-item-description { grid-column: 1; }
+.tangrow-settings .tangrow-settings-entry-status { grid-area: 1 / 2 / span 2; }
+.tangrow-settings .tangrow-settings-entry-icon { grid-area: 1 / 3 / span 2; color: var(--text-muted); }
+.tangrow-settings .tangrow-settings-model-custom {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+  min-inline-size: 0;
+}
+.tangrow-settings .tangrow-settings-model-custom input { min-inline-size: 0; }
 .tangrow-settings .tangrow-settings-fields {
   min-inline-size: 0;
   margin: 0;
@@ -1154,7 +1176,110 @@ button.tangrow-report-day:hover { outline: 1px solid var(--text-accent); outline
 .tangrow-settings .tangrow-settings-highlight {
   animation: tangrow-settings-highlight 1.5s ease-out;
 }
+.tangrow-settings .tangrow-periodic-folder {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  column-gap: var(--size-4-3);
+}
+.tangrow-settings .tangrow-periodic-folder label {
+  display: grid;
+  gap: var(--size-4-1);
+}
+.tangrow-settings .tangrow-periodic-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+.tangrow-settings .tangrow-periodic-table th,
+.tangrow-settings .tangrow-periodic-table td {
+  padding: var(--size-4-2) var(--size-4-1);
+  border-bottom: var(--border-width) solid var(--background-modifier-border);
+  font-size: var(--font-ui-small);
+  vertical-align: top;
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+.tangrow-settings .tangrow-periodic-table th:first-child { width: 23%; }
+.tangrow-settings .tangrow-periodic-settings input {
+  box-sizing: border-box;
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+.tangrow-settings .tangrow-periodic-settings input[aria-invalid='true'] { border-color: var(--text-error); }
+.tangrow-settings .tangrow-periodic-table input,
+.tangrow-settings .tangrow-periodic-table code { font-family: var(--font-monospace); }
+.tangrow-settings .tangrow-periodic-table code {
+  display: block;
+  margin-block-start: var(--size-4-1);
+}
+.tangrow-settings .tangrow-periodic-table code[hidden] { display: none; }
+.tangrow-settings .tangrow-periodic-path {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  overflow-wrap: anywhere;
+}
+.tangrow-settings .tangrow-periodic-path.tangrow-settings-error { color: var(--text-error); }
+.tangrow-settings .tangrow-periodic-footer,
+.tangrow-settings .tangrow-periodic-buttons {
+  display: flex;
+  gap: var(--size-4-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.tangrow-settings .tangrow-periodic-buttons { margin-inline-start: auto; }
+.tangrow-settings .tangrow-periodic-footer p { margin: 0; }
+
 @keyframes tangrow-settings-highlight {
   from { background: var(--text-highlight-bg); }
   to { background: transparent; }
+}
+
+.tangrow-vault-structure-fields { container-type: inline-size; }
+.tangrow-vault-structure-fields .tangrow-vault-structure-role {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) clamp(4.25rem, 22cqw, 7.5rem);
+  align-items: center;
+  gap: var(--size-2-2) var(--size-4-2);
+  padding-block: var(--size-4-2);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.tangrow-vault-structure-fields .tangrow-vault-structure-name {
+  display: grid;
+  gap: var(--size-2-2);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.tangrow-vault-structure-fields .tangrow-vault-structure-role > input {
+  width: 100%;
+  min-width: 0;
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+}
+.tangrow-vault-structure-fields .tangrow-vault-structure-role > input[aria-invalid="true"] { border-color: var(--text-error); }
+.tangrow-vault-structure-fields .tangrow-vault-structure-status {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  overflow-wrap: anywhere;
+}
+.tangrow-vault-structure-fields .tangrow-vault-structure-status[data-path-status="found"] { color: var(--text-normal); }
+.tangrow-vault-structure-fields .tangrow-vault-structure-error { grid-column: 1 / -1; }
+.tangrow-vault-structure .tangrow-vault-structure-error,
+.tangrow-vault-structure-fields .tangrow-vault-structure-error { color: var(--text-error); font-size: var(--font-ui-smaller); }
+.tangrow-vault-structure .tangrow-vault-structure-feedback:empty,
+.tangrow-vault-structure-fields .tangrow-vault-structure-error:empty { margin: 0; height: 0; }
+.tangrow-vault-structure-fields .tangrow-vault-structure-error:empty { position: absolute; width: 0; overflow: hidden; }
+.tangrow-vault-structure .tangrow-vault-structure-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+  margin-block-start: var(--size-4-3);
+}
+.tangrow-vault-structure .tangrow-vault-structure-actions[hidden] { display: none; }
+@container (max-width: 440px) {
+  .tangrow-vault-structure-fields .tangrow-vault-structure-role { grid-template-columns: minmax(0, 1fr) clamp(4.25rem, 22cqw, 7.5rem); }
+  .tangrow-vault-structure-fields .tangrow-vault-structure-name { grid-column: 1 / -1; }
 }

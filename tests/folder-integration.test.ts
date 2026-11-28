@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import type { FocusSession, Settings, Snapshot } from '../src/types';
+import type { VaultStructurePatch } from '../src/settings/vault-structure-data';
 import type { MockApp, Plugin as MockPlugin, createMockApp as MockAppFactory } from './obsidian-mock';
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -28,6 +29,7 @@ interface TestPlugin extends MockPlugin {
   snapshot(): Snapshot;
   setup(): Promise<void>;
   updateFolderSetting(key: 'supportFolder' | 'projectFolder', value: string): Promise<void>;
+  updateVaultStructure(patch: VaultStructurePatch): Promise<void>;
   migrateCompanionFolder(): Promise<void>;
   startFocus(minutes: number): Promise<void>;
   finishFocus(): Promise<void>;
@@ -95,6 +97,41 @@ test('folder persistence failures preserve the previous path and can be retried'
   assert.equal(plugin.settings.supportFolder, '99-Tangrow');
   await plugin.updateFolderSetting('supportFolder', 'Dedicated/Tangrow');
   assert.equal(plugin.settings.supportFolder, 'Dedicated/Tangrow');
+});
+
+test('a vault-structure change validates the whole set of paths and persists the candidate once', async () => {
+  const { app, plugin } = fixture();
+  app.vault.seedFolder('99-Tangrow/Projects');
+  app.vault.seedFolder('System/New companion');
+  const note = app.vault.seedFile('Work/Tasks.md', '# Existing Tasks query\n');
+  await plugin.updateVaultStructure({ projectFolder: '99-Tangrow/Projects', supportFolder: 'System/New companion', taskOverviewPath: note.path });
+  assert.equal(plugin.saveCalls, 1);
+  assert.equal((plugin.savedData as { settings: Settings }).settings.projectFolder, '99-Tangrow/Projects');
+  assert.equal((plugin.savedData as { settings: Settings }).settings.supportFolder, 'System/New companion');
+  assert.equal((plugin.savedData as { settings: Settings }).settings.taskOverviewPath, note.path);
+  assert.equal(note.content, '# Existing Tasks query\n');
+  assert.deepEqual(app.vault.createdPaths, []);
+  assert.deepEqual(app.vault.processedPaths, []);
+});
+
+test('failed vault-structure drafts neither persist invalid paths nor leave partially applied settings', async () => {
+  const { app, plugin } = fixture();
+  app.vault.seedFolder('Work/Projects');
+  app.vault.seedFolder('System/Cards');
+  const previous = structuredClone(plugin.settings);
+  await assert.rejects(plugin.updateVaultStructure({ projectFolder: 'Work/Projects', taskOverviewPath: 'Work/Missing.md' }), /existing Tasks note/);
+  assert.equal(plugin.saveCalls, 0);
+  assert.deepEqual(plugin.settings, previous);
+
+  const patch = { projectFolder: 'Work/Projects', cardFolder: 'System/Cards' };
+  plugin.saveFailures = 1;
+  await assert.rejects(plugin.updateVaultStructure(patch), /settings write failure/);
+  assert.deepEqual(plugin.settings, previous);
+  assert.equal(plugin.savedData, null);
+  await plugin.updateVaultStructure(patch);
+  assert.equal(plugin.settings.projectFolder, patch.projectFolder);
+  assert.equal(plugin.settings.cardFolder, patch.cardFolder);
+  assert.deepEqual(app.vault.createdPaths, []);
 });
 
 test('the migration entry preserves active-session references and generated view readiness', async () => {

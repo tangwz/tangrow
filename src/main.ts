@@ -5,6 +5,8 @@ import { Access, LICENSE_KEYS, LICENSE_ENDPOINT } from './access';
 import { OWNER_BUILD } from './build-flags';
 import { accessCoordination } from './access-coordination';
 import { TangrowSettings } from './settings/tab';
+import { validateVaultStructure, VAULT_STRUCTURE_KEYS, type VaultStructurePatch } from './settings/vault-structure-data';
+import { vaultPathKind } from './settings/vault-structure';
 import { randomBytes } from './license/format';
 import { focusMinutes, pauseSession, remainingMs, resumeSession, startSession } from './focus';
 import { dayKey, inFolder, readSession, readSettings, recentDays, safeFolder, safeTitle, streak } from './model';
@@ -20,7 +22,7 @@ import { runPrompt } from './ai-client';
 import { QuickAddModal } from './quick-add';
 import { appendTaskLine, completeTaskLine, openTaskLabel, taskLine } from './task-tools';
 import { findSubmittedNote, readDraftSubmissions, readRecoveryDrafts, type DraftSubmission, type DraftSubmissions, type RecoveryLabel, type StoredRecoveryDraft, type SubmissionKind } from './draft-submissions';
-import { JOURNAL_PERIODS, JOURNAL_LABELS, defaultJournal, journalInterval, journalPath, journalTemplate, type JournalPeriod } from './periodic-notes';
+import { JOURNAL_PERIODS, JOURNAL_LABELS, defaultJournal, journalFormat, journalInterval, journalPath, journalTemplate, previewJournalPath, type JournalPeriod, type PeriodicSettingsPatch } from './periodic-notes';
 import { ImmersiveCapture, NoteImmersion } from './immersive';
 import { normalizeRecentOpened, recordRecentOpened, renameRecentOpened, removeRecentOpened } from './recent-opened';
 import { stampHeadingDate } from './note-tools';
@@ -506,24 +508,53 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
 
   async updateJournalSettings(period: JournalPeriod, format?: string, template?: string): Promise<void> {
     await this.exclusive(async () => {
-      const previous = this.settings;
-      format ??= period === 'daily' ? previous.journalFormat : previous.journalFormats[period];
-      template ??= previous.journalTemplates[period];
-      if (!format.trim() || format.length >= 100) throw new Error('Use a date format of 1-99 characters.');
-      template = template.trim() ? safeFolder(template) : '';
-      if (template) {
-        const file = this.app.vault.getAbstractFileByPath(template);
-        if (!(file instanceof TFile) || file.extension !== 'md') throw new Error('Choose an existing Markdown journal template.');
-      }
-      const next = { ...previous, journalFormats: { ...previous.journalFormats }, journalTemplates: { ...previous.journalTemplates, [period]: template } };
-      if (period === 'daily') next.journalFormat = format;
-      else next.journalFormats[period] = format;
-      journalPath(next, period, dayKey(), (value, pattern) => dateTime(value).format(pattern));
-      this.settings = next;
-      try { await this.persist(); }
-      catch (error) { this.settings = previous; this.notifyAfterRollback(); throw error; }
-      this.notify();
+      if (!JOURNAL_PERIODS.includes(period)) throw new Error('Unknown journal period.');
+      await this.applyPeriodicSettings({
+        formats: { [period]: format ?? journalFormat(this.settings, period) },
+        templates: { [period]: template ?? this.settings.journalTemplates[period] }
+      });
     });
+  }
+
+  async updatePeriodicSettings(patch: PeriodicSettingsPatch): Promise<void> {
+    await this.exclusive(() => this.applyPeriodicSettings(patch));
+  }
+
+  private async applyPeriodicSettings(patch: PeriodicSettingsPatch): Promise<void> {
+    const previous = this.settings;
+    const next = { ...previous, journalFormats: { ...previous.journalFormats }, journalTemplates: { ...previous.journalTemplates } };
+    if (patch.journalFolder !== undefined) next.journalFolder = safeFolder(patch.journalFolder);
+    const folderChanged = next.journalFolder !== previous.journalFolder;
+    if (folderChanged) {
+      if (!(this.app.vault.getAbstractFileByPath(next.journalFolder) instanceof TFolder)) throw new Error('Choose an existing folder.');
+      validateFolderSettings(next);
+    }
+
+    const date = dayKey();
+    for (const period of JOURNAL_PERIODS) {
+      const format = patch.formats?.[period];
+      if (format !== undefined) {
+        if (period === 'daily') next.journalFormat = format;
+        else next.journalFormats[period] = format;
+      }
+      if (folderChanged || format !== undefined) {
+        previewJournalPath(next, period, date, (value, pattern) => dateTime(value).format(pattern));
+      }
+      const template = patch.templates?.[period];
+      if (template !== undefined) {
+        const path = template.trim() ? safeFolder(template) : '';
+        if (path) {
+          const file = this.app.vault.getAbstractFileByPath(path);
+          if (!(file instanceof TFile) || file.extension !== 'md') throw new Error('Choose an existing Markdown journal template.');
+        }
+        next.journalTemplates[period] = path;
+      }
+    }
+
+    this.settings = next;
+    try { await this.persist(); }
+    catch (error) { this.settings = previous; this.notifyAfterRollback(); throw error; }
+    this.notify();
   }
   async openReport(): Promise<void> { await this.revealReport({ page: 'overview' }); }
   async openCardReport(filter?: CardFilter): Promise<void> {
@@ -767,6 +798,18 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       this.settings[key] = folder;
       try { await this.persist(); }
       catch (error) { this.settings[key] = previous; this.notifyAfterRollback(); throw error; }
+      this.notify();
+    });
+  }
+  async updateVaultStructure(patch: VaultStructurePatch): Promise<void> {
+    const requested = { ...patch };
+    await this.exclusive(async () => {
+      const previous = this.settings;
+      const next = validateVaultStructure(previous, requested, (path) => vaultPathKind(this.app, path));
+      if (VAULT_STRUCTURE_KEYS.every((key) => next[key] === previous[key])) return;
+      this.settings = next;
+      try { await this.persist(); }
+      catch (error) { this.settings = previous; this.notifyAfterRollback(); throw error; }
       this.notify();
     });
   }
@@ -1228,6 +1271,22 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
         if (readAiModel(patch.aiModel) !== patch.aiModel.trim()) throw new Error('Use a model name such as claude-opus-5-5.');
         next.aiModel = patch.aiModel.trim();
       }
+      this.settings = next;
+      try { await this.persist(); }
+      catch (error) { this.settings = previous; this.notifyAfterRollback(); throw error; }
+      this.notify();
+    });
+  }
+  async updateOrganizingPreferences(patch: { showComingSoon?: boolean; prepareDailyReview?: boolean }): Promise<void> {
+    await this.exclusive(async () => {
+      if (!this.access.canUse()) throw new Error('Activate Tangrow to use this feature.');
+      const previous = this.settings;
+      const next = {
+        ...previous,
+        showComingSoon: patch.showComingSoon ?? previous.showComingSoon,
+        prepareDailyReview: patch.prepareDailyReview ?? previous.prepareDailyReview
+      };
+      if (next.showComingSoon === previous.showComingSoon && next.prepareDailyReview === previous.prepareDailyReview) return;
       this.settings = next;
       try { await this.persist(); }
       catch (error) { this.settings = previous; this.notifyAfterRollback(); throw error; }

@@ -20,7 +20,7 @@ const openPanels = new WeakMap<SidebarHost, Set<CapturePanel>>();
 
 export class CapturePanel {
   private readonly instanceId = `tangrow-capture-${crypto.randomUUID()}`;
-  private readonly ui = new SidebarUI(() => this.host.settings.language);
+  private readonly ui = new SidebarUI(() => this.host.settings.language, () => this.host.settings.showComingSoon);
   private conflict?: { id: string; text: string };
   private gate?: AccessGate;
   private root?: HTMLElement;
@@ -261,7 +261,7 @@ export class CapturePanel {
     const captures = this.host.snapshot().captures;
     const fingerprint = captures.map((capture) => [capture.path, capture.created, capture.modified, capture.name, capture.processed, capture.processing]);
     const calendarSignature = JSON.stringify([this.language, this.year, this.monthIndex, this.selectedDay, this.focusedDay, captureDay(Date.now()), fingerprint]);
-    const timelineSignature = JSON.stringify([this.language, this.selectedDay, this.captureFilter, this.limit, fingerprint]);
+    const timelineSignature = JSON.stringify([this.language, this.host.settings.showComingSoon, this.selectedDay, this.captureFilter, this.limit, fingerprint]);
     if (calendarSignature !== this.calendarSignature) {
       this.calendarSignature = calendarSignature;
       this.renderCalendar(captures);

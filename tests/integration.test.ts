@@ -14,7 +14,7 @@ import type { RecoveryDraft } from '../src/draft-submissions';
 import { baseDefinitions, setupReadme } from '../src/bases';
 import { aggregateReport } from '../src/report-data';
 import type { ActionId, ComposerState, FocusSession, Locale, NoteKind, Settings, Snapshot, WritingDraft } from '../src/types';
-import { JOURNAL_PERIODS, type JournalPeriod } from '../src/periodic-notes';
+import { JOURNAL_PERIODS, type JournalPeriod, type PeriodicSettingsPatch } from '../src/periodic-notes';
 import type { FileView as MockFileView, ItemView as MockItemView, MarkdownView as MockMarkdownView, MockApp, Plugin as MockPlugin, TFile as MockFile, TFolder as MockFolder, createMockApp as MockAppFactory } from './obsidian-mock';
 
 type FolderSettingKey = keyof Pick<Settings, 'supportFolder' | 'inboxFolder' | 'projectFolder' | 'areaFolder' | 'resourcesFolder' | 'archiveFolder' | 'journalFolder'>;
@@ -35,6 +35,7 @@ interface TestPlugin extends MockPlugin {
   createNote(kind: NoteKind, title: string, projectFolder?: string): Promise<void>;
   updateFolderSetting(key: FolderSettingKey, path: string): Promise<void>;
   setLanguage(language: Locale): Promise<void>;
+  updateOrganizingPreferences(patch: { showComingSoon?: boolean; prepareDailyReview?: boolean }): Promise<void>;
   loadScratch(): string;
   saveScratch(value: string): void;
   loadWritingDraft(): WritingDraft;
@@ -53,6 +54,7 @@ interface TestPlugin extends MockPlugin {
   readCapture(path: string): Promise<string>;
   openPeriodicNote(period: JournalPeriod, date?: string, immersive?: boolean): Promise<void>;
   updateJournalSettings(period: JournalPeriod, format: string, template: string): Promise<void>;
+  updatePeriodicSettings(patch: PeriodicSettingsPatch): Promise<void>;
   bindNoteImmersionAction(): void;
   toggleNoteImmersion(view?: MockMarkdownView | null): void;
   startFocus(minutes: number): Promise<void>;
@@ -436,6 +438,36 @@ test('failed language saves restore the locale before any generated file is proc
   assert.deepEqual(new Map(app.vault.getFiles().map((file) => [file.path, file.stat.mtime])), modified);
   await plugin.setLanguage('zh-CN');
   assert.deepEqual(currentContents(app), generatedFiles(plugin.settings));
+});
+
+test('organizing preferences serialize edits, roll back a failed save and reject locked edits', async () => {
+  const { plugin, app } = createPlugin();
+  const preferences = ({ showComingSoon, prepareDailyReview }: Settings) => ({ showComingSoon, prepareDailyReview });
+  const updates: ReturnType<typeof preferences>[] = [];
+  const unsubscribe = plugin.subscribe(() => updates.push(preferences(plugin.settings)));
+  await Promise.all([
+    plugin.updateOrganizingPreferences({ showComingSoon: false }),
+    plugin.updateOrganizingPreferences({ prepareDailyReview: true })
+  ]);
+  assert.deepEqual(updates, [
+    { showComingSoon: false, prepareDailyReview: false },
+    { showComingSoon: false, prepareDailyReview: true }
+  ]);
+  const saved = preferences((plugin.savedData as { settings: Settings }).settings);
+  assert.deepEqual(saved, { showComingSoon: false, prepareDailyReview: true });
+  plugin.saveFailures = 1;
+  await assert.rejects(plugin.updateOrganizingPreferences({ showComingSoon: true, prepareDailyReview: false }), /Simulated settings write failure/);
+  assert.deepEqual(preferences(plugin.settings), saved);
+  assert.deepEqual(updates.at(-1), saved);
+
+  const writes = plugin.saveCalls;
+  Object.assign(plugin.access, { canUse: () => false });
+  await assert.rejects(plugin.updateOrganizingPreferences({ showComingSoon: true }), /Activate Tangrow/);
+  assert.equal(plugin.saveCalls, writes);
+  assert.deepEqual(preferences((plugin.savedData as { settings: Settings }).settings), saved);
+  assert.deepEqual(app.vault.createdPaths, []);
+  assert.deepEqual(app.vault.processedPaths, []);
+  unsubscribe();
 });
 
 test('language switches retain scratch text and a paused focus session in memory and persisted data', async () => {
@@ -1969,6 +2001,49 @@ test('journal configuration validates paths and restores settings when persisten
   assert.equal(plugin.settings.journalFormats.monthly, '[Monthly]/YYYY-MM');
   assert.equal(plugin.settings.journalFormat, original.journalFormat);
   assert.deepEqual(app.vault.createdPaths, []);
+});
+
+test('periodic settings validate and persist one candidate while preserving untouched values', async () => {
+  const { plugin, app } = createPlugin();
+  app.vault.seedFolder('Existing Journals');
+  app.vault.seedFile('Templates/Daily.md', '# {{title}}');
+  plugin.settings.journalTemplates.quarterly = 'Templates/Moved.md';
+  const original = structuredClone(plugin.settings);
+  const candidate = {
+    journalFolder: ' Existing Journals/ ',
+    formats: { daily: '[Days]/YYYY-MM-DD', weekly: 'GGGG/[Weeks]/GGGG-[W]WW' },
+    templates: { daily: ' Templates/Daily.md ' }
+  };
+
+  await assert.rejects(plugin.updatePeriodicSettings({ ...candidate, journalFolder: 'Absent' }), /Choose an existing folder/);
+  await assert.rejects(plugin.updatePeriodicSettings({ ...candidate, formats: { weekly: '[/absolute]/YYYY' } }), /safe relative vault path/);
+  await assert.rejects(plugin.updatePeriodicSettings({ ...candidate, templates: { monthly: 'Templates/Missing.md' } }), /existing Markdown journal template/);
+  assert.deepEqual(plugin.settings, original);
+  assert.equal(plugin.saveCalls, 0);
+
+  plugin.saveFailures = 1;
+  await assert.rejects(plugin.updatePeriodicSettings(candidate), /settings write failure/);
+  assert.deepEqual(plugin.settings, original);
+  assert.equal(plugin.saveCalls, 1);
+
+  await plugin.updatePeriodicSettings(candidate);
+  assert.equal(plugin.saveCalls, 2);
+  assert.equal(plugin.settings.journalFolder, 'Existing Journals');
+  assert.equal(plugin.settings.journalFormat, candidate.formats.daily);
+  assert.equal(plugin.settings.journalFormats.weekly, candidate.formats.weekly);
+  assert.deepEqual(plugin.settings.journalTemplates, { ...original.journalTemplates, daily: 'Templates/Daily.md' });
+  assert.deepEqual((plugin.savedData as { settings: Settings }).settings, plugin.settings);
+  assert.deepEqual(app.vault.createdPaths, []);
+});
+
+test('queued periodic updates merge against each current settings snapshot', async () => {
+  const { plugin } = createPlugin();
+  await Promise.all([
+    plugin.updatePeriodicSettings({ formats: { daily: '[Days]/YYYY-MM-DD' } }),
+    plugin.updatePeriodicSettings({ formats: { monthly: '[Months]/YYYY-MM' } })
+  ]);
+  assert.equal(plugin.settings.journalFormat, '[Days]/YYYY-MM-DD');
+  assert.equal(plugin.settings.journalFormats.monthly, '[Months]/YYYY-MM');
 });
 
 test('the note header immersion action stays attached to its native view when the sidebar has focus', () => {

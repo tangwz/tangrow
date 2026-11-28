@@ -36,6 +36,8 @@ export interface Settings extends ReportPreferences {
   habits: Habit[];
   aiEnabled: boolean;
   aiModel: string;
+  showComingSoon: boolean;
+  prepareDailyReview: boolean;
   /** Used only when the host has no secret storage. */
   aiApiKey: string;
 }
@@ -63,6 +65,8 @@ export const DEFAULT_SETTINGS: Settings = {
   habits: [],
   aiEnabled: false,
   aiModel: 'claude-opus-5-5',
+  showComingSoon: true,
+  prepareDailyReview: false,
   aiApiKey: '',
   reportExcludedFolders: [],
   trackEditingActivity: true,

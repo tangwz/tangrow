@@ -113,7 +113,7 @@ export class TangrowSidebar extends ItemView {
   constructor(leaf: WorkspaceLeaf, host: SidebarHost) {
     super(leaf);
     this.host = host;
-    this.ui = new SidebarUI(() => this.host.settings.language);
+    this.ui = new SidebarUI(() => this.host.settings.language, () => this.host.settings.showComingSoon);
     this.focusMinutes = host.settings.focusMinutes;
     this.focusDefaultMinutes = host.settings.focusMinutes;
     this.aiPanel = new AiPanel(host, this);
@@ -435,7 +435,8 @@ export class TangrowSidebar extends ItemView {
         let signature = '';
         this.refreshSection = (snapshot) => {
           const next = JSON.stringify([snapshot.counts, snapshot.tasks, snapshot.captures.filter((capture) => !capture.processed).length,
-            this.manuscript(snapshot) ?? snapshot.drafts[0], new Date().toDateString(), this.taskSaving, this.host.settings.knowledgeEnabled, this.workbenchCards.homeSignature]);
+            this.manuscript(snapshot) ?? snapshot.drafts[0], new Date().toDateString(), this.taskSaving, this.host.settings.knowledgeEnabled,
+            this.host.settings.showComingSoon, this.workbenchCards.homeSignature]);
           if (next === signature) return;
           signature = next;
           this.preserveFocus(() => this.renderToday(snapshot));
