@@ -102,7 +102,8 @@ async function createResult(app: App, source: TFile, job: CaptureJob, resume: bo
     const target = markdownFile(app, job.target);
     if (target === source) throw new Error('The task overview must be different from the capture.');
     const marker = `<!-- tangrow-capture:${job.id} -->`;
-    const links = job.project ? `${sourceLink} ${job.project}` : sourceLink;
+    // The report indexes the rightmost link before the receipt as the capture source.
+    const links = job.project ? `${job.project} ${sourceLink}` : sourceLink;
     await app.vault.process(target, (content) => content.includes(marker) ? content
       : `${content}${content.endsWith('\n') ? '' : '\n'}\n- [ ] ${job.title} ${links} ${marker}\n`);
     return target;
