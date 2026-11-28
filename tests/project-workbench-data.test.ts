@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildWorkbenchProjects, type WorkbenchProjectRecord, type WorkbenchProjectTaskSource } from '../src/project-workbench-data';
+import { buildWorkbenchPara, type WorkbenchProjectRecord, type WorkbenchProjectTaskSource } from '../src/project-workbench-data';
 import { DEFAULT_SETTINGS } from '../src/types';
 
 function note(path: string, frontmatter?: Record<string, unknown>, linkedProjectPath?: string, modified = 1): WorkbenchProjectRecord {
@@ -16,7 +16,7 @@ test('project workbench reuses entity note and state rules and omits contained a
     note('20-Project/Standalone.md', { tangrow_status: 'complete' }),
     note(`${settings.archiveFolder}/Archived project.md`), note(`${settings.supportFolder}/Support note.md`)
   ];
-  const projects = buildWorkbenchProjects(records, [], [project, '20-Project/Empty', settings.archiveFolder, settings.supportFolder], settings);
+  const { projects } = buildWorkbenchPara(records, [], [project, '20-Project/Empty', settings.archiveFolder, settings.supportFolder], settings);
   assert.deepEqual(projects.map(({ name, notePath, status, notes }) => [name, notePath, status, notes.map((entry) => entry.name)]), [
     ['Empty', null, 'unknown', []], ['Plan', `${project}/Plan.md`, 'open', ['Draft']], ['Standalone', '20-Project/Standalone.md', 'done', []]
   ]);
@@ -37,12 +37,12 @@ test('project tasks use folder, property and overview links with one row per che
   const repeated = { path: child, line: 4, text: 'Folder task 📅 2026-12-05', done: false };
   const tasks: WorkbenchProjectTaskSource[] = [
     repeated, repeated, { path: linked, line: 1, text: 'Linked task', done: false },
-    { path: overview, line: 2, text: 'Two projects 📅 2026-12-01', done: false, linkedProjectPaths: [projectNote, child, standalone] },
-    { path: overview, line: 3, text: 'Finished 📅 2026-11-01', done: true, linkedProjectPaths: [projectNote] },
+    { path: overview, line: 2, text: 'Two projects 📅 2026-12-01', done: false, overviewLinks: [projectNote, child, standalone] },
+    { path: overview, line: 3, text: 'Finished 📅 2026-11-01', done: true, overviewLinks: [projectNote] },
     { path: overview, line: 4, text: 'Unassigned', done: false },
     { path: archived, line: 1, text: 'Archived task', done: false }
   ];
-  const projects = buildWorkbenchProjects(records, tasks, [project], DEFAULT_SETTINGS);
+  const { projects } = buildWorkbenchPara(records, tasks, [project], DEFAULT_SETTINGS);
   const plan = projects.find((item) => item.path === project);
   assert.ok(plan);
   assert.deepEqual(plan.notes.map((entry) => entry.path), [linked, child]);
@@ -52,4 +52,63 @@ test('project tasks use folder, property and overview links with one row per che
   ]);
   assert.equal(plan.due?.toISOString(), '2026-12-01T00:00:00.000Z');
   assert.deepEqual(projects.find((item) => item.path === standalone)?.tasks.map((task) => task.line), [2]);
+});
+
+test('PARA workbench groups area tasks and resources and keeps linked references out of project outputs', () => {
+  const project = '20-Project/Plan/Plan.md';
+  const done = '20-Project/Finished.md';
+  const area = '30-Area/Work/README.md';
+  const areaChild = '30-Area/Work/Planning/Plan.md';
+  const standalone = '30-Area/Health.md';
+  const resourceNote = '40-Resources/Writing/Source.md';
+  const clip = '00-Inbox/Clip.md';
+  const card = '50-Zettel/Argument.md';
+  const manuscript = '00-Inbox/Draft.md';
+  const overview = DEFAULT_SETTINGS.taskOverviewPath;
+  const records = [
+    { ...note(project, { tangrow_status: 'open' }), linkedAreaPath: area },
+    { ...note(done, { tangrow_status: 'archived' }), linkedAreaPath: area },
+    note(area), note(areaChild, undefined, undefined, 5), note(standalone), note(overview),
+    note(resourceNote, {}, project), note(clip, { source: 'https://example.com' }, project),
+    note(card, { tangrow_kind: 'card' }, project), note(manuscript, { tangrow_kind: 'draft' }, project)
+  ];
+  const tasks: WorkbenchProjectTaskSource[] = [
+    { path: areaChild, line: 3, text: 'Prepare', done: false },
+    { path: standalone, line: 1, text: 'Call clinic', done: false },
+    { path: overview, line: 4, text: 'Area and project task', done: false, overviewLinks: [area, project, area] }
+  ];
+  const { projects, areas, resources, candidates } = buildWorkbenchPara(records, tasks, ['30-Area/Empty', '40-Resources/Empty'], DEFAULT_SETTINGS);
+  const plan = projects.find((entry) => entry.notePath === project);
+  const work = areas.find((entry) => entry.notePath === area);
+  assert.ok(plan && work);
+  assert.equal(plan.areaPath, work.path);
+  assert.deepEqual(work.projects, [{ path: plan.path, name: 'Plan', status: 'open' }]);
+  assert.equal(work.noteCount, 2);
+  assert.equal(work.modified, 5);
+  assert.deepEqual(work.recent.map((entry) => entry.path), [areaChild, area]);
+  assert.deepEqual(work.tasks.map(({ text, sourceKind }) => [text, sourceKind]), [['Prepare', 'folder'], ['Area and project task', 'overview']]);
+  assert.equal(areas.find((entry) => entry.path === standalone)?.tasks.length, 1);
+  assert.equal(areas.find((entry) => entry.name === 'Empty')?.notePath, null);
+  assert.deepEqual(resources.map(({ name, noteCount }) => [name, noteCount]), [['Empty', 0], ['Writing', 1]]);
+  assert.deepEqual(plan.notes.map((entry) => entry.path), [manuscript]);
+  assert.deepEqual(plan.references.map(({ name, role, location }) => [name, role, location]), [
+    ['Source', 'material', 'Writing'], ['Clip', 'material', '00-Inbox'], ['Argument', 'card', '50-Zettel']
+  ]);
+  assert.equal(candidates.find((candidate) => candidate.path === manuscript)?.projectPath, plan.path);
+});
+
+test('an existing project area link keeps its canonical owner when a higher-priority note appears', () => {
+  const folder = '20-Project/Plan';
+  const area = '30-Area/Work.md';
+  const readme = `${folder}/README.md`;
+  const records = [
+    note(`${folder}/Plan.md`), { ...note(readme, { tangrow_area: '[[Work]]' }), linkedAreaPath: area }, note(area),
+    { ...note('20-Project/No canonical/Chapter.md'), linkedAreaPath: area }
+  ];
+  const { projects } = buildWorkbenchPara(records, [], [], DEFAULT_SETTINGS);
+  const plan = projects.find((entry) => entry.path === folder);
+  assert.equal(plan?.notePath, `${folder}/Plan.md`);
+  assert.equal(plan?.areaNotePath, readme);
+  assert.equal(plan?.areaPath, area);
+  assert.equal(projects.find((entry) => entry.name === 'No canonical')?.areaNotePath, null);
 });

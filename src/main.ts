@@ -32,13 +32,15 @@ import { addEditingActivity, createActivityState, normalizeActivityState, summar
 import { ReportSource } from './report-source';
 import { captureWritingNavigation } from './writing-navigation';
 import { aggregateReport } from './report-data';
-import { buildWorkbenchProjects, type WorkbenchProject, type WorkbenchProjectRecord, type WorkbenchProjectTaskSource } from './project-workbench-data';
+import { areaAssociationOwner, buildWorkbenchPara, workbenchPathIncluded, type WorkbenchArea, type WorkbenchLinkCandidate, type WorkbenchParaData, type WorkbenchProject,
+  type WorkbenchProjectRecord, type WorkbenchProjectTaskSource } from './project-workbench-data';
+import { canonicalEntityNotes, reportStatusSource } from './report-metrics';
 import { writeReportStatus } from './report-editing';
 import { buildCardReport, buildWorkbenchCards, type CardFilter } from './card-report-data';
 import { readCardReviewQueue, type CardReviewQueue } from './card-review';
-import { resolvePropertyLink } from './knowledge-index';
+import { readKnowledgeRecord, resolvePropertyLink } from './knowledge-index';
 import { rebaseMarkdownLinks } from './markdown-links';
-import type { ReportDestination, ReportPreferences, ReportRange, ReportRecord, ReportSnapshot, ReportStatusChange } from './report-contract';
+import type { ReportDestination, ReportPreferences, ReportRange, ReportRecord, ReportResource, ReportSnapshot, ReportStatusChange } from './report-contract';
 import { translate, describeError, type TranslationValues } from './i18n';
 import { DEFAULT_SETTINGS, type CaptureRequest, type CardSource, type ComposerState, type Habit, type Locale, type ActionId, type BaseId, type FocusSession, type NoteKind, type NoteSummary, type Settings, type SidebarHost, type Snapshot, type TaskSummary, type WritingDraft, type WritingSaveOrigin } from './types';
 
@@ -118,14 +120,14 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   private ribbon: HTMLElement | null = null;
   private readonly reportSource = new ReportSource(this.app, resolveSubpath);
   private workbenchCards?: { records: ReportRecord[]; scope: string; cards: WorkbenchCards };
-  private workbenchProjectIndex?: { openTasks: TaskSummary[]; projects: WorkbenchProject[] };
+  private workbenchParaIndex?: { openTasks: TaskSummary[]; data: WorkbenchParaData };
   private readonly cardReviews = new Map<string, CardReviewQueue>();
   private editingActivity = createActivityState();
   private lastActivityEvent: number | null = null;
   private activityTimer: number | undefined;
   private watchedWindows = new WeakSet<Window>();
   private quickAdds = new Set<QuickAddModal>();
-  private hubPrompts = new Set<PromptModal>();
+  private notePrompts = new Set<PromptModal>();
   private immersiveCapture?: ImmersiveCapture;
   private noteImmersion?: NoteImmersion;
   private noteImmersionAction?: HTMLElement;
@@ -293,7 +295,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   onunload(): void {
     this.access?.refresh();
     for (const modal of this.quickAdds) modal.close();
-    for (const modal of this.hubPrompts) modal.close();
+    for (const modal of this.notePrompts) modal.close();
     this.access?.dispose();
     this.immersiveCapture?.close();
     this.noteImmersion?.close();
@@ -472,8 +474,11 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   openNewHub(): void {
     if (!this.alive || !this.requireAccess()) return;
     if (!this.settings.knowledgeEnabled) throw new Error('Knowledge features are disabled.');
-    const modal = new PromptModal(this.app, 'New hub', 'Hub title', (title) => this.createHub(title), this.settings.language, () => this.hubPrompts.delete(modal));
-    this.hubPrompts.add(modal);
+    this.openNotePrompt('New hub', 'Hub title', (title) => this.createHub(title));
+  }
+  private openNotePrompt(title: string, placeholder: string, submit: (value: string) => Promise<void>): void {
+    const modal = new PromptModal(this.app, title, placeholder, submit, this.settings.language, () => this.notePrompts.delete(modal));
+    this.notePrompts.add(modal);
     modal.open();
   }
   openCaptureWindow(): Promise<void> { return revealCaptureWindow(this.app, this); }
@@ -667,22 +672,29 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     this.workbenchCards = { records: source.records, scope, cards };
     return cards;
   }
-  workbenchProjects(): WorkbenchProject[] {
+  workbenchProjects(): WorkbenchProject[] { return this.workbenchPara().projects; }
+  workbenchAreas(): WorkbenchArea[] { return this.workbenchPara().areas; }
+  workbenchResources(): ReportResource[] { return this.workbenchPara().resources; }
+  workbenchLinkCandidates(): WorkbenchLinkCandidate[] { return this.workbenchPara().candidates; }
+  private workbenchPara(): WorkbenchParaData {
     const state = this.snapshot();
-    if (this.workbenchProjectIndex?.openTasks === state.tasks) return this.workbenchProjectIndex.projects;
+    if (this.workbenchParaIndex?.openTasks === state.tasks) return this.workbenchParaIndex.data;
     const metadata = this.app.metadataCache;
     const overviewPath = this.settings.taskOverviewPath;
-    const excludeSupport = hasValidSupportFolder(this.settings);
+    const included = workbenchPathIncluded(this.settings);
     const records: WorkbenchProjectRecord[] = [];
     const completed: WorkbenchProjectTaskSource[] = [];
     const overviewLinks = new Map<number, Array<{ raw: string; path: string }>>();
     for (const file of this.app.vault.getMarkdownFiles()) {
-      if (inFolder(file.path, this.settings.archiveFolder) || (excludeSupport && inFolder(file.path, this.settings.supportFolder))) continue;
+      if (!included(file.path)) continue;
       const cache = metadata.getFileCache(file);
       const frontmatter = cache?.frontmatter;
-      const property = frontmatter?.tangrow_project;
-      const linked = typeof property === 'string' ? resolvePropertyLink(metadata, file, property)?.path : null;
-      records.push({ path: file.path, name: file.basename, created: file.stat.ctime, modified: file.stat.mtime, frontmatter, linkedProjectPath: linked ?? undefined });
+      const propertyLink = (value: unknown): string | undefined => typeof value === 'string' ? resolvePropertyLink(metadata, file, value)?.path ?? undefined : undefined;
+      const kind = frontmatter?.tangrow_kind;
+      const knowledge = cache && (kind === undefined || kind === 'note') && (frontmatter?.tangrow_sources || frontmatter?.tangrow_capture_action_id)
+        ? readKnowledgeRecord(metadata, file, cache) : undefined;
+      records.push({ path: file.path, name: file.basename, created: file.stat.ctime, modified: file.stat.mtime, frontmatter, knowledge,
+        tags: cache?.tags?.map((entry) => entry.tag), linkedProjectPath: propertyLink(frontmatter?.tangrow_project), linkedAreaPath: propertyLink(frontmatter?.tangrow_area) });
       for (const item of cache?.listItems ?? []) {
         if (item.task !== 'x' && item.task !== 'X') continue;
         const line = item.position.start.line;
@@ -705,11 +717,12 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       // When the exact line is available, parse its wikilinks. The host cache can still contain the previous line.
       const cachedLinks = (overviewLinks.get(task.line) ?? []).flatMap((link) =>
         original === undefined || (!link.raw.startsWith('[[') && original.includes(link.raw)) ? [link.path] : []);
-      return { ...task, linkedProjectPaths: [...cachedLinks, ...rawLinks] };
+      return { ...task, overviewLinks: [...cachedLinks, ...rawLinks] };
     });
-    const projects = buildWorkbenchProjects(records, tasks, state.projectFolders, this.settings);
-    this.workbenchProjectIndex = { openTasks: state.tasks, projects };
-    return projects;
+    const folders = this.app.vault.getAllFolders().map((folder) => folder.path);
+    const data = buildWorkbenchPara(records, tasks, folders, this.settings);
+    this.workbenchParaIndex = { openTasks: state.tasks, data };
+    return data;
   }
   async updateKnowledgeEnabled(enabled: boolean): Promise<void> {
     await this.exclusive(async () => {
@@ -1260,7 +1273,100 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     const file = await this.exclusive(() => this.createUnique(this.settings.inboxFolder, title, body, { tangrow_kind: 'note', tangrow_status: 'open', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') }));
     await this.openNote(file.path);
   }
-  async addTask(text: string, options: { due?: string; target?: 'overview' | 'daily'; projectNotePath?: string } = {}): Promise<string> {
+  private workbenchEntity(path: string, root: string, error: string): TFile | TFolder {
+    const entry = this.app.vault.getAbstractFileByPath(path);
+    const isEntity = entry instanceof TFolder || (entry instanceof TFile && entry.extension === 'md');
+    if (!isEntity || path.slice(0, path.lastIndexOf('/')) !== root || !workbenchPathIncluded(this.settings)(path)) throw new Error(error);
+    return entry;
+  }
+  private workbenchLinkedNote(path: string | null | undefined, root: string, error: string): TFile {
+    const entry = path ? this.app.vault.getAbstractFileByPath(path) : null;
+    if (!(entry instanceof TFile) || entry.extension !== 'md' || !inFolder(entry.path, root) || !workbenchPathIncluded(this.settings)(entry.path)) throw new Error(error);
+    return entry;
+  }
+  private canonicalWorkbenchNotes(folder: TFolder): TFile[] {
+    const included = workbenchPathIncluded(this.settings);
+    return canonicalEntityNotes(this.app.vault.getMarkdownFiles().filter((file) => file.parent?.path === folder.path && included(file.path)), folder.path);
+  }
+  private workbenchProjectNote(path: string, canonical = false): TFile {
+    const project = this.workbenchEntity(path, this.settings.projectFolder, 'Choose an existing project.');
+    if (project instanceof TFile) return project;
+    const notePath = canonical
+      ? areaAssociationOwner(this.canonicalWorkbenchNotes(project).map((file) => ({ path: file.path, frontmatter: this.app.metadataCache.getFileCache(file)?.frontmatter })))?.path
+      : this.workbenchProjects().find((entry) => entry.path === path)?.notePath;
+    return this.workbenchLinkedNote(notePath, project.path, 'Choose an existing project note.');
+  }
+  private workbenchAreaNote(path: string): TFile {
+    const area = this.workbenchEntity(path, this.settings.areaFolder, 'Choose an existing area.');
+    const notePath = area instanceof TFile ? area.path : this.workbenchAreas().find((entry) => entry.path === path)?.notePath;
+    return this.workbenchLinkedNote(notePath, area.path === notePath ? this.settings.areaFolder : area.path, 'This area has no note to link.');
+  }
+  async setWorkbenchProjectArea(projectPath: string, areaPath: string | null): Promise<void> {
+    await this.exclusive(async () => {
+      const project = this.workbenchProjectNote(projectPath, true);
+      const area = areaPath === null ? null : this.workbenchAreaNote(areaPath);
+      const link = area ? this.propertyLink(area, project.path) : null;
+      await this.app.fileManager.processFrontMatter(project, (fields) => {
+        if (link === null) delete fields.tangrow_area;
+        else fields.tangrow_area = link;
+      });
+    });
+    this.notify();
+  }
+  async linkWorkbenchNote(notePath: string, projectPath: string): Promise<void> {
+    await this.exclusive(async () => {
+      const file = this.app.vault.getAbstractFileByPath(notePath);
+      const project = this.workbenchProjectNote(projectPath);
+      if (!(file instanceof TFile) || file.extension !== 'md' || !workbenchPathIncluded(this.settings)(notePath)
+        || !this.workbenchLinkCandidates().some((candidate) => candidate.path === notePath)) throw new Error('Choose an existing note to link.');
+      if (file === project) throw new Error('Choose a note outside the project note itself.');
+      const link = this.propertyLink(project, notePath);
+      await this.app.fileManager.processFrontMatter(file, (fields) => { fields.tangrow_project = link; });
+    });
+    this.notify();
+  }
+  openNewAreaNote(areaPath: string): void {
+    if (!this.alive || !this.requireAccess()) return;
+    this.workbenchEntity(areaPath, this.settings.areaFolder, 'Choose an existing area.');
+    this.openNotePrompt('New note in this area', 'Note title', (title) => this.createAreaNote(areaPath, title));
+  }
+  private async createAreaNote(areaPath: string, title: string): Promise<void> {
+    const file = await this.exclusive(async () => {
+      if (!this.alive || !this.requireAccess()) return null;
+      const area = this.workbenchEntity(areaPath, this.settings.areaFolder, 'Choose an existing area.');
+      const folder = area instanceof TFolder ? area.path : this.settings.areaFolder;
+      const body = area instanceof TFile ? this.propertyLink(area, '') : '';
+      return this.createUnique(folder, title, body, { tangrow_kind: 'note', tangrow_status: 'open', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') });
+    });
+    if (!file || !this.alive) return;
+    try { await this.openNote(file.path); }
+    catch (error) { new Notice(this.error(error)); }
+  }
+  async setWorkbenchProjectStatus(projectPath: string, status: 'open' | 'done'): Promise<void> {
+    let affected: string[] = [];
+    try {
+      await this.exclusive(async () => {
+        const project = this.workbenchEntity(projectPath, this.settings.projectFolder, 'Choose an existing project.');
+        const statusSource = (file: TFile) => reportStatusSource({ path: file.path, frontmatter: this.app.metadataCache.getFileCache(file)?.frontmatter });
+        const files = project instanceof TFile ? [project] : this.canonicalWorkbenchNotes(project);
+        const change: ReportStatusChange = project instanceof TFile
+          ? { kind: 'note', source: statusSource(project), status }
+          : { kind: 'entity', collection: 'projects', path: project.path, sources: files.map(statusSource), status };
+        affected = files.length ? files.map((file) => file.path) : [`${project.path}/README.md`];
+        // Reporting exclusions do not remove a project from the sidebar.
+        await writeReportStatus(this.app, { ...this.settings, reportExcludedFolders: [] }, change);
+      });
+    } finally {
+      for (const path of affected) { this.reportSource.invalidate(path); this.taskLabels.delete(path); }
+      if (affected.length) this.notify();
+    }
+  }
+  async revealWorkbenchPath(path: string): Promise<void> {
+    const entry = this.app.vault.getAbstractFileByPath(path);
+    if (!entry) throw new Error('This file or folder no longer exists.');
+    if (!await revealInFileList(this.app, entry)) new Notice(this.t('Open the file explorer and locate: {path}', { path }));
+  }
+  async addTask(text: string, options: { due?: string; target?: 'overview' | 'daily'; projectNotePath?: string; areaPath?: string } = {}): Promise<string> {
     const line = taskLine(text, options.due);
     const path = options.target === 'daily' ? await this.ensurePeriodicNote('daily', dayKey()) : this.settings.taskOverviewPath;
     await this.exclusive(async () => {
@@ -1275,6 +1381,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
         }
         entry += ` ${this.propertyLink(project, note.path)}`;
       }
+      if (options.areaPath !== undefined) entry += ` ${this.propertyLink(this.workbenchAreaNote(options.areaPath), note.path)}`;
       await this.app.vault.process(note, (content) => appendTaskLine(content, entry));
       this.taskLabels.delete(path);
     });
@@ -1285,6 +1392,9 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   }
   async addProjectTask(projectNotePath: string, title: string): Promise<void> {
     await this.addTask(title, { projectNotePath });
+  }
+  async addAreaTask(areaPath: string, title: string): Promise<void> {
+    await this.addTask(title, { areaPath });
   }
   async completeTask(path: string, line: number, expectedLabel?: string): Promise<void> {
     await this.exclusive(async () => {

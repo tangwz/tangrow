@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildCardReport, buildWorkbenchCards, cardCreationTrend, filterCardReport, reportCaptureCoverage, reportDrafts, reportMaterials } from '../src/card-report-data';
+import { buildCardReport, buildWorkbenchCards, cardCreationTrend, filterCardReport, groupWorkbenchMaterials, reportCaptureCoverage, reportDrafts, reportMaterials } from '../src/card-report-data';
 import type { CardRelationship, KnowledgeRecord } from '../src/knowledge-index';
 import { recentDays } from '../src/model';
 import type { ReportRecord, ReportSnapshot } from '../src/report-contract';
 import { aggregateReport } from '../src/report-data';
+import { collectReportResources } from '../src/report-metrics';
 import { DEFAULT_SETTINGS } from '../src/types';
 
 const NOW = new Date(2026, 10, 18, 12).getTime();
@@ -20,6 +21,24 @@ function record(path: string, frontmatter: Record<string, unknown> = {}, knowled
 function link(path: string | null, details: Partial<CardRelationship> = {}): CardRelationship {
   return { path, anchor: '', raw: path ?? '[[Missing]]', ...details };
 }
+
+test('workbench materials group by report resource entities and separate outside clippings', () => {
+  const records = [
+    record('40-Resources/Methods/deep/Guide.md'), record('40-Resources/Root.md'),
+    record('00-Inbox/Clip.md', { source: 'https://example.com/article' }),
+    record('00-Inbox/Reading.md', { tangrow_kind: 'literature' })
+  ];
+  const resources = collectReportResources(records, DEFAULT_SETTINGS.resourcesFolder, ['40-Resources/Empty'], NOW);
+  const { materials } = buildWorkbenchCards(records, DEFAULT_SETTINGS, true, NOW);
+  assert.deepEqual(groupWorkbenchMaterials(materials, resources).map((group) => [
+    group.kind === 'resource' ? group.resource.path : group.kind, group.materials.map(({ note }) => note.path)
+  ]), [
+    ['40-Resources/Methods', ['40-Resources/Methods/deep/Guide.md']],
+    ['40-Resources/Root.md', ['40-Resources/Root.md']],
+    ['clippings', ['00-Inbox/Clip.md']],
+    ['other', ['00-Inbox/Reading.md']]
+  ]);
+});
 
 test('card period counts and every inclusive chart bin match the same title/path-searchable list', () => {
   const records = [

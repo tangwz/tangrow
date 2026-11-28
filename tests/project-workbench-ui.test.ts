@@ -5,7 +5,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { readSettings } from '../src/model';
-import type { WorkbenchProject, WorkbenchProjectTask } from '../src/project-workbench-data';
+import type { WorkbenchArea, WorkbenchLinkCandidate, WorkbenchProject, WorkbenchProjectTask } from '../src/project-workbench-data';
 import type { SidebarHost } from '../src/types';
 
 interface ElementOptions { cls?: string; text?: string; attr?: Record<string, string> }
@@ -18,6 +18,7 @@ class Element extends EventTarget {
   readonly attributes: Map<string, string>;
   textContent: string;
   disabled = false;
+  checked = false;
   readOnly = false;
   value: string | number = '';
 
@@ -72,33 +73,71 @@ const { ProjectWorkbench, SidebarUI } = moduleObject.exports as typeof import('.
 
 function project(name: string, data: Partial<WorkbenchProject> = {}): WorkbenchProject {
   const root = `20-Project/${name}`;
-  return { path: root, name, notePath: `${root}/${name}.md`, status: 'open', notes: [], tasks: [], due: null, ...data };
+  const notePath = `${root}/${name}.md`;
+  return { path: root, name, notePath, status: 'open', notes: [], tasks: [], due: null, areaNotePath: notePath, areaPath: null, references: [], ...data };
 }
 
-function fixture(projects: WorkbenchProject[]) {
+function fixture(projects: WorkbenchProject[], areas: WorkbenchArea[] = [], candidates: WorkbenchLinkCandidate[] = []) {
   const settings = readSettings({ language: 'en' });
   const opened: Array<[string, number | undefined]> = [];
   const added: Array<[string, string]> = [];
   const completed: Array<[string, number, string | undefined]> = [];
   const quickAdd: Array<string | undefined> = [];
+  const writes: Array<Array<string | null>> = [];
+  const findProject = (path: string) => {
+    const selected = projects.find((item) => item.path === path);
+    assert.ok(selected);
+    return selected;
+  };
   const host = {
     settings,
     workbenchProjects: () => projects,
+    workbenchAreas: () => areas,
+    workbenchLinkCandidates: () => candidates,
     openNote: async (path, line) => { opened.push([path, line]); },
     openQuickAdd: (kind) => { quickAdd.push(kind); },
     addProjectTask: async (path, text) => { added.push([path, text]); },
+    addAreaTask: async (path, text) => { writes.push(['area-task', path, text]); },
+    openNewAreaNote: (path) => { writes.push(['new-area-note', path]); },
+    revealWorkbenchPath: async (path) => { writes.push(['reveal', path]); },
+    setWorkbenchProjectArea: async (path, area) => {
+      writes.push(['area', path, area]);
+      findProject(path).areaPath = area;
+    },
+    setWorkbenchProjectStatus: async (path, status) => {
+      writes.push(['status', path, status]);
+      findProject(path).status = status;
+      render();
+    },
+    linkWorkbenchNote: async (notePath, projectPath) => {
+      writes.push(['link', notePath, projectPath]);
+      const note = candidates.find((item) => item.path === notePath);
+      if (note) findProject(projectPath).references.push(note);
+    },
     completeTask: async (path, line, expected) => {
       completed.push([path, line, expected]);
       const entry = projects.flatMap((item) => item.tasks).find((task) => task.path === path && task.line === line);
       if (entry) entry.done = true;
     }
-  } satisfies Pick<SidebarHost, 'settings' | 'workbenchProjects' | 'openNote' | 'openQuickAdd' | 'addProjectTask' | 'completeTask'>;
+  } satisfies Pick<SidebarHost, 'settings' | 'workbenchProjects' | 'workbenchAreas' | 'workbenchLinkCandidates'
+    | 'openNote' | 'openQuickAdd' | 'addProjectTask' | 'addAreaTask' | 'openNewAreaNote' | 'revealWorkbenchPath'
+    | 'setWorkbenchProjectArea' | 'setWorkbenchProjectStatus' | 'linkWorkbenchNote' | 'completeTask'>;
   const root = new Element();
   const ui = new SidebarUI(() => settings.language);
-  const render = () => workbench.render(root as unknown as HTMLElement);
-  const workbench = new ProjectWorkbench(host as SidebarHost, ui, render);
+  let areaView = false;
+  const pane = root as unknown as HTMLElement;
+  const render = () => { if (areaView) workbench.renderAreas(pane); else workbench.render(pane); };
+  const workbench = new ProjectWorkbench(host as SidebarHost, ui, render, (path, fromArea) => {
+    areaView = false;
+    workbench.showProject(path, fromArea);
+    render();
+  }, (path) => {
+    areaView = true;
+    workbench.showArea(path);
+    render();
+  });
   render();
-  return { workbench, root, opened, added, completed, quickAdd };
+  return { workbench, root, opened, added, completed, quickAdd, writes, render, showAreas: () => { areaView = true; render(); } };
 }
 
 function control(root: Element, action: string): Element {
@@ -120,6 +159,24 @@ async function click(button: Element): Promise<void> {
   button.focus();
   button.dispatchEvent(new Event('click'));
   await flush();
+}
+
+function labelledButton(root: Element, label: string): Element {
+  const button = root.all().find((entry) => entry.tag === 'button' && entry.getAttribute('aria-label') === label);
+  assert.ok(button, `Expected ${label}`);
+  return button;
+}
+
+function selectOnlyOption(root: Element): void {
+  const radios = root.all().filter((entry) => entry.tag === 'input' && entry.getAttribute('name')?.startsWith('tangrow-workbench-picker-'));
+  assert.equal(radios.length, 1);
+  const radio = radios[0]!;
+  radio.checked = true;
+  radio.dispatchEvent(new Event('change'));
+}
+
+function areaFixture(path = '30-Area/Work', name = 'Work', data: Partial<WorkbenchArea> = {}): WorkbenchArea {
+  return { path, name, notePath: `${path}/README.md`, noteCount: 1, modified: null, recent: [], tasks: [], projects: [], ...data };
 }
 
 test('an empty project list gives New project as its sole primary action', async () => {
@@ -214,4 +271,91 @@ test('the project task form sends Enter to the chosen project and retains focus'
   assert.equal(next.value, '');
   assert.equal(next.readOnly, false);
   assert.equal(root.ownerDocument.activeElement, next);
+});
+
+test('project area search keeps its query and writes the selected association only on confirmation', async () => {
+  const story = project('Story');
+  const work = areaFixture();
+  const health = areaFixture('30-Area/Health', 'Health');
+  const { workbench, root, writes, render } = fixture([story], [work, health]);
+  workbench.showProject(story.path);
+  await click(control(root, 'project-picker-area'));
+  const query = control(root, 'project-picker-search-area');
+  query.value = 'health';
+  query.dispatchEvent(new Event('input'));
+  selectOnlyOption(root);
+  assert.deepEqual(writes, []);
+  render();
+  assert.equal(control(root, 'project-picker-search-area').value, 'health');
+  await click(labelledButton(root, 'Confirm selection'));
+  assert.deepEqual(writes, [['area', story.path, health.path]]);
+  assert.equal(control(root, 'project-picker-area').getAttribute('aria-label'), 'Area · Health');
+
+  workbench.showProject(null);
+  const grouping = control(root, 'project-group-mode');
+  grouping.value = 'area';
+  grouping.dispatchEvent(new Event('change'));
+  const group = control(root, `project-group-${health.path}`);
+  assert.equal(group.getAttribute('aria-label'), 'Health · 1');
+  assert.equal(group.getAttribute('aria-expanded'), 'true');
+  await click(group);
+  assert.equal(control(root, `project-group-${health.path}`).getAttribute('aria-expanded'), 'false');
+  assert.ok(!root.all().some((element) => element.dataset.tangrowAction === `project-open-${story.path}`));
+
+  workbench.showProject(story.path);
+  await click(control(root, 'project-picker-area'));
+  const clear = control(root, 'project-picker-search-area');
+  clear.value = 'clear area';
+  clear.dispatchEvent(new Event('input'));
+  selectOnlyOption(root);
+  await click(labelledButton(root, 'Confirm selection'));
+  assert.deepEqual(writes, [['area', story.path, health.path], ['area', story.path, null]]);
+});
+
+test('Areas route to related projects and return, with area-scoped note and task actions', async () => {
+  const story = project('Story');
+  const area = areaFixture('30-Area/Work', 'Work', { projects: [story], tasks: [{
+    path: '30-Area/Work/Checklist.md', line: 0, done: false, text: 'Review checklist', sourceKind: 'folder', sourceName: 'Checklist'
+  }] });
+  const { root, opened, showAreas, writes } = fixture([story], [area]);
+  showAreas();
+  await click(control(root, `area-open-${area.path}`));
+  assert.equal(primary(root).getAttribute('aria-label'), 'Open the area note');
+  assert.match(control(root, 'area-task-note-30-Area/Work/Checklist.md:0').getAttribute('aria-label') ?? '', /Area folder · Checklist/);
+  await click(primary(root));
+  await click(labelledButton(root, 'New note in this area'));
+  const input = control(root, 'area-task-add');
+  input.value = 'Plan the work';
+  root.querySelectorAll('form')[0]!.dispatchEvent(new Event('submit'));
+  await flush();
+  assert.deepEqual(opened, [[area.notePath, undefined]]);
+  assert.deepEqual(writes, [['new-area-note', area.path], ['area-task', area.path, 'Plan the work']]);
+  await click(control(root, `area-project-${story.path}`));
+  assert.equal(control(root, 'project-back').getAttribute('aria-label'), 'Back to area');
+  await click(control(root, 'project-back'));
+  assert.equal(root.ownerDocument.activeElement, control(root, `area-project-${story.path}`));
+});
+
+test('References link selected material in place and the archive hint only reveals or changes status', async () => {
+  const story = project('Story');
+  const material: WorkbenchLinkCandidate = {
+    path: '40-Resources/Research/Clipping.md', name: 'Clipping', role: 'material', location: 'Research', projectPath: null
+  };
+  const { workbench, root, writes } = fixture([story], [], [material]);
+  workbench.showProject(story.path);
+  await click(control(root, 'project-picker-references'));
+  assert.equal(labelledButton(root, 'Confirm selection').disabled, true);
+  selectOnlyOption(root);
+  await click(labelledButton(root, 'Confirm selection'));
+  assert.equal(control(root, `project-reference-${material.path}`).getAttribute('aria-label'), 'Clipping · Research · Resource');
+
+  await click(labelledButton(root, 'Mark as done'));
+  assert.match(root.all().find((element) => element.getAttribute('role') === 'status')?.textContent ?? '', /90-Archive/);
+  await click(labelledButton(root, 'Reveal in file list'));
+  await click(labelledButton(root, 'Reopen project'));
+  assert.deepEqual(writes, [['link', material.path, story.path], ['status', story.path, 'done'], ['reveal', story.path], ['status', story.path, 'open']]);
+  assert.equal(story.status, 'open');
+  story.status = 'archived';
+  workbench.render(root as unknown as HTMLElement);
+  assert.ok(labelledButton(root, 'Reveal in file list'));
 });

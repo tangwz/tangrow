@@ -33,6 +33,12 @@ interface TestPlugin extends MockPlugin {
   openBase(id: 'captures'): Promise<void>;
   snapshot(): Snapshot;
   workbenchProjects(): WorkbenchProject[];
+  setWorkbenchProjectArea(projectPath: string, areaPath: string | null): Promise<void>;
+  setWorkbenchProjectStatus(projectPath: string, status: 'open' | 'done'): Promise<void>;
+  linkWorkbenchNote(notePath: string, projectPath: string): Promise<void>;
+  addAreaTask(areaPath: string, title: string): Promise<void>;
+  createAreaNote(areaPath: string, title: string): Promise<void>;
+  revealWorkbenchPath(path: string): Promise<void>;
   addProjectTask(projectNotePath: string, title: string): Promise<void>;
   completeTask(path: string, line: number, expectedLabel?: string): Promise<void>;
   action(id: ActionId): Promise<void>;
@@ -1427,6 +1433,61 @@ test('project tasks resolve existing property aliases and overview wikilinks, an
   await assert.rejects(plugin.completeTask(task.path, task.line, task.text), /This task changed in its note/);
   assert.equal(folderTask.content, '- [ ] Changed 📅 2026-12-12\n');
   assert.equal(project.content, '---\ntangrow_status: "open"\n---\n\n# Plan\n');
+});
+
+test('PARA links, area tasks and completion affect only their explicitly selected records', async () => {
+  const { plugin, app } = createPlugin();
+  const projectPath = '20-Project/Plan';
+  const areaPath = '30-Area/Work';
+  const project = app.vault.seedFile(`${projectPath}/Plan.md`, '---\nstatus: "active"\ncustom: "keep"\n---\n\n# Plan\n');
+  const area = app.vault.seedFile(`${areaPath}/README.md`, '# Work\n');
+  const material = app.vault.seedFile('40-Resources/Topic/Source.md', '---\norigin: "keep"\n---\n\nOriginal research.\n');
+  const overview = app.vault.seedFile(plugin.settings.taskOverviewPath, '# Tasks\n');
+  const excluded = app.vault.seedFile('90-Archive/Archived.md', '# Do not update\n');
+  app.metadataCache.getFirstLinkpathDest = (link) => {
+    const target = app.vault.getAbstractFileByPath(`${link}.md`);
+    return target instanceof harness.TFile ? target : null;
+  };
+  plugin.settings.reportExcludedFolders = [projectPath];
+
+  await plugin.setWorkbenchProjectArea(projectPath, areaPath);
+  assert.equal(app.metadataCache.getFileCache(project).frontmatter?.tangrow_area, '[[30-Area/Work/README]]');
+  assert.equal(plugin.workbenchProjects()[0]?.areaPath, areaPath);
+  await plugin.linkWorkbenchNote(material.path, projectPath);
+  assert.deepEqual(app.metadataCache.getFileCache(material).frontmatter, { origin: 'keep', tangrow_project: '[[20-Project/Plan/Plan]]' });
+  assert.equal(plugin.workbenchProjects()[0]?.references[0]?.path, material.path);
+  await assert.rejects(plugin.linkWorkbenchNote(excluded.path, projectPath), /Choose an existing note to link/);
+  await plugin.addAreaTask(areaPath, 'Check next milestone');
+  assert.equal(overview.content, '# Tasks\n- [ ] Check next milestone [[30-Area/Work/README]]\n');
+  assert.equal(area.content, '# Work\n');
+
+  await plugin.setWorkbenchProjectStatus(projectPath, 'done');
+  assert.equal(plugin.workbenchProjects()[0]?.status, 'done');
+  assert.equal(project.path, `${projectPath}/Plan.md`);
+  await plugin.revealWorkbenchPath(projectPath);
+  assert.equal(app.workspace.locatedFiles.at(-1), projectPath);
+  await plugin.setWorkbenchProjectStatus(projectPath, 'open');
+  assert.equal(plugin.workbenchProjects()[0]?.status, 'open');
+  await plugin.setWorkbenchProjectArea(projectPath, null);
+  assert.equal(plugin.workbenchProjects()[0]?.areaPath, null);
+  assert.deepEqual(app.metadataCache.getFileCache(project).frontmatter, { status: 'open', custom: 'keep' });
+  assert.equal(excluded.content, '# Do not update\n');
+  assert.deepEqual(app.vault.createdPaths, []);
+});
+
+test('new area notes are additive in both folder and standalone note areas', async () => {
+  const { plugin, app } = createPlugin();
+  const areaFolder = app.vault.seedFolder('30-Area/Work');
+  const areaNote = app.vault.seedFile('30-Area/Health.md', '# Health\n');
+  await plugin.createAreaNote(areaFolder.path, 'Work update');
+  await plugin.createAreaNote(areaNote.path, 'Health update');
+  const folderNote = app.vault.getAbstractFileByPath('30-Area/Work/Work update.md');
+  const rootNote = app.vault.getAbstractFileByPath('30-Area/Health update.md');
+  assert.ok(folderNote instanceof harness.TFile && rootNote instanceof harness.TFile);
+  assert.ok(rootNote.content.endsWith('# Health update\n\n[[30-Area/Health]]\n'));
+  assert.equal(app.metadataCache.getFileCache(rootNote).frontmatter?.tangrow_area, undefined);
+  assert.equal(areaNote.content, '# Health\n');
+  assert.deepEqual(app.vault.processedPaths, []);
 });
 
 test('capture history exposes every record with its creation timestamp and lazy content reads', async () => {

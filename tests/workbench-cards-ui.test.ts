@@ -8,6 +8,8 @@ import { buildWorkbenchCards, type CardFilter } from '../src/card-report-data';
 import { createCardReviewQueue, type CardReviewQueue } from '../src/card-review';
 import { readSettings } from '../src/model';
 import type { ReportRecord } from '../src/report-contract';
+import { collectReportResources } from '../src/report-metrics';
+import type { WorkbenchProject } from '../src/project-workbench-data';
 import type { CaptureSummary, SidebarHost } from '../src/types';
 import type { KnowledgeTab } from '../src/workbench-navigation';
 
@@ -21,6 +23,9 @@ class Element extends EventTarget {
   children: Element[] = [];
   dataset: Record<string, string> = {};
   disabled = false;
+  checked = false;
+  focused = false;
+  value = '';
   textContent: string;
   private readonly attributes: Map<string, string>;
   readonly classes: Set<string>;
@@ -42,8 +47,15 @@ class Element extends EventTarget {
   setAttribute(name: string, value: string): void { this.attributes.set(name, value); }
   getAttribute(name: string): string | null { return this.attributes.get(name) ?? null; }
   removeAttribute(name: string): void { this.attributes.delete(name); }
+  addClass(name: string): void { this.classes.add(name); }
   empty(): void { this.children = []; }
   all(): Element[] { return [this, ...this.children.flatMap((child) => child.all())]; }
+  querySelectorAll(selector: string): Element[] {
+    const [tag, cls] = selector.split('.');
+    return this.all().slice(1).filter((child) => (!tag || child.tag === tag) && (!cls || child.classes.has(cls)));
+  }
+  querySelector(selector: string): Element | null { return this.querySelectorAll(selector)[0] ?? null; }
+  focus(): void { this.focused = true; }
   get text(): string { return [this.textContent, ...this.children.map((child) => child.text)].join(' '); }
 }
 
@@ -81,16 +93,24 @@ function card(name: string, linkedTo?: ReportRecord): ReportRecord {
 
 async function flush(): Promise<void> { await new Promise<void>((resolve) => setImmediate(resolve)); }
 
-function fixture(options: { captures?: CaptureSummary[]; records?: ReportRecord[]; completed?: boolean } = {}) {
+function fixture(options: { captures?: CaptureSummary[]; records?: ReportRecord[]; completed?: boolean; projects?: WorkbenchProject[] } = {}) {
   const settings = readSettings({ language: 'en' });
   const { workspace: knowledge, report, materials, hubs } = buildWorkbenchCards(options.records ?? [], settings, true, now);
   const events: string[][] = [];
+  const projectLinks = new Map<string, string>();
   let queue: CardReviewQueue | null = options.completed ? createCardReviewQueue(knowledge) : null;
   if (queue) queue.completed = queue.entries.map(({ path }) => path);
   const host = {
     settings,
     snapshot: () => ({ captures: options.captures ?? [] }),
     loadWorkbenchCards: async () => ({ knowledge, report, materials, hubs }),
+    workbenchResources: () => collectReportResources(options.records ?? [], settings.resourcesFolder, [], now),
+    workbenchProjects: () => options.projects ?? [],
+    workbenchLinkCandidates: () => materials.map(({ note }) => ({ path: note.path, projectPath: projectLinks.get(note.path) })),
+    linkWorkbenchNote: async (notePath: string, projectPath: string) => {
+      projectLinks.set(notePath, projectPath);
+      events.push(['link', notePath, projectPath]);
+    },
     readCapture: async (path: string) => `---\ntangrow_kind: capture\n---\n\nCapture body for ${options.captures?.find((entry) => entry.path === path)?.name ?? path}.`,
     openQuickAdd: (kind: string) => { events.push(['quick-add', kind]); },
     openCardFromCapture: async (path: string) => { events.push(['distill', path]); return true; },
@@ -153,6 +173,30 @@ test('empty Cards with captures offers distillation for the two most recent sour
   await click(second);
   await click(button(root, 'Blank card'));
   assert.deepEqual(events, [['distill', captures[0]?.path], ['distill', captures[1]?.path], ['quick-add', 'card']]);
+});
+
+test('Materials groups resource notes and links a single note using a searchable project picker', async () => {
+  const material = { path: '40-Resources/Methods/Reference.md', name: 'Reference', created: now, modified: now };
+  const projects = ['First project', 'Second project'].map((name): WorkbenchProject => ({
+    path: `20-Project/${name}`, name, notePath: `20-Project/${name}/${name}.md`, status: 'open',
+    notes: [], tasks: [], due: null, areaPath: null, references: []
+  }));
+  const { root, events, render } = fixture({ records: [material], projects });
+  await render('materials');
+  assert.match(root.text, /Methods/);
+  await click(button(root, 'Use in project'));
+  const search = root.querySelector('input.tangrow-material-project-search');
+  assert.ok(search?.focused);
+  search.value = 'Second';
+  search.dispatchEvent(new Event('input'));
+  const [option] = root.querySelectorAll('input').filter((input) => input !== search);
+  assert.ok(option);
+  option.checked = true;
+  option.dispatchEvent(new Event('change'));
+  await click(button(root, 'Confirm selection'));
+  assert.deepEqual(events, [['link', material.path, projects[1]!.path]]);
+  assert.ok(button(root, 'Use in project').focused);
+  assert.match(root.text, /Currently in Second project/);
 });
 
 test('empty Cards without captures leads to Captures and still offers a blank card', async () => {

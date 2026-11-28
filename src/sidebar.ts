@@ -30,7 +30,7 @@ const SECTIONS: { id: WorkbenchTab; label: string; icon: string }[] = [
 ];
 
 const PROJECT_TABS: Record<ProjectTab, string> = {
-  list: 'Projects', scratchpad: 'Writing scratchpad', manuscripts: 'Manuscripts'
+  list: 'Projects', areas: 'Areas', scratchpad: 'Writing scratchpad', manuscripts: 'Manuscripts'
 };
 const KNOWLEDGE_TABS: Record<KnowledgeTab, string> = {
   cards: 'Cards', hubs: 'Knowledge hubs', review: 'Card review', materials: 'Knowledge materials'
@@ -126,7 +126,10 @@ export class TangrowSidebar extends ItemView {
       this.capturePanel?.focusComposer();
     });
     this.projectWorkbench = new ProjectWorkbench(host, this.ui, () => {
-      if (this.isMounted && this.section === 'projects' && this.projectTab === 'list') this.refreshSection(this.host.snapshot());
+      if (this.isMounted && this.section === 'projects' && (this.projectTab === 'list' || this.projectTab === 'areas')) this.refreshSection(this.host.snapshot());
+    }, (path, fromArea) => this.showProject(path, fromArea), (path) => {
+      this.projectWorkbench.showArea(path);
+      this.showProjectTab('areas');
     });
   }
 
@@ -158,8 +161,8 @@ export class TangrowSidebar extends ItemView {
     this.showWorkbench('projects', changed);
   }
 
-  private showProject(path: string | null): void {
-    this.projectWorkbench.showProject(path);
+  private showProject(path: string | null, fromArea?: string): void {
+    this.projectWorkbench.showProject(path, fromArea);
     this.showProjectTab('list');
   }
 
@@ -490,6 +493,7 @@ export class TangrowSidebar extends ItemView {
       case 'projects': {
         switch (this.projectTab) {
           case 'list': this.refreshSection = () => this.preserveFocus(() => this.projectWorkbench.render(this.pane)); break;
+          case 'areas': this.refreshSection = () => this.preserveFocus(() => this.projectWorkbench.renderAreas(this.pane)); break;
           case 'scratchpad': this.mountStudio(); break;
           case 'manuscripts': {
             let signature = '';
@@ -1337,14 +1341,22 @@ export class TangrowSidebar extends ItemView {
     const hadFocus = active !== null && this.pane.contains(active);
     const action = active?.dataset.tangrowAction;
     const label = active?.getAttribute('aria-label');
-    const previousButtons = Array.from(this.pane.querySelectorAll<HTMLButtonElement | HTMLSelectElement>('button, select'));
+    const selector = 'button, select, input[data-tangrow-action]';
+    const previousButtons = Array.from(this.pane.querySelectorAll<HTMLButtonElement | HTMLSelectElement | HTMLInputElement>(selector));
     const previousIndex = previousButtons.findIndex((entry) => entry === active);
+    const activeSearch = active?.tagName === 'INPUT' && (active as HTMLInputElement).type === 'search' ? active as HTMLInputElement : null;
+    const selection = activeSearch && [activeSearch.selectionStart, activeSearch.selectionEnd] as const;
     render();
     if (!hadFocus) return;
-    const buttons = Array.from(this.pane.querySelectorAll<HTMLButtonElement | HTMLSelectElement>('button, select'));
+    const buttons = Array.from(this.pane.querySelectorAll<HTMLButtonElement | HTMLSelectElement | HTMLInputElement>(selector));
     const replacement = buttons.find((entry) => action ? entry.dataset.tangrowAction === action : label && entry.getAttribute('aria-label') === label)
       ?? buttons[Math.min(previousIndex, buttons.length - 1)];
-    if (replacement && !replacement.disabled) replacement.focus({ preventScroll: true });
+    if (replacement && !replacement.disabled) {
+      replacement.focus({ preventScroll: true });
+      if (selection && replacement.tagName === 'INPUT' && (replacement as HTMLInputElement).type === 'search') {
+        (replacement as HTMLInputElement).setSelectionRange(selection[0], selection[1]);
+      }
+    }
   }
 
   private updateStudioControls(): void {

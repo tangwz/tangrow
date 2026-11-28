@@ -1,5 +1,5 @@
 import { Modal } from 'obsidian';
-import { captureProjectFiles } from './capture-processing';
+import { captureFilingEntries, captureProjectFiles } from './capture-processing';
 import { describeError, translate } from './i18n';
 import { safeTitle } from './model';
 import type { CaptureRequest, CaptureSummary, SidebarHost } from './types';
@@ -25,13 +25,45 @@ export class CaptureProcessingModal extends Modal {
     titleField.createEl('label', { text: t('Title'), attr: { for: titleId } });
     const title = titleField.createEl('input', { type: 'text', value: this.capture.name, attr: { id: titleId, maxlength: '240' } });
     const projectField = form.createDiv();
+    const search = projectField.createEl('input', { type: 'search', cls: 'tangrow-capture-destination-search' });
+    search.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.isComposing) event.preventDefault();
+    });
     const projectId = `tangrow-capture-project-${crypto.randomUUID()}`;
     const projectLabel = projectField.createEl('label', { text: t('Project note'), attr: { for: projectId } });
     const project = projectField.createEl('select', { attr: { id: projectId } });
-    project.createEl('option', { value: '', text: t('No project') });
-    for (const file of captureProjectFiles(this.host.app, this.host.settings).filter((file) => file.path !== this.capture.path)) {
-      project.createEl('option', { value: file.path, text: file.path });
-    }
+    const projectFiles = captureProjectFiles(this.host.app, this.host.settings).filter((file) => file.path !== this.capture.path);
+    const filing = new Map(captureFilingEntries(this.host.app, this.host.settings).map((entry) => [`${entry.kind}:${entry.path}`, entry]));
+    const noChoices = projectField.createEl('p', { cls: 'tangrow-muted', text: t('No destinations match this search.'), attr: { 'aria-live': 'polite' } });
+    let previousMode = '';
+    const renderChoices = (selection = project.value): void => {
+      const mode = action.value;
+      const query = search.value.trim().toLocaleLowerCase(this.host.settings.language);
+      const groups = [{ label: 'Projects', options: projectFiles.map((file) => ({ value: file.path, label: file.path })) }];
+      if (mode === 'note' || mode === 'task') groups.push({ label: 'Areas', options: [...filing].flatMap(([value, entry]) =>
+        entry.kind === 'area' && (mode === 'note' || (entry.notePath && entry.notePath !== this.capture.path)) ? [{ value, label: entry.path }] : []) });
+      if (mode === 'note') groups.push({ label: 'Resources', options: [...filing].flatMap(([value, entry]) =>
+        entry.kind === 'resource' ? [{ value, label: entry.path }] : []) });
+      project.empty();
+      project.createEl('option', { value: '', text: t(mode === 'note' ? 'Keep in the inbox' : mode === 'task' ? 'No link' : 'No project') });
+      let kept = '';
+      let matched = false;
+      for (const { label, options } of groups) {
+        const rows = options.filter((option) => {
+          const match = option.label.toLocaleLowerCase(this.host.settings.language).includes(query);
+          matched ||= match;
+          return match || option.value === selection;
+        });
+        if (!rows.length) continue;
+        const group = project.createEl('optgroup', { attr: { label: t(label) } });
+        for (const option of rows) {
+          group.createEl('option', { value: option.value, text: option.label });
+          if (option.value === selection) kept = selection;
+        }
+      }
+      project.value = kept;
+      noChoices.hidden = !query || matched;
+    };
     const advice = form.createDiv({ cls: 'tangrow-quick-suggestion', attr: { 'aria-live': 'polite' } });
     let saving = false;
     let openingCard = false;
@@ -52,7 +84,8 @@ export class CaptureProcessingModal extends Modal {
           // A project or an unsorted idea both map to keeping a note; the user still chooses.
           action.value = result.kind === 'task' ? 'task' : result.kind === 'capture' ? 'done' : 'note';
           if (result.title) title.value = result.title;
-          project.value = result.project && action.value === 'note' ? result.project : '';
+          search.value = '';
+          renderChoices(result.project && action.value === 'note' ? result.project : '');
           advice.textContent = result.reason;
           update();
         }).catch((failure: unknown) => {
@@ -104,11 +137,15 @@ export class CaptureProcessingModal extends Modal {
     const update = (): void => {
       const mode = action.value;
       const busy = saving || openingCard;
+      if (mode !== previousMode) { previousMode = mode; renderChoices(); }
       titleField.hidden = mode !== 'note' && mode !== 'task';
       projectField.hidden = mode !== 'note' && mode !== 'project' && mode !== 'task';
-      projectLabel.textContent = t(mode === 'task' ? 'Project link (optional)' : 'Project note');
+      projectLabel.textContent = t(mode === 'note' ? 'Filing destination' : mode === 'task' ? 'Project or area link (optional)' : 'Project note');
+      const searchLabel = t(mode === 'note' ? 'Search destinations' : mode === 'task' ? 'Search projects and areas' : 'Search projects');
+      search.setAttribute('aria-label', searchLabel);
+      search.setAttribute('placeholder', searchLabel);
       save.textContent = t(saving ? 'Processing capture...' : 'Process capture');
-      action.disabled = title.disabled = project.disabled = busy;
+      action.disabled = title.disabled = search.disabled = project.disabled = busy;
       if (suggestButton) suggestButton.disabled = busy || this.suggestionController !== null;
       if (distill) distill.disabled = busy;
       let valid = true;
@@ -119,9 +156,12 @@ export class CaptureProcessingModal extends Modal {
         if (mode === 'project' && !project.value) valid = false;
       } catch (failure) { valid = false; error.textContent = describeError(this.host.settings.language, failure); }
       save.disabled = busy || !valid;
-      const folder = project.value ? project.value.slice(0, project.value.lastIndexOf('/')) : this.host.settings.inboxFolder;
+      const filingChoice = filing.get(project.value);
+      const folder = filingChoice?.folder ?? (project.value ? project.value.slice(0, project.value.lastIndexOf('/')) : this.host.settings.inboxFolder);
+      const linkTarget = filingChoice?.notePath ?? project.value;
       destination.textContent = mode === 'task'
-        ? translate(this.host.settings.language, 'Destination: {path}', { path: this.host.settings.taskOverviewPath })
+        ? linkTarget ? translate(this.host.settings.language, 'Destination: {path} · Link: {target}', { path: this.host.settings.taskOverviewPath, target: linkTarget })
+          : translate(this.host.settings.language, 'Destination: {path}', { path: this.host.settings.taskOverviewPath })
         : mode === 'note' ? translate(this.host.settings.language, 'Destination: {path}', { path: folder })
         : t(mode === 'project' ? 'Link the original capture without moving it.' : 'Keep the original capture and mark it processed.');
     };
@@ -130,12 +170,20 @@ export class CaptureProcessingModal extends Modal {
       this.suggestionController?.abort();
       update();
     });
+    search.addEventListener('input', () => {
+      this.suggestionController?.abort();
+      renderChoices();
+      update();
+    });
     form.addEventListener('submit', (event) => {
       event.preventDefault();
       if (saving || openingCard || save.disabled || !this.host.requireAccess()) return;
       const projectChoice = project.value ? { projectPath: project.value } : {};
-      const request: CaptureRequest = action.value === 'note' ? { action: 'note', title: title.value, ...projectChoice }
-        : action.value === 'task' ? { action: 'task', title: title.value, ...projectChoice }
+      const filingChoice = filing.get(project.value);
+      const request: CaptureRequest = action.value === 'note' ? { action: 'note', title: title.value,
+        ...(filingChoice ? { destination: { kind: filingChoice.kind, path: filingChoice.path } } : projectChoice) }
+        : action.value === 'task' ? { action: 'task', title: title.value,
+          ...(filingChoice?.notePath ? { areaPath: filingChoice.notePath } : projectChoice) }
         : action.value === 'project' ? { action: 'project', projectPath: project.value } : { action: 'done' };
       saving = true;
       this.suggestionController?.abort();

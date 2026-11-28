@@ -1,6 +1,11 @@
 {
   "Save": "保存",
   "Hub title": "主题结构标题",
+  "Choose an existing project.": "请选择现有项目。",
+  "This area has no note to link.": "该领域没有可关联的笔记。",
+  "Choose an existing note to link.": "请选择要关联的现有笔记。",
+  "Choose a note outside the project note itself.": "请选择项目笔记以外的笔记。",
+  "This file or folder no longer exists.": "该文件或目录已不存在。",
   "Source capture: {path}": "来源速记：{path}",
   "Open Tangrow": "打开 Tangrow 侧栏",
   "Open companion": "打开侧栏",

@@ -1,7 +1,7 @@
 import type { Section } from './types';
 
 export type WorkbenchTab = 'today' | 'captures' | 'knowledge' | 'projects' | 'more';
-export type ProjectTab = 'list' | 'scratchpad' | 'manuscripts';
+export type ProjectTab = 'list' | 'areas' | 'scratchpad' | 'manuscripts';
 export type KnowledgeTab = 'materials' | 'cards' | 'hubs' | 'review';
 export type MoreTab = 'pins' | 'focus' | 'habits' | 'tools' | 'databases' | 'assistant';
 export type WorkbenchEntry = WorkbenchTab | Section | 'compose' | 'record/journal' | 'write/manuscripts' | 'more/assistant';

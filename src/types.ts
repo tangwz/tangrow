@@ -1,9 +1,9 @@
 import type { App, TFile, WorkspaceLeaf } from 'obsidian';
-import type { ReportPreferences, ReportRange, ReportRecord, ReportSnapshot, ReportStatusChange } from './report-contract';
+import type { ReportPreferences, ReportRange, ReportRecord, ReportResource, ReportSnapshot, ReportStatusChange } from './report-contract';
 import type { CardFilter, CardReport, MaterialReportRow } from './card-report-data';
 import type { CardReviewQueue } from './card-review';
 import type { JournalPeriod } from './periodic-notes';
-import type { WorkbenchProject } from './project-workbench-data';
+import type { WorkbenchArea, WorkbenchLinkCandidate, WorkbenchProject } from './project-workbench-data';
 import type { CaptureSuggestion, QuickKind } from './ai';
 import type { RecoveryDraft, RecoveryLabel } from './draft-submissions';
 import type { AgentStatus, WorkflowId, WorkflowRun } from './claudian';
@@ -77,9 +77,10 @@ export interface WritingSaveOrigin {
 }
 export interface NoteSummary { path: string; name: string; folder: string; modified: number; kind?: string; status?: string }
 export interface CaptureSummary extends NoteSummary { created: number; processed?: boolean; processing?: boolean }
+export interface CaptureFilingDestination { kind: 'area' | 'resource'; path: string }
 export type CaptureRequest =
-  | { action: 'note'; title: string; projectPath?: string }
-  | { action: 'task'; title: string; projectPath?: string }
+  | { action: 'note'; title: string; projectPath?: string; destination?: CaptureFilingDestination }
+  | { action: 'task'; title: string; projectPath?: string; areaPath?: string }
   | { action: 'project'; projectPath: string }
   | { action: 'done' }
   | { action: 'pending' }
@@ -120,6 +121,15 @@ export interface SidebarHost {
   settings: Settings;
   snapshot(): Snapshot;
   workbenchProjects(): WorkbenchProject[];
+  workbenchAreas(): WorkbenchArea[];
+  workbenchResources(): ReportResource[];
+  workbenchLinkCandidates(): WorkbenchLinkCandidate[];
+  setWorkbenchProjectArea(projectPath: string, areaPath: string | null): Promise<void>;
+  linkWorkbenchNote(notePath: string, projectPath: string): Promise<void>;
+  addAreaTask(areaPath: string, title: string): Promise<void>;
+  openNewAreaNote(areaPath: string): void;
+  setWorkbenchProjectStatus(projectPath: string, status: 'open' | 'done'): Promise<void>;
+  revealWorkbenchPath(path: string): Promise<void>;
   loadReport(range: ReportRange): Promise<ReportSnapshot>;
   openCardReport(filter?: CardFilter): Promise<void>;
   loadWorkbenchCards(): Promise<{ knowledge: CardReport; report: CardReport; materials: MaterialReportRow[]; hubs: ReportRecord[] }>;

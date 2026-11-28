@@ -289,6 +289,12 @@
 }
 .tangrow-sidebar .tangrow-loop-step { grid-row: span 2; color: var(--text-muted); font-size: var(--font-ui-smaller); }
 .tangrow-sidebar .tangrow-loop-detail { grid-column: 2; color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.tangrow-sidebar .tangrow-material-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; }
+.tangrow-sidebar .tangrow-material-row > .tangrow-button { min-width: 0; }
+@container (max-width: 220px) {
+  .tangrow-sidebar .tangrow-material-row { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .tangrow-sidebar .tangrow-material-row > .tangrow-text-button { justify-self: end; }
+}
 /* Pills: tool groups, sources, dates. */
 .tangrow-chips { display: flex; flex-wrap: wrap; gap: 5px; }
 .tangrow-chip, .tangrow-button.tangrow-chip {
@@ -939,6 +945,7 @@ button.tangrow-report-day:hover { outline: 1px solid var(--text-accent); outline
 .tangrow-capture-process-form { display: grid; gap: 8px; }
 .tangrow-capture-process-form label { display: block; margin-bottom: 4px; }
 .tangrow-capture-process-form :is(input, select) { width: 100%; }
+.tangrow-capture-process-form .tangrow-capture-destination-search { margin-bottom: var(--size-4-2); }
 .tangrow-capture-process-form [hidden] { display: none !important; }
 .tangrow-capture-snippet { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; overflow-wrap: anywhere; white-space: normal; color: var(--text-muted); font-size: 11px; line-height: 1.8; margin: 7px 0 0; }
 .tangrow-capture-pagination { display: flex; flex-direction: column; align-items: center; gap: 8px; margin: -6px 0 18px; }
@@ -1261,3 +1268,57 @@ button.tangrow-report-day:hover { outline: 1px solid var(--text-accent); outline
 }
 .tangrow-sidebar .tangrow-project-progress progress::-webkit-progress-bar { background: var(--background-modifier-border); }
 .tangrow-sidebar .tangrow-project-progress progress::-webkit-progress-value { background: var(--text-muted); }
+
+.tangrow-sidebar .tangrow-project-toolbar,
+.tangrow-workbench-picker .tangrow-workbench-picker-actions,
+.tangrow-project-archive .tangrow-workbench-picker-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+}
+.tangrow-sidebar .tangrow-project-toolbar select { min-inline-size: 0; max-inline-size: 100%; }
+.tangrow-sidebar .tangrow-project-group-heading { margin-block: var(--size-4-2); }
+.tangrow-sidebar .tangrow-project-reference-title {
+  margin: var(--size-4-2) 0;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+.tangrow-sidebar .tangrow-project-archive,
+.tangrow-sidebar .tangrow-workbench-picker {
+  min-inline-size: 0;
+  padding: var(--size-4-2);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  overflow-wrap: anywhere;
+}
+.tangrow-sidebar .tangrow-workbench-picker-search { inline-size: 100%; }
+.tangrow-sidebar .tangrow-workbench-picker-results {
+  max-block-size: 14rem;
+  margin-block: var(--size-4-2);
+  padding-inline: var(--size-4-1);
+  overflow-y: auto;
+}
+.tangrow-sidebar .tangrow-workbench-picker-group > strong {
+  display: block;
+  margin-block: var(--size-4-1);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+.tangrow-sidebar .tangrow-workbench-picker-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--size-4-2);
+  padding: var(--size-4-1);
+  border-radius: var(--radius-s);
+  cursor: pointer;
+}
+.tangrow-sidebar .tangrow-workbench-picker-row:hover { background: var(--background-modifier-hover); }
+.tangrow-sidebar .tangrow-workbench-picker-row:has(input:checked) { background: var(--background-modifier-active-hover); }
+.tangrow-sidebar .tangrow-workbench-picker-row input { margin: 0; }
+.tangrow-sidebar .tangrow-workbench-picker-detail {
+  display: block;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}

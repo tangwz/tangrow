@@ -320,7 +320,7 @@ test('the capture task form submits an optional project link only when selected'
     action.value = 'task';
     action.dispatchEvent(new Event('change'));
     assert.equal(picker.parentElement?.hidden, false);
-    assert.equal(picker.parentElement?.querySelector('label')?.textContent, 'Project link (optional)');
+    assert.equal(picker.parentElement?.querySelector('label')?.textContent, 'Project or area link (optional)');
     picker.value = project;
     picker.dispatchEvent(new Event('change'));
     form.dispatchEvent(new Event('submit', { cancelable: true }));
@@ -330,6 +330,51 @@ test('the capture task form submits an optional project link only when selected'
     { action: 'task', title: 'Source' },
     { action: 'task', title: 'Source', projectPath }
   ]);
+});
+
+test('filing search shows grouped PARA entries and submits the selected destination', async () => {
+  const service = host();
+  const area = service.app.vault.seedFolder('30-Area/Health');
+  service.app.vault.seedFolder('40-Resources/Systems');
+  service.app.vault.seedFile('20-Project/Launch/Launch.md', '# Launch');
+  const requests: CaptureRequest[] = [];
+  service.processCapture = async (_path, request) => { requests.push(request); return null; };
+  const dialog = openDialog(service);
+  const form = dialog.contentEl.querySelector('form')!;
+  const [, picker] = form.querySelectorAll('select') as [Element, Element];
+  const search = form.querySelector('.tangrow-capture-destination-search')!;
+  assert.deepEqual(picker.querySelectorAll('optgroup').map((group) => group.getAttribute('label')), ['Projects', 'Areas', 'Resources']);
+  search.value = 'hEaLtH';
+  search.dispatchEvent(new Event('input'));
+  assert.deepEqual(picker.querySelectorAll('optgroup').map((group) => group.getAttribute('label')), ['Areas']);
+  assert.deepEqual(picker.querySelectorAll('option').map((option) => option.textContent), ['Keep in the inbox', area.path]);
+  picker.value = `area:${area.path}`;
+  picker.dispatchEvent(new Event('change'));
+  assert.equal(form.querySelector('.tangrow-destination')?.textContent, `Destination: ${area.path}`);
+  form.dispatchEvent(new Event('submit', { cancelable: true }));
+  await flush();
+  assert.deepEqual(requests, [{ action: 'note', title: 'Source', destination: { kind: 'area', path: area.path } }]);
+});
+
+test('task linking offers area notes and omits empty area folders and resources', async () => {
+  const service = host();
+  const note = service.app.vault.seedFile('30-Area/Health/README.md', '# Health');
+  service.app.vault.seedFolder('30-Area/Empty');
+  service.app.vault.seedFile('40-Resources/Reference.md', '# Resources');
+  const requests: CaptureRequest[] = [];
+  service.processCapture = async (_path, request) => { requests.push(request); return null; };
+  const dialog = openDialog(service);
+  const form = dialog.contentEl.querySelector('form')!;
+  const [action, picker] = form.querySelectorAll('select') as [Element, Element];
+  action.value = 'task';
+  action.dispatchEvent(new Event('change'));
+  assert.deepEqual(picker.querySelectorAll('option').map((option) => option.textContent), ['No link', '30-Area/Health']);
+  picker.value = 'area:30-Area/Health';
+  picker.dispatchEvent(new Event('change'));
+  assert.match(form.querySelector('.tangrow-destination')?.textContent ?? '', /Link: 30-Area\/Health\/README\.md/);
+  form.dispatchEvent(new Event('submit', { cancelable: true }));
+  await flush();
+  assert.deepEqual(requests, [{ action: 'task', title: 'Source', areaPath: note.path }]);
 });
 
 test('distilling hands off to the source-aware card editor without submitting capture processing', async () => {
