@@ -4,7 +4,7 @@
 
 [v4 交互原型](../output/design/zettelkasten-v4.html) 可直接打开[创作](../output/design/zettelkasten-v4.html?scenario=compose#prototype)、[AI](../output/design/zettelkasten-v4.html?scenario=ai#prototype)、[今天主页](../output/design/zettelkasten-v4.html?scenario=today#prototype)、[报表总览](../output/design/zettelkasten-v4.html?scenario=overview#prototype)或[卡片明细](../output/design/zettelkasten-v4.html?scenario=report#prototype)。演示日期固定为 2026-11-17，便于核对日期窗口与回顾队列。[v3](../output/design/zettelkasten-v3.html) 与 [v2](../output/design/zettelkasten-v2.html) 保留为历史参考。
 
-本方案基于 [原始卡片笔记方案](/Users/tangwz/.gemini/antigravity/brain/1e98a032-e226-4402-b00e-43fb6535c091/zettelkasten-plan.md)，并对照当前仓库的 [设计边界](DESIGN.md)、[报表定义](REPORTING.md) 与实际代码修订。[v1 UI 草图](../output/design/zettelkasten-v1.html) 保留为历史参考；它与本方案不一致的导航、处理规则和报表结构，以本文为准。术语见 [领域语言](../CONTEXT.md)。
+本方案基于 原始卡片笔记方案（未收入仓库），并对照当前仓库的 [设计边界](DESIGN.md)、[报表定义](REPORTING.md) 与实际代码修订。[v1 UI 草图](../output/design/zettelkasten-v1.html) 保留为历史参考；它与本方案不一致的导航、处理规则和报表结构，以本文为准。术语见 [领域语言](../CONTEXT.md)。
 
 ## 1. 结论与范围
 
