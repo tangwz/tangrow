@@ -270,7 +270,12 @@ test('the welcome guide can be rerun from settings and completes the four steps'
   assert.equal(bases.checked, true);
   bases.checked = false;
   await bases.onchange?.();
+  const next = wizard?.contentEl.descendants().find((element) => element.textContent === 'Create 5 missing folders');
+  assert.ok(next);
+  let actionScrolledIntoView = false;
+  next.scrollIntoView = () => { actionScrolledIntoView = true; };
   await click('Create 5 missing folders');
+  assert.equal(actionScrolledIntoView, true);
   assert.equal(plugin.settings.projectFolder, '1. 项目');
   assert.equal(original.content, '# Original\n');
   assert.deepEqual(app.vault.createdPaths, ['00-Inbox', '30-Area', '40-Resources', '90-Archive', '50-Zettel']);

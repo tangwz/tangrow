@@ -42,12 +42,17 @@ export class DraftComposition {
   private readonly end: number;
   private readonly direction: DraftControl['selectionDirection'];
   private readonly scrollTop: number;
+  private readonly pointerDocument?: Document;
   private escaped = false;
   private focusState: 'uninterrupted' | 'blurred' | 'refocused' = 'uninterrupted';
   private confirmationKey?: string;
   private explicitCommit = false;
   private onSettled?: (confirmed: boolean) => void;
   private awaitingRelease = false;
+  private pointerDownOutside = false;
+  private readonly onPointerDown = (event: PointerEvent) => {
+    this.pointerDownOutside = !event.composedPath().includes(this.control);
+  };
   private readonly onBlur = () => {
     this.focusState = 'blurred';
     this.confirmationKey = undefined;
@@ -68,9 +73,9 @@ export class DraftComposition {
     this.flush();
   };
   private readonly onInput = (event: Event) => {
-    // WebKit also reports a commit forced by focus loss as insertFromComposition, before the blur arrives. Without an
-    // earlier focus loss the grace period decides, so only a candidate picked after returning counts as explicit.
-    if ((event as InputEvent).inputType !== 'insertFromComposition' || this.focusState !== 'refocused') return;
+    // WebKit can report a focus-loss commit as insertFromComposition, even after an outside tap briefly refocuses the field.
+    // Only a candidate picked after intentionally returning counts as explicit. Otherwise the grace period decides.
+    if ((event as InputEvent).inputType !== 'insertFromComposition' || this.focusState !== 'refocused' || this.pointerDownOutside) return;
     this.explicitCommit = true;
     this.flush();
   };
@@ -93,6 +98,10 @@ export class DraftComposition {
     control.addEventListener('beforeinput', this.onBeforeInput);
     control.addEventListener('keyup', this.onKeyUp);
     control.addEventListener('input', this.onInput);
+    if (Platform.isIosApp) {
+      this.pointerDocument = control.ownerDocument;
+      this.pointerDocument.addEventListener('pointerdown', this.onPointerDown, true);
+    }
   }
 
   keyDown(event: KeyboardEvent): void {
@@ -195,5 +204,6 @@ export class DraftComposition {
     this.control.removeEventListener('beforeinput', this.onBeforeInput);
     this.control.removeEventListener('keyup', this.onKeyUp);
     this.control.removeEventListener('input', this.onInput);
+    this.pointerDocument?.removeEventListener('pointerdown', this.onPointerDown, true);
   }
 }

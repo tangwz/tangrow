@@ -3068,6 +3068,65 @@ async function compositionFields(plugin: TestPlugin) {
   return { fields, close: async () => { panel.destroy(); await studio.onClose(); } };
 }
 
+test('iOS outside taps do not confirm preedit when WebKit briefly refocuses the editor', async t => {
+  t.mock.method(harness.compositionTiming, 'later', nativeCompositionTiming);
+  const desktop = harness.Platform.isDesktopApp;
+  const ios = Object.getOwnPropertyDescriptor(harness.Platform, 'isIosApp');
+  Object.assign(harness.Platform, { isDesktopApp: false, isIosApp: true });
+  t.after(() => {
+    harness.Platform.isDesktopApp = desktop;
+    if (ios) Object.defineProperty(harness.Platform, 'isIosApp', ios);
+    else Reflect.deleteProperty(harness.Platform, 'isIosApp');
+  });
+  await withWindow(async timers => {
+    const { plugin } = createPlugin();
+    const { fields, close } = await compositionFields(plugin);
+    const outside = new EventTarget();
+    try {
+      for (const [field, control, shared] of fields) {
+        await t.test(field, () => {
+          const pointerDown = (target: EventTarget) => control.ownerDocument.dispatchEvent(Object.assign(new Event('pointerdown'), {
+            composedPath: () => [target, control.ownerDocument]
+          }));
+          const replaceComposition = (inputType: string, data: string | null) => {
+            const event = { inputType, data };
+            control.dispatchEvent(Object.assign(new Event('beforeinput'), event));
+            control.value = 'Original' + (data ?? '');
+            control.dispatchEvent(Object.assign(new Event('input'), event));
+          };
+
+          for (const confirmation of ['outside tap', 'inside tap', 'keyboard'] as const) {
+            control.value = 'Original';
+            control.dispatchEvent(new Event('input'));
+            control.setSelectionRange(control.value.length, control.value.length);
+            control.dispatchEvent(new Event('compositionstart'));
+            control.value += 'n';
+            control.dispatchEvent(Object.assign(new Event('input'), { inputType: 'insertCompositionText', isComposing: true }));
+            pointerDown(outside);
+            control.dispatchEvent(new Event('blur'));
+            if (confirmation === 'inside tap') pointerDown(control);
+            control.dispatchEvent(new Event('focus'));
+            if (confirmation === 'keyboard') {
+              control.dispatchEvent(Object.assign(new Event('keydown'), { key: 'Process', code: 'Space', isComposing: true }));
+            }
+            const text = confirmation === 'outside tap' ? 'n' : '\u4f60';
+            replaceComposition('deleteCompositionText', null);
+            replaceComposition('insertFromComposition', text);
+            control.dispatchEvent(Object.assign(new Event('compositionend'), { data: text }));
+            if (confirmation === 'keyboard') {
+              control.dispatchEvent(Object.assign(new Event('keyup'), { key: ' ', code: 'Space', isComposing: false }));
+            }
+            control.dispatchEvent(new Event('blur'));
+            timers.flush();
+            const expected = confirmation === 'outside tap' ? 'Original' : 'Original' + text;
+            assert.deepEqual([control.value, shared()], [expected, expected], confirmation);
+          }
+        });
+      }
+    } finally { await close(); }
+  });
+});
+
 function composeAndLoseFocus(control: StudioElement, timers: { flush(): void }) {
   control.setSelectionRange(control.value.length, control.value.length);
   control.dispatchEvent(new Event('compositionstart'));

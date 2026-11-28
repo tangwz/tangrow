@@ -299,6 +299,7 @@ export class OnboardingModal extends Modal {
     if (missing) {
       this.fields?.refresh();
       this.showStatus(this.t('Your vault folders are ready.'));
+      this.next?.scrollIntoView({ block: 'nearest' });
     } else this.move(3);
   }
 
