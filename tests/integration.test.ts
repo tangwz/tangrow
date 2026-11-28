@@ -1800,12 +1800,26 @@ test('the welcome guide runs once per vault and completion opens Captures', asyn
 
     const landings: string[] = [];
     const sidebar = new harness.TangrowSidebar({}, plugin);
+    const leaf = { view: sidebar };
     Object.assign(sidebar, { showSection: (entry: string) => landings.push(entry) });
+    const setting = {
+      close() {
+        assert.equal(this, setting);
+        assert.equal((plugin.savedData as { onboardingCompleted: boolean }).onboardingCompleted, true);
+        landings.push('settings closed');
+      }
+    };
+    Object.assign(app, { setting });
     Object.assign(app.workspace, {
       ensureSideLeaf: async (_viewType: string, side: string, { active }: { active: boolean }) => {
         assert.equal(side, 'right');
-        assert.equal(active, true);
-        return { view: sidebar };
+        assert.equal(active, false);
+        return leaf;
+      },
+      setActiveLeaf: (activeLeaf: unknown, options: unknown) => {
+        assert.equal(activeLeaf, leaf);
+        assert.deepEqual(options, { focus: true });
+        landings.push('captures focused');
       }
     });
     plugin.saveFailures = 1;
@@ -1813,7 +1827,7 @@ test('the welcome guide runs once per vault and completion opens Captures', asyn
     assert.equal((plugin.savedData as { onboardingCompleted: boolean }).onboardingCompleted, false);
     assert.deepEqual(landings, []);
     await plugin.finishOnboarding();
-    assert.deepEqual(landings, ['captures']);
+    assert.deepEqual(landings, ['captures', 'settings closed', 'captures focused']);
     assert.equal((plugin.savedData as { onboardingCompleted: boolean }).onboardingCompleted, true);
 
     const nextApp = harness.createMockApp();
@@ -3434,6 +3448,42 @@ test('distilling a capture opens an editable card with its required source link 
     assert.deepEqual(app.vault.createdPaths, [plugin.settings.cardFolder, cardPath]);
     assert.deepEqual(app.vault.processedPaths, []);
   });
+});
+
+test('distilling a capture under its original title qualifies the source when Obsidian prefers short links', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    const sourceText = '---\ntangrow_kind: "capture"\n---\n\n# Capture\n\nCaptured idea.\n';
+    const source = app.vault.seedFile('00-Inbox/Capture.md', sourceText);
+    app.metadataCache.fileToLinktext = (file) => file.basename;
+    let dialog: ReturnType<typeof openQuickAdd> | undefined;
+    Object.assign(plugin, { openQuickAdd: (kind: QuickKind, text: string, cardSource: CardSource) => {
+      dialog = openQuickAdd(plugin, kind, text, cardSource);
+    } });
+
+    assert.equal(await plugin.openCardFromCapture(source.path), true);
+    assert.ok(dialog);
+    assert.equal(dialog.editor.value, 'Capture\n\nCaptured idea.\n');
+    await dialog.modal.save();
+
+    const card = app.vault.getAbstractFileByPath(`${plugin.settings.cardFolder}/Capture.md`);
+    assert.ok(card instanceof harness.TFile);
+    assert.deepEqual(app.metadataCache.getFileCache(card).frontmatter?.tangrow_sources, ['[[00-Inbox/Capture]]']);
+    assert.equal(source.content, sourceText);
+  });
+});
+
+test('a same-title card preserves its source at the vault root with an explicit relative link', async () => {
+  const { plugin, app } = createPlugin();
+  plugin.settings.cardFolder = 'Knowledge/Cards';
+  const source = app.vault.seedFile('Capture.md', '---\ntangrow_kind: "capture"\n---\n\nCaptured idea.\n');
+  app.metadataCache.fileToLinktext = (file) => file.basename;
+
+  await plugin.createCard('Capture', 'Captured idea.', { path: source.path, captureFile: source as unknown as CardSource['captureFile'] });
+
+  const card = app.vault.getAbstractFileByPath('Knowledge/Cards/Capture.md');
+  assert.ok(card instanceof harness.TFile);
+  assert.deepEqual(app.metadataCache.getFileCache(card).frontmatter?.tangrow_sources, ['[[../../Capture]]']);
 });
 
 test('capture derivation can be canceled and rejects a reclassified or replaced source', async () => {

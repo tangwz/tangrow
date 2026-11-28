@@ -12,7 +12,7 @@ import { vaultPathKind } from './settings/vault-structure';
 import { randomBytes } from './license/format';
 import { focusMinutes, pauseSession, remainingMs, resumeSession, startSession } from './focus';
 import { dayKey, inFolder, readSession, readSettings, recentDays, safeFolder, safeTitle, streak } from './model';
-import { openActivationSettings, openNativeSettings, revealInFileList, runNativeCommand } from './compat';
+import { closeNativeSettings, openActivationSettings, openNativeSettings, revealInFileList, runNativeCommand } from './compat';
 import { TangrowSidebar, VIEW_TYPE } from './sidebar';
 import { TangrowReport, REPORT_VIEW_TYPE } from './report';
 import { TangrowCapture, CAPTURE_VIEW_TYPE, openCaptureWindow as revealCaptureWindow } from './capture-window';
@@ -470,15 +470,21 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     modal.open();
   }
   async finishOnboarding(): Promise<void> {
+    const modal = this.onboardingModal;
     await this.exclusive(async () => {
       if (!this.alive || this.onboardingCompleted) return;
       this.onboardingCompleted = true;
       try { await this.persist(); }
       catch (error) { this.onboardingCompleted = false; throw error; }
     });
-    if (!this.alive) return;
-    const leaf = await this.app.workspace.ensureSideLeaf(VIEW_TYPE, 'right', { active: true });
-    if (this.alive && leaf.view instanceof TangrowSidebar) leaf.view.showSection('captures');
+    if (!this.alive || this.onboardingModal !== modal) return;
+    const leaf = await this.app.workspace.ensureSideLeaf(VIEW_TYPE, 'right', { active: false });
+    if (!this.alive || this.onboardingModal !== modal) return;
+    if (leaf.view instanceof TangrowSidebar) leaf.view.showSection('captures');
+    // The first-run guide can be hosted in Obsidian's separate Settings window.
+    modal?.close();
+    closeNativeSettings(this.app);
+    this.app.workspace.setActiveLeaf(leaf, { focus: true });
   }
   async openAssistant(): Promise<void> {
     const leaf = await this.app.workspace.ensureSideLeaf(VIEW_TYPE, 'right', { active: true });
@@ -1191,7 +1197,14 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
         const file = source.captureFile ? this.captureFile(source.path) : this.app.vault.getAbstractFileByPath(source.path);
         if (source.captureFile && file !== source.captureFile) throw new Error('This capture no longer exists.');
         if (!(file instanceof TFile) || file.extension !== 'md') throw new Error('The card source no longer exists.');
-        fields.tangrow_sources = [this.propertyLink(file, path, source.anchor)];
+        const cardBasename = path.slice(folder.length + 1, -3);
+        if (file.basename.normalize('NFC').toLowerCase() === cardBasename.normalize('NFC').toLowerCase()) {
+          // Obsidian may return a bare basename because the same-name card does not exist yet.
+          const sourcePath = file.path.includes('/') ? file.path.slice(0, -3) : `${'../'.repeat(folder.split('/').length)}${file.basename}`;
+          fields.tangrow_sources = [`[[${sourcePath}${source.anchor ?? ''}]]`];
+        } else {
+          fields.tangrow_sources = [this.propertyLink(file, path, source.anchor)];
+        }
       }
       body = rebaseMarkdownLinks(body, source.path, path,
         (link, from) => this.app.metadataCache.getFirstLinkpathDest(link, from)?.path ?? null, { sourceLocalAnchors: true });

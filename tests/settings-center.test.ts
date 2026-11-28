@@ -284,8 +284,19 @@ test('the welcome guide can be rerun from settings and completes the four steps'
   capture.value = 'First workshop thought';
   await capture.oninput?.();
   await click('Save');
+  let settingsCloseCalls = 0;
+  Object.assign(app, { setting: { close: () => {
+    assert.equal(Modal.current, null);
+    assert.equal((plugin.savedData as { onboardingCompleted: boolean }).onboardingCompleted, true);
+    settingsCloseCalls += 1;
+  } } });
+  plugin.saveFailures = 1;
+  await click('Done, go process it');
+  assert.equal(Modal.current, wizard);
+  assert.equal(settingsCloseCalls, 0);
   await click('Done, go process it');
   assert.equal(Modal.current, null);
+  assert.equal(settingsCloseCalls, 1);
   assert.equal((plugin.savedData as { onboardingCompleted: boolean }).onboardingCompleted, true);
   const files = app.vault.getMarkdownFiles().filter((file) => file.path.startsWith(`${plugin.settings.inboxFolder}/`));
   assert.equal(files.length, 1);
@@ -319,6 +330,33 @@ test('an unactivated user can skip setup and capture without creating vault cont
   assert.equal((plugin.savedData as { onboardingCompleted: boolean }).onboardingCompleted, true);
   assert.equal(plugin.settings.prepareDailyReview, false);
   assert.deepEqual(app.vault.createdPaths, []);
+  dispose();
+});
+
+test('finishing a dismissed guide leaves a newly opened guide alone', async () => {
+  const { app, navigate, dispose } = fixture();
+  let enter!: () => void;
+  let resume!: () => void;
+  const entered = new Promise<void>((resolve) => { enter = resolve; });
+  const ready = new Promise<void>((resolve) => { resume = resolve; });
+  Object.assign(app.workspace, { ensureSideLeaf: async () => {
+    enter();
+    await ready;
+    return { view: {} };
+  } });
+  navigate('Welcome guide');
+  const first = Modal.current!;
+  const skip = first.contentEl.descendants().find((element) => element.textContent === 'Skip the guide')!;
+  const finish = skip.onclick!();
+  await entered;
+  first.close();
+  navigate('Welcome guide');
+  const second = Modal.current;
+  assert.ok(second && second !== first);
+  resume();
+  await finish;
+  assert.equal(Modal.current, second);
+  second.close();
   dispose();
 });
 

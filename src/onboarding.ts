@@ -303,10 +303,7 @@ export class OnboardingModal extends Modal {
   }
 
   private async finish(): Promise<void> {
-    await this.run(async () => {
-      await this.host.finishOnboarding();
-      if (!this.closed) this.close();
-    });
+    await this.run(() => this.host.finishOnboarding());
   }
 
   private async run(operation: () => Promise<void>): Promise<void> {
