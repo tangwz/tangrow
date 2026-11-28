@@ -192,7 +192,7 @@ function fixture(language: 'en' | 'zh-CN' = 'en') {
 test('every existing preference and maintenance action renders once in its assigned section', () => {
   const { root, navigate, byText, dispose } = fixture();
   const rendered: string[] = [];
-  for (const section of SECTION_IDS) {
+  for (const section of SECTION_IDS.filter((id) => id !== 'welcome')) {
     navigate(SECTIONS[section].name);
     const ids = root.descendants().flatMap((element) => element.dataset.settingId ?? []);
     assert.deepEqual(ids.sort(), ITEMS.filter((item) => item.section === section).map((item) => item.id).sort());
@@ -243,6 +243,82 @@ test('settings entries show current PARA and suggestion summaries', async () => 
   await plugin.updateAiSettings({ aiEnabled: true });
   assert.ok(byText('PARA 1/5'));
   assert.ok(byText('Suggestions on'));
+  dispose();
+});
+
+test('the welcome guide can be rerun from settings and completes the four steps', async () => {
+  const { app, plugin, navigate, dispose } = fixture();
+  const original = app.vault.seedFile('1. 项目/Original.md', '# Original\n');
+  const click = async (label: string) => {
+    const button = Modal.current?.contentEl.descendants().find((element) => element.tagName === 'BUTTON' && element.textContent === label);
+    assert.ok(button?.onclick, label);
+    await button.onclick();
+  };
+  const control = (label: string) => {
+    const element = Modal.current?.contentEl.descendants().find((element) => element.attributes['aria-label'] === label);
+    assert.ok(element, label);
+    return element;
+  };
+  navigate('Welcome guide');
+  const wizard = Modal.current;
+  assert.equal(wizard?.title, 'Welcome guide');
+  navigate('Welcome guide');
+  assert.equal(Modal.current, wizard);
+  await click('Get started');
+  const bases = control('Also create Bases');
+  assert.equal(bases.checked, true);
+  bases.checked = false;
+  await bases.onchange?.();
+  await click('Create 5 missing folders');
+  assert.equal(plugin.settings.projectFolder, '1. 项目');
+  assert.equal(original.content, '# Original\n');
+  assert.deepEqual(app.vault.createdPaths, ['00-Inbox', '30-Area', '40-Resources', '90-Archive', '50-Zettel']);
+  await click('Next');
+  const review = control('Prepare daily review');
+  assert.equal(review.checked, false);
+  review.checked = true;
+  await review.onchange?.();
+  assert.equal(plugin.settings.prepareDailyReview, true);
+  await click('Next');
+  const capture = control('Capture your first thought');
+  capture.value = 'First workshop thought';
+  await capture.oninput?.();
+  await click('Save');
+  await click('Done, go process it');
+  assert.equal(Modal.current, null);
+  assert.equal((plugin.savedData as { onboardingCompleted: boolean }).onboardingCompleted, true);
+  const files = app.vault.getMarkdownFiles().filter((file) => file.path.startsWith(`${plugin.settings.inboxFolder}/`));
+  assert.equal(files.length, 1);
+  assert.match(files[0]!.content, /First workshop thought/);
+
+  navigate('Welcome guide');
+  assert.notEqual(Modal.current, wizard);
+  await click('Skip the guide');
+  assert.equal(Modal.current, null);
+  assert.equal(app.vault.getMarkdownFiles().length, 2);
+  dispose();
+});
+
+test('an unactivated user can skip setup and capture without creating vault content', async () => {
+  const { access, app, plugin, navigate, dispose } = fixture();
+  access.change('not_started');
+  navigate('Welcome guide');
+  const button = (label: string) => {
+    const control = Modal.current?.contentEl.descendants().find((element) => element.tagName === 'BUTTON' && element.textContent === label);
+    assert.ok(control?.onclick, label);
+    return control;
+  };
+  await button('Get started').onclick?.();
+  assert.ok(button('Create 6 missing folders').disabled);
+  assert.equal(button('Start 24-hour trial').hidden, false);
+  await button('Not now').onclick?.();
+  await button('Next').onclick?.();
+  assert.ok(button('Save').disabled);
+  await button('Later, finish').onclick?.();
+  assert.equal(Modal.current, null);
+  assert.equal((plugin.savedData as { onboardingCompleted: boolean }).onboardingCompleted, true);
+  assert.equal(plugin.settings.prepareDailyReview, false);
+  assert.deepEqual(app.vault.createdPaths, []);
   dispose();
 });
 

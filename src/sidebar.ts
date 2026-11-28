@@ -138,7 +138,10 @@ export class TangrowSidebar extends ItemView {
 
   /** Opens a workspace from a command or menu item. */
   showSection(entry: WorkbenchEntry): void {
-    if (this.gate?.locked) return;
+    if (this.gate?.locked) {
+      if (entry === 'captures') this.section = 'captures';
+      return;
+    }
     const destination = workbenchDestination(entry);
     if (destination.tab === 'projects') {
       if (destination.page) this.showProjectTab(destination.page);

@@ -47,7 +47,7 @@ export interface RenderedSection {
   dispose(): void;
 }
 
-export function renderSection(container: HTMLElement, id: Exclude<SectionId, 'activation'>, plugin: TangrowPlugin, refresh: () => void): RenderedSection {
+export function renderSection(container: HTMLElement, id: Exclude<SectionId, 'activation' | 'welcome'>, plugin: TangrowPlugin, refresh: () => void): RenderedSection {
   const t = plugin.t.bind(plugin);
   const rows = settingRows(plugin, id);
   const pending: (() => void)[] = [];

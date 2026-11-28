@@ -5,7 +5,9 @@ import { Access, LICENSE_KEYS, LICENSE_ENDPOINT } from './access';
 import { OWNER_BUILD } from './build-flags';
 import { accessCoordination } from './access-coordination';
 import { TangrowSettings } from './settings/tab';
-import { validateVaultStructure, VAULT_STRUCTURE_KEYS, type VaultStructurePatch } from './settings/vault-structure-data';
+import { OnboardingModal } from './onboarding';
+import { validateVaultStructure, VAULT_STRUCTURE_KEYS, type VaultStructurePatch, type VaultStructureValues } from './settings/vault-structure-data';
+import { ONBOARDING_FOLDER_KEYS, planOnboardingVault, suggestOnboardingVault } from './settings/onboarding-vault';
 import { vaultPathKind } from './settings/vault-structure';
 import { randomBytes } from './license/format';
 import { focusMinutes, pauseSession, remainingMs, resumeSession, startSession } from './focus';
@@ -49,7 +51,7 @@ import { DEFAULT_SETTINGS, type CaptureRequest, type CardSource, type ComposerSt
 
 const dateTime = moment as unknown as (input?: number | string | Date) => { format(pattern: string): string };
 
-interface SavedData { version: number; settings: Settings; focus: FocusSession | null; scratch: string; composer: ComposerState; submissions: DraftSubmissions; recoveryDrafts: StoredRecoveryDraft[]; recentOpened: string[]; activity: EditingActivityState; cardReviews: CardReviewQueue[] }
+interface SavedData { version: number; settings: Settings; onboardingCompleted: boolean; focus: FocusSession | null; scratch: string; composer: ComposerState; submissions: DraftSubmissions; recoveryDrafts: StoredRecoveryDraft[]; recentOpened: string[]; activity: EditingActivityState; cardReviews: CardReviewQueue[] }
 interface PersistenceCoordinator { owner?: symbol; tail: Promise<void> }
 type WorkbenchCards = Awaited<ReturnType<SidebarHost['loadWorkbenchCards']>>;
 const PERSISTENCE_COORDINATOR = Symbol.for('tangrow.persistence-coordinator');
@@ -119,6 +121,8 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   private taskReads = new Set<string>();
   private alive = true;
   private dataLoaded = false;
+  private onboardingCompleted = false;
+  private onboardingModal?: OnboardingModal;
   private commandsRegistered = false;
   private ribbon: HTMLElement | null = null;
   private readonly reportSource = new ReportSource(this.app, resolveSubpath);
@@ -148,6 +152,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     coordinator.owner = this.persistenceOwner;
     this.persistenceClaimed = true;
     this.settings = readSettings(stored?.settings);
+    this.onboardingCompleted = stored?.onboardingCompleted === true;
     if (Array.isArray(stored?.cardReviews)) {
       for (const entry of stored.cardReviews) {
         const queue = readCardReviewQueue(entry);
@@ -210,10 +215,6 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     this.registerView(VIEW_TYPE, (leaf: WorkspaceLeaf) => new TangrowSidebar(leaf, this));
     this.registerView(REPORT_VIEW_TYPE, (leaf: WorkspaceLeaf) => new TangrowReport(leaf, this));
     this.registerView(CAPTURE_VIEW_TYPE, (leaf: WorkspaceLeaf) => new TangrowCapture(leaf, this));
-    if (!stored?.settings?.language && this.settings.language === 'zh-CN') {
-      await this.localizeManagedFiles('en');
-      await this.persist();
-    }
     if (stored?.version !== 5 || !hasHistory || JSON.stringify(stored.recentOpened) !== JSON.stringify(this.recentOpened)) {
       try { await this.persist(); } catch (error) { new Notice(this.error(error)); }
     }
@@ -291,11 +292,15 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       if (!this.alive) return;
       this.bindNoteImmersionAction();
       this.applyWidths();
-      if (this.settings.autoOpen) void this.openSidebar().catch((error) => new Notice(this.error(error)));
+      if (!this.onboardingCompleted) this.openOnboarding(true);
+      else if (this.settings.autoOpen) void this.openSidebar().catch((error) => new Notice(this.error(error)));
     });
   }
 
   onunload(): void {
+    const onboarding = this.onboardingModal;
+    this.onboardingModal = undefined;
+    onboarding?.close();
     this.access?.refresh();
     for (const modal of this.quickAdds) modal.close();
     for (const modal of this.notePrompts) modal.close();
@@ -422,7 +427,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     return updated;
   }
 
-  async setLanguage(language: Locale): Promise<void> {
+  async setLanguage(language: Locale, options?: { localizeManagedFiles?: boolean }): Promise<void> {
     if (language !== 'zh-CN' && language !== 'en') throw new Error('Unsupported language.');
     await this.exclusive(async () => {
       const previous = this.settings.language;
@@ -430,7 +435,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       this.settings.language = language;
       try { await this.persist(); } catch (error) { this.settings.language = previous; this.notifyAfterRollback(); throw error; }
       if (!this.alive) return;
-      try { await this.localizeManagedFiles(previous); }
+      try { if (options?.localizeManagedFiles !== false) await this.localizeManagedFiles(previous); }
       finally {
         if (this.alive) {
           if (this.commandsRegistered) this.registerCommands();
@@ -452,6 +457,29 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   }
 
   async openSidebar(): Promise<void> { await this.app.workspace.ensureSideLeaf(VIEW_TYPE, 'right', { active: false }); }
+  openOnboarding(onStartup = false): void {
+    if (!this.alive || this.onboardingModal) return;
+    const modal = new OnboardingModal(this, () => {
+      if (this.onboardingModal !== modal) return;
+      this.onboardingModal = undefined;
+      if (onStartup && !this.onboardingCompleted && this.settings.autoOpen) {
+        void this.openSidebar().catch((error) => new Notice(this.error(error)));
+      }
+    });
+    this.onboardingModal = modal;
+    modal.open();
+  }
+  async finishOnboarding(): Promise<void> {
+    await this.exclusive(async () => {
+      if (!this.alive || this.onboardingCompleted) return;
+      this.onboardingCompleted = true;
+      try { await this.persist(); }
+      catch (error) { this.onboardingCompleted = false; throw error; }
+    });
+    if (!this.alive) return;
+    const leaf = await this.app.workspace.ensureSideLeaf(VIEW_TYPE, 'right', { active: true });
+    if (this.alive && leaf.view instanceof TangrowSidebar) leaf.view.showSection('captures');
+  }
   async openAssistant(): Promise<void> {
     const leaf = await this.app.workspace.ensureSideLeaf(VIEW_TYPE, 'right', { active: true });
     if (leaf.view instanceof TangrowSidebar) leaf.view.showSection('ai');
@@ -639,7 +667,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     return app[PERSISTENCE_COORDINATOR] ??= { tail: Promise.resolve() };
   }
   private persistenceSnapshot(): SavedData {
-    return structuredClone({ version: 5, settings: this.settings, focus: this.focus, scratch: this.scratch, composer: this.composer, submissions: this.submissions, recoveryDrafts: [...this.recoveryDrafts.values()], recentOpened: this.recentOpened, activity: this.editingActivity, cardReviews: [...this.cardReviews.values()] });
+    return structuredClone({ version: 5, settings: this.settings, onboardingCompleted: this.onboardingCompleted, focus: this.focus, scratch: this.scratch, composer: this.composer, submissions: this.submissions, recoveryDrafts: [...this.recoveryDrafts.values()], recentOpened: this.recentOpened, activity: this.editingActivity, cardReviews: [...this.cardReviews.values()] });
   }
   private persist(finalFlush = false): Promise<void> {
     if (!this.alive && !finalFlush) return Promise.resolve();
@@ -905,6 +933,25 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       try { await this.persist(); }
       catch (error) { this.settings = previous; this.notifyAfterRollback(); throw error; }
       this.notify();
+    });
+  }
+  onboardingVaultStructure(): VaultStructureValues {
+    return suggestOnboardingVault(this.settings, this.app.vault.getAllFolders().map((folder) => folder.path));
+  }
+  async setupOnboardingVault(patch: VaultStructurePatch, createBases: boolean): Promise<void> {
+    const requested = { ...patch };
+    await this.exclusive(async () => {
+      if (!this.requireAccess()) throw new Error('Activate Tangrow to use this feature.');
+      const previous = this.settings;
+      const { settings, folders } = planOnboardingVault(previous, requested, (path) => vaultPathKind(this.app, path), createBases);
+      for (const folder of folders) await this.ensureFolder(folder);
+      if (ONBOARDING_FOLDER_KEYS.some((key) => settings[key] !== previous[key])) {
+        this.settings = settings;
+        try { await this.persist(); }
+        catch (error) { this.settings = previous; this.notifyAfterRollback(); throw error; }
+      }
+      try { if (createBases) await this.createMissingBases(settings); }
+      finally { this.notify(); }
     });
   }
   async migrateCompanionFolder(): Promise<void> {
@@ -1199,7 +1246,8 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       title = safeTitle(title);
       let path = `${folder}/${title}.md`;
       let suffix = 2;
-      while (this.app.vault.getAbstractFileByPath(path)) path = `${folder}/${title} (${suffix++}).md`;
+      const reservedCapture = kind === 'capture' && submission !== this.submissions.capture ? this.submissions.capture?.path : null;
+      while (path === reservedCapture || this.app.vault.getAbstractFileByPath(path)) path = `${folder}/${title} (${suffix++}).md`;
       if (kind === 'draft' && projectPath) {
         const project = this.workbenchProjectNote(projectPath);
         submission.project = { path: safeFolder(projectPath), notePath: safeFolder(project.path) };
@@ -1241,19 +1289,22 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     await this.exclusive(async () => {
       validateFolderSettings(this.settings);
       await this.ensureFolder(this.settings.supportFolder);
-      const definitions = baseDefinitions(this.settings);
-      let created = 0;
-      for (const definition of definitions) {
-        const path = `${this.settings.supportFolder}/${definition.filename}`;
-        if (this.app.vault.getAbstractFileByPath(path)) continue;
-        await this.app.vault.create(path, definition.content);
-        created++;
-      }
-      const readmePath = `${this.settings.supportFolder}/README.md`;
-      if (!this.app.vault.getAbstractFileByPath(readmePath)) await this.app.vault.create(readmePath, setupReadme(this.settings));
+      const created = await this.createMissingBases(this.settings);
       this.notify();
       new Notice(this.t('Tangrow: created {count} Bases. Existing files were preserved.', { count: created }));
     });
+  }
+  private async createMissingBases(settings: Settings): Promise<number> {
+    let created = 0;
+    for (const definition of baseDefinitions(settings)) {
+      const path = `${settings.supportFolder}/${definition.filename}`;
+      if (this.app.vault.getAbstractFileByPath(path)) continue;
+      await this.app.vault.create(path, definition.content);
+      created++;
+    }
+    const readmePath = `${settings.supportFolder}/README.md`;
+    if (!this.app.vault.getAbstractFileByPath(readmePath)) await this.app.vault.create(readmePath, setupReadme(settings));
+    return created;
   }
   async openBase(id: BaseId): Promise<void> {
     const definition = baseDefinitions(this.settings).find((item) => item.id === id);
@@ -1682,18 +1733,32 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   }
   async openAiGuide(): Promise<void> { await this.openNote(await this.ensureAiGuide()); }
 
+  private writeCaptureNote(body: string, submission?: DraftSubmission): Promise<TFile> {
+    if (!body) throw new Error('Write something before saving.');
+    const now = dateTime();
+    const title = this.t('Capture {date}', { date: now.format('YYYY-MM-DD HHmmss') });
+    const fields = { tangrow_kind: 'capture', created: now.format('YYYY-MM-DDTHH:mm:ssZ') };
+    return submission ? this.createSubmittedNote(submission, 'capture', title, body, fields) : this.createUnique(this.settings.inboxFolder, title, body, fields);
+  }
+
   async capture(text: string, submission?: DraftSubmission, rescue = false): Promise<void> {
-    if (!(rescue ? text : text.trim())) throw new Error('Write something before saving.');
-    const title = this.t('Capture {date}', { date: dateTime().format('YYYY-MM-DD HHmmss') });
-    await this.exclusive(() => {
-      const fields = { tangrow_kind: 'capture', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') };
-      // Only a rescue keeps surrounding whitespace; ordinary saves match createUnique and trim it.
-      return submission ? this.createSubmittedNote(submission, 'capture', title, rescue ? text : text.trim(), fields) : this.createUnique(this.settings.inboxFolder, title, text, fields);
-    });
+    // Only a rescue keeps surrounding whitespace; ordinary saves match createUnique and trim it.
+    await this.exclusive(() => this.writeCaptureNote(rescue ? text : text.trim(), submission));
     if (!this.alive) return;
     this.notify();
     new Notice(this.t('Captured in your inbox.'));
   }
+
+  async captureOnboardingText(text: string, receipt: DraftSubmission): Promise<string> {
+    const file = await this.exclusive(() => {
+      if (!this.alive) throw new Error('Tangrow could not complete this action.');
+      if (!this.access.canUse()) throw new Error('Activate Tangrow to use this feature.');
+      return this.writeCaptureNote(text.trim(), receipt);
+    });
+    this.notify();
+    return file.path;
+  }
+
   submitCaptureDraft(rescue = false): Promise<void> {
     const source = this.composer.capture;
     if (!(rescue ? source : source.trim())) return Promise.reject(new Error('Write something before saving.'));

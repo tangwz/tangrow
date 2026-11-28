@@ -1,4 +1,5 @@
 import { PluginSettingTab, TFolder, setIcon } from 'obsidian';
+import { closeNativeSettings } from '../compat';
 import type TangrowPlugin from '../main';
 import { renderAccessStatus, renderActivation } from './activation';
 import { GROUPS, SECTION_IDS, SECTIONS, searchSettings, type SectionId, type SettingItem } from './catalog';
@@ -21,7 +22,7 @@ export function focusSetting(container: HTMLElement, id: string): void {
 }
 
 export class TangrowSettings extends PluginSettingTab {
-  private section?: SectionId;
+  private section?: Exclude<SectionId, 'welcome'>;
   private visible = false;
   private unsubscribe?: () => void;
   private unsubscribeHome?: () => void;
@@ -70,6 +71,13 @@ export class TangrowSettings extends PluginSettingTab {
   }
 
   private navigate(section?: SectionId, item?: SettingItem): void {
+    if (section === 'welcome') {
+      if (this.visible) {
+        closeNativeSettings(this.host.app);
+        this.host.openOnboarding();
+      }
+      return;
+    }
     this.section = section;
     if (!this.visible) return;
     const page = this.render();
@@ -167,6 +175,7 @@ export class TangrowSettings extends PluginSettingTab {
     const t = this.host.t.bind(this.host);
     const settings = this.host.settings;
     switch (section) {
+      case 'welcome': return t('Run again');
       case 'defaults': return settings.language === 'en' ? 'English' : t('Simplified Chinese');
       case 'folders': {
         const count = PARA_FOLDER_KEYS.filter((key) => this.host.app.vault.getAbstractFileByPath(settings[key]) instanceof TFolder).length;

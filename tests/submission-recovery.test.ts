@@ -5,11 +5,12 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import type { ComposerState, Settings, WritingDraft } from '../src/types';
-import type { DraftSubmissions } from '../src/draft-submissions';
+import type { DraftSubmission, DraftSubmissions } from '../src/draft-submissions';
 import type { MockApp, Plugin as MockPlugin, createMockApp as MockAppFactory } from './obsidian-mock';
 
 interface TestPlugin extends MockPlugin {
   settings: Settings;
+  access: { canUse(): boolean };
   writes: Promise<void>;
   onload(): Promise<void>;
   onunload(): void;
@@ -18,6 +19,7 @@ interface TestPlugin extends MockPlugin {
   loadWritingDraft(): WritingDraft;
   updateWritingDraft(patch: Partial<Pick<WritingDraft, 'text' | 'title'>>, revision: number): boolean;
   submitCaptureDraft(): Promise<void>;
+  captureOnboardingText(text: string, receipt: DraftSubmission): Promise<string>;
   submitWritingDraft(revision: number): Promise<void>;
   persist(): Promise<void>;
 }
@@ -73,6 +75,72 @@ function restart(plugin: TestPlugin, app: MockApp, moved = false) {
   for (const file of app.vault.getMarkdownFiles()) next.app.vault.seedFile(moved ? `Moved/${file.name}` : file.path, file.content);
   return next;
 }
+
+test('onboarding reuses its capture receipt without taking a shared draft’s reserved path', async (context) => {
+  context.mock.method(Date, 'now', () => new Date(2026, 10, 28, 12).getTime());
+  await withWindow(async () => {
+    const { app, plugin } = createPlugin();
+    plugin.access = { canUse: () => true };
+    edit(plugin, 'capture', 'An existing shared draft.');
+    app.vault.failCreates = 1;
+    await assert.rejects(plugin.submitCaptureDraft(), /vault write failure/);
+    const shared = (plugin.savedData as SavedState).submissions.capture;
+    assert.ok(shared?.path);
+
+    const receipt: DraftSubmission = { id: crypto.randomUUID(), path: null };
+    app.vault.failCreates = 1;
+    await assert.rejects(plugin.captureOnboardingText('First guided capture.', receipt), /vault write failure/);
+    assert.ok(receipt.path);
+    assert.notEqual(receipt.path, shared.path);
+    const create = app.vault.create.bind(app.vault);
+    app.vault.create = async (path, content) => {
+      await create(path, content);
+      throw new Error('Vault reported a failure after the write');
+    };
+    assert.equal(await plugin.captureOnboardingText('First guided capture.', receipt), receipt.path);
+    app.vault.create = create;
+    const file = records(app, 'capture')[0]!;
+    assert.match(file.content, /First guided capture\./);
+    const moved = `Moved/${file.name}`;
+    await app.vault.rename(file, moved);
+    assert.equal(await plugin.captureOnboardingText('First guided capture.', receipt), moved);
+    assert.equal(records(app, 'capture').length, 1);
+    assert.equal(text(plugin, 'capture'), 'An existing shared draft.');
+    assert.deepEqual((plugin.savedData as SavedState).submissions.capture, shared);
+
+    await plugin.submitCaptureDraft();
+    assert.deepEqual(records(app, 'capture').map((entry) => entry.path).sort(), [moved, shared.path].sort());
+    assert.equal(text(plugin, 'capture'), '');
+  });
+});
+
+test('queued onboarding capture checks access when it reaches the write queue', async () => {
+  await withWindow(async () => {
+    const { app, plugin } = createPlugin();
+    let allowed = true;
+    plugin.access = { canUse: () => allowed };
+    let start!: () => void;
+    const started = new Promise<void>((resolve) => { start = resolve; });
+    let finish!: () => void;
+    const finishing = new Promise<void>((resolve) => { finish = resolve; });
+    const create = app.vault.create.bind(app.vault);
+    app.vault.create = async (path, content) => {
+      start();
+      await finishing;
+      return create(path, content);
+    };
+    const inFlight = plugin.captureOnboardingText('Already in progress.', { id: crypto.randomUUID(), path: null });
+    await started;
+    const queued = { id: crypto.randomUUID(), path: null };
+    const denied = assert.rejects(plugin.captureOnboardingText('Wait for the queue.', queued), /Activate Tangrow/);
+    allowed = false;
+    finish();
+    await inFlight;
+    await denied;
+    assert.equal(queued.path, null);
+    assert.equal(records(app, 'capture').length, 1);
+  });
+});
 
 for (const kind of ['capture', 'draft'] as const) {
   test(`${kind}: a failed preparation cannot create Markdown or discard the draft`, async () => {

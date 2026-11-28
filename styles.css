@@ -1462,3 +1462,95 @@ button.tangrow-report-day:hover { outline: 1px solid var(--text-accent); outline
   .tangrow-vault-structure-fields .tangrow-vault-structure-role { grid-template-columns: minmax(0, 1fr) clamp(4.25rem, 22cqw, 7.5rem); }
   .tangrow-vault-structure-fields .tangrow-vault-structure-name { grid-column: 1 / -1; }
 }
+
+.tangrow-onboarding .tangrow-onboarding-progress,
+.tangrow-onboarding .tangrow-onboarding-languages,
+.tangrow-onboarding .tangrow-onboarding-access,
+.tangrow-onboarding .tangrow-onboarding-footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+}
+.tangrow-onboarding .tangrow-onboarding-progress,
+.tangrow-onboarding .tangrow-onboarding-footer { justify-content: space-between; }
+.tangrow-onboarding .tangrow-onboarding-progress { color: var(--text-muted); font-size: var(--font-ui-small); }
+.tangrow-onboarding .tangrow-onboarding-dots { display: flex; gap: var(--size-2-2); }
+.tangrow-onboarding .tangrow-onboarding-dots > span {
+  inline-size: var(--size-4-2);
+  block-size: var(--size-4-2);
+  border-radius: var(--radius-s);
+  background-color: var(--background-modifier-border);
+}
+.tangrow-onboarding .tangrow-onboarding-dots > .is-current { background-color: var(--interactive-accent); }
+.tangrow-onboarding .tangrow-onboarding-loop {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+  list-style: none;
+  padding-inline-start: 0;
+  font-size: var(--font-ui-small);
+}
+.tangrow-onboarding .tangrow-onboarding-loop > li + li::before {
+  content: '→';
+  margin-inline-end: var(--size-4-2);
+  color: var(--text-muted);
+}
+.tangrow-onboarding .tangrow-onboarding-promises {
+  display: grid;
+  gap: var(--size-4-2);
+  padding-inline-start: var(--size-4-5);
+  color: var(--text-muted);
+}
+.tangrow-onboarding .tangrow-onboarding-promises strong {
+  display: block;
+  color: var(--text-normal);
+}
+.tangrow-onboarding .tangrow-onboarding-access {
+  margin-block-start: var(--size-4-3);
+  padding-block-start: var(--size-4-2);
+  border-top: 1px solid var(--background-modifier-border);
+}
+.tangrow-onboarding .tangrow-onboarding-access > p { flex: 1 0 100%; margin: 0; font-size: var(--font-ui-small); }
+.tangrow-onboarding [hidden] { display: none; }
+.tangrow-onboarding .tangrow-onboarding-option {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  column-gap: var(--size-4-2);
+  margin-block-start: var(--size-4-3);
+}
+.tangrow-onboarding .tangrow-onboarding-option > span:first-of-type { flex: 1; }
+.tangrow-onboarding .tangrow-onboarding-review {
+  padding: var(--size-4-3);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+}
+.tangrow-onboarding .tangrow-onboarding-review > label { margin-block-start: 0; }
+.tangrow-onboarding .tangrow-onboarding-review > p { color: var(--text-muted); font-size: var(--font-ui-small); }
+.tangrow-onboarding .tangrow-onboarding-review > p:last-child { margin-block-end: 0; }
+.tangrow-onboarding .tangrow-onboarding-badge {
+  padding: var(--size-2-1) var(--size-4-2);
+  border-radius: var(--radius-s);
+  background-color: var(--background-modifier-hover);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+.tangrow-onboarding .tangrow-onboarding-body textarea {
+  box-sizing: border-box;
+  inline-size: 100%;
+  resize: vertical;
+}
+.tangrow-onboarding .tangrow-onboarding-saved {
+  display: grid;
+  gap: var(--size-4-1);
+  overflow-wrap: anywhere;
+}
+.tangrow-onboarding .tangrow-onboarding-feedback:empty { margin: 0; }
+.tangrow-onboarding .tangrow-onboarding-feedback[data-error='true'] { color: var(--text-error); }
+.tangrow-onboarding .tangrow-onboarding-footer {
+  margin-block-start: var(--size-4-3);
+  padding-block-start: var(--size-4-3);
+  border-top: 1px solid var(--background-modifier-border);
+}
+.tangrow-onboarding .tangrow-onboarding-footer > button { white-space: normal; }

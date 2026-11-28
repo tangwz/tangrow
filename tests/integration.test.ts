@@ -28,6 +28,8 @@ interface TestPlugin extends MockPlugin {
   writes: Promise<unknown>;
   onload(): Promise<void>;
   onunload(): void;
+  openOnboarding(onStartup?: boolean): void;
+  finishOnboarding(): Promise<void>;
   setup(): Promise<void>;
   openNote(path: string, line?: number): Promise<void>;
   openBase(id: 'captures'): Promise<void>;
@@ -50,7 +52,7 @@ interface TestPlugin extends MockPlugin {
   createHub(title: string): Promise<void>;
   openCardFromCapture(path: string, beforeOpen?: () => boolean): Promise<boolean>;
   updateFolderSetting(key: FolderSettingKey, path: string): Promise<void>;
-  setLanguage(language: Locale): Promise<void>;
+  setLanguage(language: Locale, options?: { localizeManagedFiles?: boolean }): Promise<void>;
   updateOrganizingPreferences(patch: { showComingSoon?: boolean; prepareDailyReview?: boolean }): Promise<void>;
   loadScratch(): string;
   saveScratch(value: string): void;
@@ -414,6 +416,29 @@ test('language switches update exact generated presentation reversibly without c
   assert.deepEqual(currentContents(app), original);
   assert.deepEqual([...app.vault.entries.keys()].sort(), paths);
   assert.deepEqual(app.vault.createdPaths, created);
+});
+
+test('the welcome guide can change language without rewriting existing generated files', async () => {
+  const { plugin, app } = createPlugin();
+  plugin.settings.language = 'en';
+  await plugin.setup();
+  const original = currentContents(app);
+  await plugin.setLanguage('zh-CN', { localizeManagedFiles: false });
+  assert.equal(plugin.settings.language, 'zh-CN');
+  assert.deepEqual(currentContents(app), original);
+  assert.deepEqual(app.vault.processedPaths, []);
+});
+
+test('first load leaves generated files untouched while selecting the default language', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    for (const [path, content] of generatedFiles({ ...plugin.settings, language: 'en' })) app.vault.seedFile(path, content);
+    const original = currentContents(app);
+    await plugin.onload();
+    assert.equal(plugin.settings.language, 'zh-CN');
+    assert.deepEqual(currentContents(app), original);
+    assert.deepEqual(app.vault.processedPaths, []);
+  });
 });
 
 test('language switches never process customized Bases, customized support instructions or user notes', async () => {
@@ -1663,7 +1688,7 @@ test('recently opened notes seed from native history and file opens are distinct
     const second = app.vault.seedFile('00-Inbox/Second note.md', '# Second note\n');
     const modifiedOnly = app.vault.seedFile('00-Inbox/Modified only.md', '# Modified only\n');
     app.workspace.lastOpenFiles.push(second.path, first.path, second.path, '00-Inbox/Missing note.md');
-    plugin.savedData = { version: 2, settings: { ...plugin.settings, language: 'en' }, focus: null, scratch: '', composer: { capture: '', scratchTitle: '' } };
+    plugin.savedData = { version: 2, onboardingCompleted: true, settings: { ...plugin.settings, language: 'en' }, focus: null, scratch: '', composer: { capture: '', scratchTitle: '' } };
     await plugin.onload();
     app.workspace.emitLayoutReady();
     assert.deepEqual(plugin.snapshot().recentOpened.map((note) => note.path), [second.path, first.path]);
@@ -1689,7 +1714,7 @@ test('recently opened notes seed from native history and file opens are distinct
 test('recently opened notes track renames and deletions and remain bounded after persistence reload', async () => {
   await withWindow(async (timers) => {
     const { plugin, app } = createPlugin();
-    plugin.savedData = { version: 3, settings: { ...plugin.settings, language: 'en' }, focus: null, scratch: 'Keep scratch.', composer: { capture: 'Keep capture.', scratchTitle: 'Keep title.' }, recentOpened: [] };
+    plugin.savedData = { version: 3, onboardingCompleted: true, settings: { ...plugin.settings, language: 'en' }, focus: null, scratch: 'Keep scratch.', composer: { capture: 'Keep capture.', scratchTitle: 'Keep title.' }, recentOpened: [] };
     await plugin.onload();
     const notes = Array.from({ length: 55 }, (_, index) => app.vault.seedFile(`00-Inbox/History/Note ${index}.md`, `# Note ${index}\n`));
     for (const note of notes) app.workspace.trigger('file-open', note);
@@ -1729,6 +1754,44 @@ test('recently opened notes track renames and deletions and remain bounded after
     timers.flush();
     await plugin.writes;
     assert.deepEqual(plugin.snapshot().recentOpened, []);
+  });
+});
+
+test('the welcome guide runs once per vault and completion opens Captures', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    const automatic: boolean[] = [];
+    plugin.openOnboarding = (onStartup) => automatic.push(onStartup ?? false);
+    plugin.savedData = { settings: { ...plugin.settings, language: 'en', autoOpen: false } };
+    await plugin.onload();
+    app.workspace.emitLayoutReady();
+    assert.deepEqual(automatic, [true]);
+
+    const landings: string[] = [];
+    const sidebar = new harness.TangrowSidebar({}, plugin);
+    Object.assign(sidebar, { showSection: (entry: string) => landings.push(entry) });
+    Object.assign(app.workspace, {
+      ensureSideLeaf: async (_viewType: string, side: string, { active }: { active: boolean }) => {
+        assert.equal(side, 'right');
+        assert.equal(active, true);
+        return { view: sidebar };
+      }
+    });
+    plugin.saveFailures = 1;
+    await assert.rejects(plugin.finishOnboarding(), /Simulated settings write failure/);
+    assert.equal((plugin.savedData as { onboardingCompleted: boolean }).onboardingCompleted, false);
+    assert.deepEqual(landings, []);
+    await plugin.finishOnboarding();
+    assert.deepEqual(landings, ['captures']);
+    assert.equal((plugin.savedData as { onboardingCompleted: boolean }).onboardingCompleted, true);
+
+    const nextApp = harness.createMockApp();
+    const reopened = new harness.TangrowPlugin(nextApp);
+    reopened.savedData = structuredClone(plugin.savedData);
+    reopened.openOnboarding = (onStartup) => automatic.push(onStartup ?? false);
+    await reopened.onload();
+    nextApp.workspace.emitLayoutReady();
+    assert.deepEqual(automatic, [true]);
   });
 });
 

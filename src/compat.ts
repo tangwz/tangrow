@@ -1,6 +1,6 @@
 import type { App, TAbstractFile } from 'obsidian';
 
-type SettingsAccess = { open: () => void; openTabById: (id: string) => unknown };
+type SettingsAccess = { open: () => void; close: () => void; openTabById: (id: string) => unknown };
 type CommandAccess = { commands: Record<string, unknown>; executeCommandById: (id: string) => boolean };
 
 // These optional host features are not part of the published API. Keep them isolated.
@@ -12,6 +12,11 @@ export function openNativeSettings(app: App, tab: string): boolean {
     const result = settings.openTabById(tab);
     return result !== false && result !== null;
   } catch { return false; }
+}
+
+export function closeNativeSettings(app: App): void {
+  const settings = (app as unknown as { setting?: Partial<SettingsAccess> }).setting;
+  try { settings?.close?.(); } catch { /* the guide can open above settings */ }
 }
 
 export function runNativeCommand(app: App, ids: readonly string[]): boolean {

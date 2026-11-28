@@ -11,6 +11,7 @@ export const GROUPS = {
 type Group = keyof typeof GROUPS;
 
 export const SECTIONS = {
+  welcome: { group: 'general', name: 'Welcome guide', description: 'Set up your vault, choose a daily review preference, and capture a thought.' },
   activation: { group: 'general', name: 'Activation and updates', description: 'Trial, redemption code, devices, and plugin version.' },
   defaults: { group: 'general', name: 'Language and startup', description: 'Interface language and opening the workbench on startup.' },
   folders: { group: 'workbench', name: 'Vault structure', description: 'PARA folders, cards, and the task overview note.' },
@@ -40,6 +41,7 @@ export interface SettingItem {
 }
 
 export const ITEMS: readonly SettingItem[] = [
+  { id: 'welcome', section: 'welcome', name: 'Welcome guide', description: SECTIONS.welcome.description },
   { id: 'language', section: 'defaults', name: 'Interface language', description: 'Chinese is the default. Change the language without renaming notes or database files.' },
   { id: 'autoOpen', section: 'defaults', name: 'Open companion on startup', description: '' },
   { id: 'journalFolder', section: 'periodic', name: 'Journal folder', description: folderDescription, group: PERIODIC_NOTES },

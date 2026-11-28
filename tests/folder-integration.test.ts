@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import type { FocusSession, Settings, Snapshot } from '../src/types';
-import type { VaultStructurePatch } from '../src/settings/vault-structure-data';
+import type { VaultStructurePatch, VaultStructureValues } from '../src/settings/vault-structure-data';
 import type { MockApp, Plugin as MockPlugin, createMockApp as MockAppFactory } from './obsidian-mock';
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -30,6 +30,9 @@ interface TestPlugin extends MockPlugin {
   setup(): Promise<void>;
   updateFolderSetting(key: 'supportFolder' | 'projectFolder', value: string): Promise<void>;
   updateVaultStructure(patch: VaultStructurePatch): Promise<void>;
+  requireAccess(): boolean;
+  onboardingVaultStructure(): VaultStructureValues;
+  setupOnboardingVault(patch: VaultStructurePatch, createBases: boolean): Promise<void>;
   migrateCompanionFolder(): Promise<void>;
   startFocus(minutes: number): Promise<void>;
   finishFocus(): Promise<void>;
@@ -132,6 +135,89 @@ test('failed vault-structure drafts neither persist invalid paths nor leave part
   assert.equal(plugin.settings.projectFolder, patch.projectFolder);
   assert.equal(plugin.settings.cardFolder, patch.cardFolder);
   assert.deepEqual(app.vault.createdPaths, []);
+});
+
+test('onboarding applies detected paths and adds missing Bases without touching existing vault content', async () => {
+  const { app, plugin } = fixture();
+  plugin.requireAccess = () => true;
+  const note = app.vault.seedFile('1. 项目/Existing.md', '# User project\n');
+  const tasks = app.vault.seedFile(plugin.settings.taskOverviewPath, '# User Tasks\n');
+  const base = app.vault.seedFile('99-Tangrow/Tangrow Notes.base', '# Customized Base\n');
+  const readme = app.vault.seedFile('99-Tangrow/README.md', '# Customized README\n');
+  const mapped = plugin.onboardingVaultStructure();
+  assert.equal(mapped.projectFolder, '1. 项目');
+
+  await plugin.setupOnboardingVault(mapped, true);
+  const created = [...app.vault.createdPaths];
+  assert.ok(created.includes('00-Inbox'));
+  assert.ok(created.includes('50-Zettel'));
+  assert.ok(created.some((path) => path.endsWith('.base')));
+  assert.ok(!created.includes('20-Project'));
+  assert.equal(plugin.saveCalls, 1);
+  assert.equal((plugin.savedData as { settings: Settings }).settings.projectFolder, '1. 项目');
+  assert.equal(plugin.snapshot().supportReady, true);
+  await plugin.setupOnboardingVault(mapped, true);
+  assert.deepEqual(app.vault.createdPaths, created);
+  assert.equal(plugin.saveCalls, 1);
+  assert.equal(note.content, '# User project\n');
+  assert.equal(tasks.content, '# User Tasks\n');
+  assert.equal(base.content, '# Customized Base\n');
+  assert.equal(readme.content, '# Customized README\n');
+  assert.deepEqual(app.vault.processedPaths, []);
+});
+
+test('onboarding validates access, unchanged folder paths, and the optional companion folder before writes', async () => {
+  const { app, plugin } = fixture();
+  plugin.requireAccess = () => false;
+  await assert.rejects(plugin.setupOnboardingVault({}, true), /Activate Tangrow/);
+  plugin.requireAccess = () => true;
+  const blocked = app.vault.seedFile('Blocked', 'User file');
+  plugin.settings.cardFolder = 'Blocked/Cards';
+  await assert.rejects(plugin.setupOnboardingVault({}, false), /blocks this folder path/);
+  plugin.settings.cardFolder = '50-Zettel';
+  plugin.settings.supportFolder = 'Blocked/Companion';
+  await assert.rejects(plugin.setupOnboardingVault({}, true), /blocks this folder path/);
+  assert.deepEqual(app.vault.createdPaths, []);
+  assert.equal(plugin.saveCalls, 0);
+  assert.equal(blocked.content, 'User file');
+});
+
+test('onboarding retries partial directory creation and failed mapping writes without recreating folders', async () => {
+  const { app, plugin } = fixture();
+  plugin.requireAccess = () => true;
+  const createFolder = app.vault.createFolder.bind(app.vault);
+  const patch = { projectFolder: 'Work/Projects' };
+  app.vault.createFolder = async (path) => {
+    if (path === 'Work/Projects') throw new Error('Folder write failed');
+    await createFolder(path);
+  };
+  await assert.rejects(plugin.setupOnboardingVault(patch, false), /Folder write failed/);
+  assert.deepEqual(app.vault.createdPaths, ['00-Inbox', 'Work']);
+  assert.equal(plugin.settings.projectFolder, '20-Project');
+  app.vault.createFolder = createFolder;
+  plugin.saveFailures = 1;
+  await assert.rejects(plugin.setupOnboardingVault(patch, false), /settings write failure/);
+  assert.equal(plugin.settings.projectFolder, '20-Project');
+  const created = [...app.vault.createdPaths];
+
+  await plugin.setupOnboardingVault(patch, false);
+  assert.deepEqual(app.vault.createdPaths, created);
+  assert.equal(plugin.settings.projectFolder, patch.projectFolder);
+  assert.equal(app.vault.getAbstractFileByPath(plugin.settings.supportFolder), null);
+  assert.equal(app.vault.getAbstractFileByPath(plugin.settings.taskOverviewPath), null);
+});
+
+test('onboarding retains the saved mapping if optional Base creation needs a retry', async () => {
+  const { app, plugin } = fixture();
+  plugin.requireAccess = () => true;
+  const patch = { projectFolder: 'Work/Projects' };
+  app.vault.failCreates = 1;
+  await assert.rejects(plugin.setupOnboardingVault(patch, true), /vault write failure/);
+  assert.equal(plugin.settings.projectFolder, patch.projectFolder);
+  assert.equal(plugin.saveCalls, 1);
+  await plugin.setupOnboardingVault(patch, true);
+  assert.equal(plugin.saveCalls, 1);
+  assert.equal(plugin.snapshot().supportReady, true);
 });
 
 test('the migration entry preserves active-session references and generated view readiness', async () => {
