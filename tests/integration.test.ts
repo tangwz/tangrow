@@ -69,6 +69,7 @@ interface TestPlugin extends MockPlugin {
   loadRecoveryDrafts(): (RecoveryDraft & { saving: boolean })[];
   submitRecoveryDraft(id: string): Promise<void>;
   discardRecoveryDraft(id: string): void;
+  openSidebar(): Promise<void>;
   readCapture(path: string): Promise<string>;
   openPeriodicNote(period: JournalPeriod, date?: string, immersive?: boolean): Promise<void>;
   updateJournalSettings(period: JournalPeriod, format: string, template: string): Promise<void>;
@@ -101,7 +102,7 @@ interface Harness {
   ItemView: typeof MockItemView;
   notices: string[];
   tooltipBehavior: { set(element: GateElement, text: string): void };
-  Platform: { isDesktopApp: boolean; isMacOS: boolean; isMobile?: boolean; isAndroidApp?: boolean; isIosApp?: boolean };
+  Platform: { isDesktopApp: boolean; isMacOS: boolean; isMobile?: boolean; isMobileApp?: boolean; isAndroidApp?: boolean; isIosApp?: boolean };
   compositionTiming: { later(callback: () => void, owner: Window): void };
   openCaptureWindow(app: unknown, host: unknown): Promise<void>;
 }
@@ -1821,6 +1822,31 @@ test('recently opened notes track renames and deletions and remain bounded after
     await plugin.writes;
     assert.deepEqual(plugin.snapshot().recentOpened, []);
   });
+});
+
+test('opening Tangrow activates the existing mobile drawer and preserves desktop focus', async () => {
+  const { app, plugin } = createPlugin();
+  const sidebar = { view: {} };
+  const activations: unknown[] = [];
+  Object.assign(app.workspace, {
+    ensureSideLeaf: async (type: string, side: string, options: unknown) => {
+      assert.equal(type, 'tangrow-sidebar');
+      assert.equal(side, 'right');
+      assert.deepEqual(options, { active: false });
+      return sidebar;
+    },
+    setActiveLeaf: (leaf: unknown, options: unknown) => activations.push([leaf, options])
+  });
+  const wasMobile = harness.Platform.isMobileApp;
+  try {
+    harness.Platform.isMobileApp = false;
+    await plugin.openSidebar();
+    assert.deepEqual(activations, []);
+
+    harness.Platform.isMobileApp = true;
+    await plugin.openSidebar();
+    assert.deepEqual(activations, [[sidebar, { focus: true }]]);
+  } finally { harness.Platform.isMobileApp = wasMobile; }
 });
 
 test('the welcome guide runs once per vault and completion opens Captures', async () => {

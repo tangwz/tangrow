@@ -456,7 +456,11 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     });
   }
 
-  async openSidebar(): Promise<void> { await this.app.workspace.ensureSideLeaf(VIEW_TYPE, 'right', { active: false }); }
+  async openSidebar(): Promise<void> {
+    const { workspace } = this.app;
+    const leaf = await workspace.ensureSideLeaf(VIEW_TYPE, 'right', { active: false });
+    if (this.alive && Platform.isMobileApp) workspace.setActiveLeaf(leaf, { focus: true });
+  }
   openOnboarding(onStartup = false): void {
     if (!this.alive || this.onboardingModal) return;
     const modal = new OnboardingModal(this, () => {
