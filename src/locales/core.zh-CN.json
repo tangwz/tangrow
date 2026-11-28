@@ -1,5 +1,7 @@
 {
   "Save": "保存",
+  "Hub title": "主题结构标题",
+  "Source capture: {path}": "来源速记：{path}",
   "Open Tangrow": "打开 Tangrow 侧栏",
   "Open companion": "打开侧栏",
   "Set up companion Bases": "初始化补充数据库",

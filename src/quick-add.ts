@@ -171,7 +171,9 @@ export class QuickAddModal extends Modal {
     this.contentEl.createEl('p', { cls: 'tangrow-muted tangrow-quick-hint', text: this.ui.t(entry.hint) });
 
     const options = this.contentEl.createDiv({ cls: 'tangrow-quick-options' });
-    if (this.kind === 'card' && this.source) {
+    if (this.kind === 'card' && this.source?.captureFile) {
+      options.createEl('p', { cls: 'tangrow-destination', text: this.ui.t('Source capture: {path}', { path: this.source.path }) });
+    } else if (this.kind === 'card' && this.source) {
       const row = options.createEl('label', { cls: 'tangrow-quick-row' });
       const source = row.createEl('input', { type: 'checkbox' });
       source.checked = this.includeSource;

@@ -119,7 +119,10 @@ export class TangrowSidebar extends ItemView {
     this.aiPanel = new AiPanel(host, this);
     this.workbenchCards = new WorkbenchCards(host, this.ui, () => {
       if (this.isMounted && (this.section === 'today' || this.section === 'knowledge')) this.refreshSection(this.host.snapshot());
-    }, (tab) => this.showKnowledge(tab), () => this.manuscript(this.host.snapshot())?.path, () => this.showCompose('manuscripts'));
+    }, (tab) => this.showKnowledge(tab), () => this.manuscript(this.host.snapshot())?.path, () => this.showCompose('manuscripts'), () => {
+      this.showCompose('captures');
+      this.capturePanel?.focusComposer();
+    });
   }
 
   /** Opens a workspace from a command or menu item. */

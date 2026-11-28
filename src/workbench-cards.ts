@@ -1,8 +1,10 @@
 import { Notice } from 'obsidian';
 import type { CardFilter, CardReportRow } from './card-report-data';
 import { createCardReviewQueue, resolveCardReviewQueue, type CardReviewQueue, type CardReviewReason } from './card-review';
+import { sortCaptures } from './capture-data';
+import { capturePreview } from './capture-preview';
 import type { ReportRecord } from './report-contract';
-import type { SidebarHost } from './types';
+import type { CaptureSummary, SidebarHost } from './types';
 import type { SidebarUI } from './ui';
 import type { KnowledgeTab } from './workbench-navigation';
 
@@ -32,7 +34,8 @@ export class WorkbenchCards {
     private readonly onChange: () => void,
     private readonly showKnowledge: (tab: KnowledgeTab) => void,
     private readonly manuscript: () => string | undefined,
-    private readonly chooseManuscript: () => void
+    private readonly chooseManuscript: () => void,
+    private readonly showCaptures: () => void
   ) {}
 
   refresh(openReview: boolean): void {
@@ -142,6 +145,21 @@ export class WorkbenchCards {
       this.ui.comingSoon(parent, 'AI drafts today’s review');
       return;
     }
+    if (tab === 'cards' && !knowledge.rows.length) {
+      this.renderFirstCard(parent);
+      this.ui.comingSoon(parent, 'AI drafts candidate cards');
+      return;
+    }
+    if (tab === 'hubs' && !hubs.length) {
+      const missing = 3 - knowledge.rows.length;
+      this.ui.empty(parent, 'No hubs yet', 'A hub connects related cards into a line of argument.', 'network', [{
+        label: missing <= 0 ? 'New hub' : missing === 3 ? 'Write cards first' : this.ui.t('Write {count} more cards', { count: this.ui.number(missing) }),
+        onClick: missing <= 0 ? () => this.host.openNewHub() : () => this.showKnowledge('cards'),
+        level: 'primary'
+      }]);
+      this.ui.comingSoon(parent, 'AI suggests which hub a card belongs to');
+      return;
+    }
     const heading = parent.createDiv({ cls: 'tangrow-list-heading' });
     const label = { cards: 'Cards', hubs: 'Knowledge hubs', materials: 'Knowledge materials' }[tab];
     const rows = tab === 'cards' ? knowledge.rows.map((row) => ({ note: row.note, detail: this.cardMeta(row) }))
@@ -156,6 +174,7 @@ export class WorkbenchCards {
       this.ui.button(actions, 'New card', () => this.host.openQuickAdd('card'), { icon: 'plus' });
       this.ui.button(actions, 'Open card report', () => this.host.openCardReport('all'), { icon: 'chart-no-axes-combined', level: 'text' });
     }
+    if (tab === 'hubs') this.ui.button(parent, 'New hub', () => this.host.openNewHub(), { icon: 'plus', level: 'text' });
     if (!rows.length) this.ui.paragraph(parent, 'No notes in this view.');
     else {
       const lastPage = Math.ceil(rows.length / PAGE_SIZE);
@@ -173,8 +192,39 @@ export class WorkbenchCards {
         pager.createSpan({ cls: 'tangrow-muted', text: this.ui.t('Page {page} of {total}', { page: this.ui.number(page), total: this.ui.number(lastPage) }) });
       }
     }
-    if (tab === 'cards') this.ui.comingSoon(parent, rows.length ? 'AI finds connections for a card' : 'AI drafts candidate cards');
-    if (tab === 'hubs') this.ui.comingSoon(parent, 'AI suggests which hub a card belongs to');
+    if (tab === 'cards') this.ui.comingSoon(parent, 'AI finds connections for a card');
+  }
+
+  private recentCaptures(): CaptureSummary[] {
+    return sortCaptures(this.host.snapshot().captures).slice(0, 2);
+  }
+
+  private renderFirstCard(parent: HTMLElement): void {
+    const captures = this.recentCaptures();
+    const blank = { label: 'Blank card', onClick: () => this.host.openQuickAdd('card') };
+    if (!captures.length) {
+      this.ui.empty(parent, 'Write your first card', 'Cards grow from your captures. Jot a thought, then develop one idea worth keeping.', 'notebook-pen', [
+        { label: 'Capture your first thought', onClick: this.showCaptures, level: 'primary' }, blank
+      ]);
+      return;
+    }
+    this.ui.empty(parent, 'Write your first card', 'A card expresses a single idea in your own words. Start with a recent capture.', 'notebook-pen', [blank]);
+    this.ui.sectionHeading(parent, 'Distill from a recent capture');
+    for (const capture of captures) {
+      const control = this.ui.userButton(parent, capture.name, async () => {
+        await this.host.openCardFromCapture(capture.path, () => parent.isConnected);
+      }, {
+        icon: 'inbox', cls: 'tangrow-note-row', title: capture.path
+      });
+      const descriptionId = `tangrow-capture-description-${crypto.randomUUID()}`;
+      control.dataset.tangrowAction = `distill-capture-${capture.path}`;
+      control.setAttribute('aria-label', this.ui.t('Distill capture: {capture}', { capture: capture.name }));
+      control.setAttribute('aria-describedby', descriptionId);
+      const preview = control.createSpan({ cls: 'tangrow-note-folder', text: this.ui.t('Loading preview...'), attr: { id: descriptionId } });
+      void this.host.readCapture(capture.path).then((content) => {
+        preview.textContent = capturePreview(content) || this.ui.t('No text preview');
+      }, () => { preview.textContent = this.ui.t('Preview unavailable'); });
+    }
   }
 
   private renderStatus(parent: HTMLElement): boolean {
@@ -205,6 +255,17 @@ export class WorkbenchCards {
 
   private renderReview(parent: HTMLElement, full: boolean): void {
     const cards = this.data!.knowledge;
+    if (full && !cards.rows.length) {
+      const capture = this.recentCaptures()[0];
+      const label = capture ? 'Distill your first card' : 'Capture your first thought';
+      const onClick = capture ? async () => {
+        await this.host.openCardFromCapture(capture.path, () => parent.isConnected);
+      } : this.showCaptures;
+      this.ui.empty(parent, 'Review starts with cards', 'Review brings back a few cards each day, starting with unlinked cards and ones you have not seen in a while.', 'list-checks', [
+        { label, onClick, level: 'primary' }
+      ]);
+      return;
+    }
     const items = this.reviewItems();
     const available = items.filter(({ row }) => row);
     const next = available.find(({ reviewed }) => !reviewed);
@@ -250,7 +311,15 @@ export class WorkbenchCards {
         } else this.chooseManuscript();
       }, { icon: 'pen-line', cls: 'tangrow-chip' });
       use.dataset.tangrowAction = 'review-use-card';
-    } else if (items.length) this.ui.paragraph(section, 'Today’s card review is complete.');
+    } else if (items.length && !available.length) this.ui.paragraph(section, 'No cards from today’s queue are available.');
+    else if (items.length) {
+      if (full) {
+        const unlinked = cards.linksReady ? cards.counts.isolated : 0;
+        this.ui.empty(section, 'Today’s card review is complete.', 'A new set will be available tomorrow.', 'check', unlinked ? [{
+          label: this.ui.t('See unlinked cards · {count}', { count: this.ui.number(unlinked) }), onClick: () => this.host.openCardReport('isolated')
+        }] : []).setAttribute('role', 'status');
+      } else this.ui.paragraph(section, 'Today’s card review is complete.');
+    }
     if (!full) {
       const control = this.ui.button(section, 'Open review queue', () => this.showKnowledge('review'), { icon: 'list-checks', cls: 'tangrow-full-width tangrow-text-button' });
       control.dataset.tangrowAction = 'home-card-review';

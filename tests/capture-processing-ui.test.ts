@@ -56,6 +56,7 @@ interface Host {
   app: MockApp;
   settings: Settings;
   processCapture(path: string, request: CaptureRequest): Promise<string | null>;
+  openCardFromCapture(path: string, beforeOpen?: () => boolean): Promise<boolean>;
   openNote(path: string): Promise<void>;
   aiReady(): boolean;
   readCapture(path: string): Promise<string>;
@@ -96,6 +97,7 @@ const harness = moduleObject.exports as {
 function host(): Host {
   return {
     requireAccess: () => true, app: harness.createMockApp(), settings: readSettings({ language: 'en' }), processCapture: async () => null,
+    openCardFromCapture: async () => false,
     openNote: async () => undefined, aiReady: () => false, readCapture: async () => 'Source body',
     suggestCapture: async () => { throw new Error('Unexpected suggestion request'); }
   };
@@ -111,15 +113,20 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+function openDialog(service: Host, source = capture('Source')): Dialog {
+  const dialog = new harness.CaptureProcessingModal(service, source);
+  Object.assign(dialog, { contentEl: new Element(), setTitle: () => undefined, close: () => dialog.onClose() });
+  dialog.onOpen();
+  return dialog;
+}
+
 async function suggestingDialog() {
   const service = host();
   const projectPath = service.app.vault.seedFile('20-Project/Launch/Launch.md', '# Launch').path;
   const pending = deferred<CaptureSuggestion>();
   service.aiReady = () => true;
   service.suggestCapture = () => pending.promise;
-  const dialog = new harness.CaptureProcessingModal(service, capture('Source'));
-  Object.assign(dialog, { contentEl: new Element(), setTitle: () => undefined, close: () => dialog.onClose() });
-  dialog.onOpen();
+  const dialog = openDialog(service);
   const form = dialog.contentEl.querySelector('form')!;
   const [action, project] = form.querySelectorAll('select') as [Element, Element];
   const title = form.querySelector('input')!;
@@ -213,6 +220,34 @@ test('the capture timeline defaults to pending, exposes resumable actions and in
   assert.match(panel.timeline.querySelector('strong')!.textContent, /No captures match/);
 });
 
+test('clearing the pending inbox offers to see all processed captures while an empty date keeps its own feedback', async () => {
+  const panel = new harness.CapturePanel(host());
+  const root = new Element();
+  const statusFilter = root.createEl('select', { value: 'pending' });
+  const finished = [capture('Finished', { processed: true })];
+  Object.assign(panel, {
+    root, timeline: root.createDiv(), timelineCount: root.createSpan(), footer: root.createDiv(), statusFilter,
+    refresh: () => panel.renderTimeline(finished)
+  });
+
+  panel.selectedDay = '2026-11-10';
+  panel.renderTimeline(finished);
+  assert.equal(panel.timeline.querySelector('strong')?.textContent, 'No captures match this filter');
+  assert.equal(panel.timeline.querySelector('button'), null);
+
+  panel.selectedDay = null;
+  panel.renderTimeline(finished);
+  assert.equal(panel.timeline.querySelector('strong')?.textContent, 'Nothing left to process');
+  const seeProcessed = panel.timeline.querySelector('button')!;
+  assert.equal(seeProcessed.getAttribute('aria-label'), 'See 1 processed');
+  seeProcessed.dispatchEvent(new Event('click'));
+  await flush();
+  assert.equal(statusFilter.value, 'processed');
+  assert.equal(root.ownerDocument.activeElement, statusFilter);
+  assert.equal(panel.timelineCount.textContent, 'Processed captures · 1');
+  assert.equal(panel.timeline.querySelector('strong')?.textContent, 'Finished');
+});
+
 test('the capture timeline shows one passive coming soon hint across filters and language changes', () => {
   const service = host();
   const panel = new harness.CapturePanel(service);
@@ -271,4 +306,74 @@ test('the processing dialog validates project selection and opens the result onl
   await flush();
   assert.deepEqual(opened, [project.path]);
   assert.equal(closed, 1);
+});
+
+test('distilling hands off to the source-aware card editor without submitting capture processing', async () => {
+  const service = host();
+  const ready = deferred<void>();
+  const source = capture('Source');
+  const dialog = openDialog(service, source);
+  const form = dialog.contentEl.querySelector('form')!;
+  const distill = form.querySelectorAll('button').find((element) => element.textContent === 'Distill a card')!;
+  const cardSources: string[] = [];
+  const requests: CaptureRequest[] = [];
+  service.processCapture = async (_path, request) => { requests.push(request); return null; };
+  service.openCardFromCapture = async (path, beforeOpen) => {
+    assert.equal(path, source.path);
+    await ready.promise;
+    if (!beforeOpen?.()) return false;
+    assert.equal(dialog.contentEl.children.length, 0);
+    cardSources.push(path);
+    return true;
+  };
+  distill.dispatchEvent(new Event('click'));
+  distill.dispatchEvent(new Event('click'));
+  form.dispatchEvent(new Event('submit', { cancelable: true }));
+  assert.equal(distill.disabled, true);
+  ready.resolve();
+  await flush();
+
+  assert.deepEqual(cardSources, [source.path]);
+  assert.deepEqual(requests, []);
+});
+
+test('closing capture processing during distillation preparation cancels the card editor handoff', async () => {
+  const service = host();
+  const ready = deferred<void>();
+  const dialog = openDialog(service);
+  const distill = dialog.contentEl.querySelectorAll('button').find((element) => element.textContent === 'Distill a card')!;
+  let handoff: boolean | undefined;
+  service.openCardFromCapture = async (_path, beforeOpen) => {
+    await ready.promise;
+    handoff = beforeOpen?.();
+    return handoff === true;
+  };
+  distill.dispatchEvent(new Event('click'));
+  dialog.close();
+  ready.resolve();
+  await flush();
+  assert.equal(handoff, false);
+  assert.equal(dialog.contentEl.children.length, 0);
+});
+
+test('denied or failed distillation keeps the processing form available', async () => {
+  const service = host();
+  const dialog = openDialog(service);
+  const distill = dialog.contentEl.querySelectorAll('button').find((element) => element.textContent === 'Distill a card')!;
+  let attempts = 0;
+  service.openCardFromCapture = async () => { attempts++; throw new Error('This capture no longer exists.'); };
+  service.requireAccess = () => false;
+  distill.dispatchEvent(new Event('click'));
+  assert.equal(attempts, 0);
+  assert.equal(distill.disabled, false);
+  service.requireAccess = () => true;
+  distill.dispatchEvent(new Event('click'));
+  await flush();
+  assert.equal(attempts, 1);
+  assert.equal(distill.disabled, false);
+  assert.equal(dialog.contentEl.querySelector('.tangrow-input-error')?.textContent, 'This capture no longer exists.');
+
+  service.settings.knowledgeEnabled = false;
+  const noKnowledge = openDialog(service);
+  assert.ok(noKnowledge.contentEl.querySelectorAll('button').every((element) => element.textContent !== 'Distill a card'));
 });

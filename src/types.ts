@@ -1,4 +1,4 @@
-import type { App, WorkspaceLeaf } from 'obsidian';
+import type { App, TFile, WorkspaceLeaf } from 'obsidian';
 import type { ReportPreferences, ReportRange, ReportRecord, ReportSnapshot, ReportStatusChange } from './report-contract';
 import type { CardFilter, CardReport, MaterialReportRow } from './card-report-data';
 import type { CardReviewQueue } from './card-review';
@@ -10,7 +10,7 @@ import type { AgentStatus, WorkflowId, WorkflowRun } from './claudian';
 export type Locale = 'zh-CN' | 'en';
 export type Section = 'tools' | 'capture' | 'pins' | 'studio' | 'focus' | 'habits' | 'ai';
 export type NoteKind = 'note' | 'project' | 'draft' | 'card';
-export interface CardSource { path: string; anchor?: string; includeLink?: boolean }
+export interface CardSource { path: string; anchor?: string; includeLink?: boolean; captureFile?: TFile }
 export type ActionId = 'copy-link' | 'copy-path' | 'file-location' | 'fold' | 'unfold' | 'page-width' | 'all-width' | 'refresh' | 'cover' | 'timestamp' | 'toggle-pin' | 'settings' | 'appearance' | 'file-list' | 'stack-tabs' | 'hide-panel' | 'random-note' | 'daily-note' | 'report' | 'title-date' | 'toggle-theme' | 'task-overview';
 export type BaseId = 'notes' | 'recent' | 'projects' | 'areas' | 'resources' | 'inbox' | 'sources' | 'captures' | 'pins' | 'drafts' | 'focus' | 'habits' | 'tasks';
 
@@ -136,6 +136,8 @@ export interface SidebarHost {
   addTask(text: string, options?: { due?: string; target?: 'overview' | 'daily' }): Promise<string>;
   completeTask(path: string, line: number): Promise<void>;
   openQuickAdd(kind?: QuickKind, text?: string): void;
+  openCardFromCapture(path: string, beforeOpen?: () => boolean): Promise<boolean>;
+  openNewHub(): void;
   aiReady(): boolean;
   suggestCapture(text: string, signal?: AbortSignal): Promise<CaptureSuggestion>;
   agentStatus(): AgentStatus;

@@ -34,6 +34,7 @@ export class CaptureProcessingModal extends Modal {
     }
     const advice = form.createDiv({ cls: 'tangrow-quick-suggestion', attr: { 'aria-live': 'polite' } });
     let saving = false;
+    let openingCard = false;
     let suggestButton: HTMLButtonElement | undefined;
     if (this.host.aiReady()) {
       const suggest = form.createEl('button', { cls: 'tangrow-button tangrow-capture-suggest', text: t('Suggest with AI'), attr: { type: 'button' } });
@@ -59,24 +60,56 @@ export class CaptureProcessingModal extends Modal {
         }).finally(() => {
           if (this.suggestionController !== controller) return;
           this.suggestionController = null;
-          suggest.disabled = saving;
+          suggest.disabled = saving || openingCard;
           suggest.textContent = t('Suggest with AI');
         });
       });
     }
     const destination = form.createEl('p', { cls: 'tangrow-destination' });
     const error = form.createDiv({ cls: 'tangrow-input-error', attr: { 'aria-live': 'polite' } });
+    let cardAction: HTMLElement | undefined;
+    let distill: HTMLButtonElement | undefined;
+    if (this.host.settings.knowledgeEnabled && !this.capture.processing) {
+      cardAction = form.createDiv();
+      const detailId = `${actionId}-distill-detail`;
+      distill = cardAction.createEl('button', {
+        cls: 'tangrow-button', text: t('Distill a card'), attr: { type: 'button', 'aria-describedby': detailId }
+      });
+      cardAction.createEl('p', {
+        cls: 'tangrow-muted', attr: { id: detailId }, text: t('Keeps this capture as the source and preserves its processing status.')
+      });
+      distill.addEventListener('click', async () => {
+        if (saving || openingCard || !this.host.settings.knowledgeEnabled || !this.host.requireAccess()) return;
+        openingCard = true;
+        this.suggestionController?.abort();
+        update();
+        let message: string | undefined;
+        try {
+          await this.host.openCardFromCapture(this.capture.path, () => {
+            if (!this.contentEl.contains(form)) return false;
+            this.close();
+            return true;
+          });
+        } catch (failure) { message = describeError(this.host.settings.language, failure); }
+        if (!this.contentEl.contains(form)) return;
+        openingCard = false;
+        update();
+        if (message) error.textContent = message;
+      });
+    }
     const footer = form.createDiv({ cls: 'tangrow-dialog-actions' });
     const cancel = footer.createEl('button', { text: t('Cancel'), attr: { type: 'button' } });
     cancel.addEventListener('click', () => this.close());
     const save = footer.createEl('button', { cls: 'mod-cta', attr: { type: 'submit' } });
     const update = (): void => {
       const mode = action.value;
+      const busy = saving || openingCard;
       titleField.hidden = mode !== 'note' && mode !== 'task';
       projectField.hidden = mode !== 'note' && mode !== 'project';
       save.textContent = t(saving ? 'Processing capture...' : 'Process capture');
-      action.disabled = title.disabled = project.disabled = saving;
-      if (suggestButton) suggestButton.disabled = saving || this.suggestionController !== null;
+      action.disabled = title.disabled = project.disabled = busy;
+      if (suggestButton) suggestButton.disabled = busy || this.suggestionController !== null;
+      if (distill) distill.disabled = busy;
       let valid = true;
       error.textContent = '';
       try {
@@ -84,7 +117,7 @@ export class CaptureProcessingModal extends Modal {
         if (mode === 'task' && (!title.value.trim() || title.value.trim().length > 240)) valid = false;
         if (mode === 'project' && !project.value) valid = false;
       } catch (failure) { valid = false; error.textContent = describeError(this.host.settings.language, failure); }
-      save.disabled = saving || !valid;
+      save.disabled = busy || !valid;
       const folder = project.value ? project.value.slice(0, project.value.lastIndexOf('/')) : this.host.settings.inboxFolder;
       destination.textContent = mode === 'task'
         ? translate(this.host.settings.language, 'Destination: {path}', { path: this.host.settings.taskOverviewPath })
@@ -98,7 +131,7 @@ export class CaptureProcessingModal extends Modal {
     });
     form.addEventListener('submit', (event) => {
       event.preventDefault();
-      if (saving || save.disabled || !this.host.requireAccess()) return;
+      if (saving || openingCard || save.disabled || !this.host.requireAccess()) return;
       const request: CaptureRequest = action.value === 'note' ? { action: 'note', title: title.value, ...(project.value ? { projectPath: project.value } : {}) }
         : action.value === 'task' ? { action: 'task', title: title.value }
         : action.value === 'project' ? { action: 'project', projectPath: project.value } : { action: 'done' };
@@ -108,6 +141,7 @@ export class CaptureProcessingModal extends Modal {
       void this.host.processCapture(this.capture.path, request).then((result) => {
         if (!result) { this.close(); return; }
         save.hidden = true;
+        if (cardAction) cardAction.hidden = true;
         cancel.textContent = t('Done');
         destination.textContent = translate(this.host.settings.language, 'Destination: {path}', { path: result });
         const open = footer.createEl('button', { text: t('Open result'), cls: 'mod-cta', attr: { type: 'button' } });

@@ -13,7 +13,7 @@ import type { QuickKind } from '../src/ai';
 import type { RecoveryDraft } from '../src/draft-submissions';
 import { baseDefinitions, setupReadme } from '../src/bases';
 import { aggregateReport } from '../src/report-data';
-import type { ActionId, ComposerState, FocusSession, Locale, NoteKind, Settings, Snapshot, WritingDraft } from '../src/types';
+import type { ActionId, CardSource, ComposerState, FocusSession, Locale, NoteKind, Settings, Snapshot, WritingDraft } from '../src/types';
 import { JOURNAL_PERIODS, type JournalPeriod } from '../src/periodic-notes';
 import type { FileView as MockFileView, ItemView as MockItemView, MarkdownView as MockMarkdownView, MockApp, Plugin as MockPlugin, TFile as MockFile, TFolder as MockFolder, createMockApp as MockAppFactory } from './obsidian-mock';
 
@@ -33,6 +33,9 @@ interface TestPlugin extends MockPlugin {
   snapshot(): Snapshot;
   action(id: ActionId): Promise<void>;
   createNote(kind: NoteKind, title: string, projectFolder?: string): Promise<void>;
+  createCard(title: string, body: string, source?: CardSource): Promise<void>;
+  createHub(title: string): Promise<void>;
+  openCardFromCapture(path: string, beforeOpen?: () => boolean): Promise<boolean>;
   updateFolderSetting(key: FolderSettingKey, path: string): Promise<void>;
   setLanguage(language: Locale): Promise<void>;
   loadScratch(): string;
@@ -70,7 +73,7 @@ interface Harness {
     mount(container: GateElement): void; destroy(): void; editor: GateElement;
   };
   TangrowSidebar: new (leaf: unknown, host: TestPlugin) => TestSidebar;
-  QuickAddModal: new (host: TestPlugin, kind: QuickKind, text: string) => {
+  QuickAddModal: new (host: TestPlugin, kind: QuickKind, text: string, source?: CardSource) => {
     onOpen(): void; onClose(): void; save(): Promise<void>; suggest(): Promise<void>; setKind(kind: QuickKind): void;
   };
   createMockApp: typeof MockAppFactory;
@@ -2809,13 +2812,101 @@ test('Escape in a composing capture synchronizes the latest committed text from 
   });
 });
 
-function openQuickAdd(plugin: TestPlugin, kind: QuickKind, text: string) {
-  const modal = new harness.QuickAddModal(plugin, kind, text);
+function openQuickAdd(plugin: TestPlugin, kind: QuickKind, text: string, source?: CardSource) {
+  const modal = new harness.QuickAddModal(plugin, kind, text, source);
   const root = new GateElement();
   Object.assign(modal, { modalEl: new GateElement(), contentEl: root, scope: { register() {} }, setTitle() {}, close: () => modal.onClose() });
   modal.onOpen();
   return { modal, root, editor: root.querySelector('textarea')! };
 }
+
+test('distilling a capture opens an editable card with its required source link and leaves the source untouched', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    plugin.settings.language = 'en';
+    const sourceBody = 'First paragraph about [context](./Context.md).\n\n> A second paragraph.\n';
+    const sourceText = `---\ntangrow_kind: "capture"\ntangrow_processed_at: "2026-11-27T12:00:00Z"\ntangrow_capture_result: "[[Existing result]]"\n---\n\n# Capture 1\n\n${sourceBody}`;
+    const source = app.vault.seedFile('00-Inbox/Capture 1.md', sourceText);
+    app.vault.seedFile('00-Inbox/Context.md', '# Context\n');
+    const opened: ReturnType<typeof openQuickAdd>[] = [];
+    const steps: string[] = [];
+    Object.assign(plugin, { openQuickAdd: (kind: QuickKind, text: string, cardSource: CardSource) => {
+      steps.push('open');
+      opened.push(openQuickAdd(plugin, kind, text, cardSource));
+    } });
+
+    assert.equal(await plugin.openCardFromCapture(source.path, () => { steps.push('close processing'); return true; }), true);
+    assert.deepEqual(steps, ['close processing', 'open']);
+    const dialog = opened[0];
+    assert.ok(dialog);
+    assert.equal(dialog.editor.value, `Capture 1\n\n${sourceBody}`);
+    assert.ok(dialog.root.all().some((element) => element.textContent === `Source capture: ${source.path}`));
+    assert.deepEqual(app.vault.createdPaths, []);
+
+    dialog.editor.value = 'A distinct idea\n\nMy argument after reading [context](./Context.md).';
+    await dialog.modal.save();
+
+    const cardPath = `${plugin.settings.cardFolder}/A distinct idea.md`;
+    const card = app.vault.getAbstractFileByPath(cardPath);
+    assert.ok(card instanceof harness.TFile);
+    assert.deepEqual(app.metadataCache.getFileCache(card).frontmatter?.tangrow_sources, ['[[00-Inbox/Capture 1]]']);
+    assert.ok(card.content.endsWith('# A distinct idea\n\nMy argument after reading [context](../00-Inbox/Context.md).\n'));
+    assert.equal(source.content, sourceText);
+    assert.deepEqual(app.vault.createdPaths, [plugin.settings.cardFolder, cardPath]);
+    assert.deepEqual(app.vault.processedPaths, []);
+  });
+});
+
+test('capture derivation can be canceled and rejects a reclassified or replaced source', async () => {
+  const { plugin, app } = createPlugin();
+  const source = app.vault.seedFile('00-Inbox/Capture.md', '---\ntangrow_kind: "capture"\n---\n\nCaptured idea.\n');
+  let opened = 0;
+  Object.assign(plugin, { openQuickAdd: () => { opened++; } });
+  assert.equal(await plugin.openCardFromCapture(source.path, () => false), false);
+  assert.equal(opened, 0);
+
+  const oldCache = app.metadataCache.getFileCache(source);
+  app.metadataCache.getFileCache = () => oldCache;
+  source.content = source.content.replace('"capture"', '"note"');
+  await assert.rejects(plugin.openCardFromCapture(source.path), /This capture no longer exists/);
+  const cardSource: CardSource = { path: source.path, captureFile: source as unknown as CardSource['captureFile'] };
+  await assert.rejects(plugin.createCard('Stale derivation', 'Copied text', cardSource), /This capture no longer exists/);
+  await app.vault.delete(source);
+  app.vault.seedFile(source.path, '---\ntangrow_kind: "capture"\n---\n\nReplacement idea.\n');
+  await assert.rejects(plugin.createCard('Replaced derivation', 'Copied text', cardSource), /This capture no longer exists/);
+  assert.equal(opened, 0);
+  assert.deepEqual(app.vault.createdPaths, []);
+});
+
+test('capture derivation checks source identity again after preparing the card folder', async () => {
+  const { plugin, app } = createPlugin();
+  const source = app.vault.seedFile('00-Inbox/Capture.md', '---\ntangrow_kind: "capture"\n---\n\nAn earlier idea.\n');
+  const createFolder = app.vault.createFolder.bind(app.vault);
+  app.vault.createFolder = async (path) => {
+    await createFolder(path);
+    await app.vault.delete(source);
+    app.vault.seedFile(source.path, '---\ntangrow_kind: "capture"\n---\n\nA different idea.\n');
+  };
+  await assert.rejects(plugin.createCard('No stale link', 'Earlier idea', { path: source.path, captureFile: source as unknown as CardSource['captureFile'] }), /This capture no longer exists/);
+  assert.deepEqual(app.vault.createdPaths, [plugin.settings.cardFolder]);
+});
+
+test('creating a hub uses the configured card folder and creates a new file even when its title already exists', async () => {
+  const { plugin, app } = createPlugin();
+  plugin.settings.cardFolder = '55-Knowledge';
+  const existing = app.vault.seedFile('55-Knowledge/Research notes.md', '# My existing research\n');
+  await plugin.createHub('Research notes');
+  const path = '55-Knowledge/Research notes (2).md';
+  const hub = app.vault.getAbstractFileByPath(path);
+  assert.ok(hub instanceof harness.TFile);
+  assert.equal(app.metadataCache.getFileCache(hub).frontmatter?.tangrow_kind, 'hub');
+  assert.equal(existing.content, '# My existing research\n');
+  assert.deepEqual(app.vault.createdPaths, [path]);
+  assert.deepEqual(app.vault.processedPaths, []);
+  plugin.settings.knowledgeEnabled = false;
+  await assert.rejects(plugin.createHub('Disabled'), /Knowledge features are disabled/);
+  assert.deepEqual(app.vault.createdPaths, [path]);
+});
 
 function recoverySection(root: GateElement, text: string): GateElement {
   const section = root.all().find(node => node.tag === 'section' && node.children.some(el => el.tag === 'textarea' && el.attributes.has('readonly') && el.value === text));

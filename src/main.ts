@@ -48,22 +48,31 @@ type WorkbenchCards = Awaited<ReturnType<SidebarHost['loadWorkbenchCards']>>;
 const PERSISTENCE_COORDINATOR = Symbol.for('tangrow.persistence-coordinator');
 
 class PromptModal extends Modal {
-  constructor(app: Plugin['app'], private title: string, private placeholder: string, private submit: (value: string) => Promise<void>, private language: Locale) { super(app); }
+  constructor(app: Plugin['app'], private title: string, private placeholder: string, private submit: (value: string) => Promise<void>, private language: Locale, private readonly onDismiss?: () => void) { super(app); }
   onOpen(): void {
     this.setTitle(translate(this.language, this.title));
     let value = '';
+    let saving = false;
     new Setting(this.contentEl).addText((input) => {
       input.setPlaceholder(translate(this.language, this.placeholder)).onChange((text) => { value = text; });
       input.inputEl.style.width = '100%';
-      input.inputEl.addEventListener('keydown', (event) => { if (event.key === 'Enter') void save(); });
-      window.setTimeout(() => input.inputEl.focus(), 0);
+      input.inputEl.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' || event.isComposing) return;
+        event.preventDefault();
+        void save();
+      });
+      input.inputEl.ownerDocument.defaultView?.setTimeout(() => input.inputEl.focus(), 0);
     });
     const save = async (): Promise<void> => {
-      try { await this.submit(value); this.close(); } catch (error) { new Notice(describeError(this.language, error)); }
+      if (saving) return;
+      saving = true;
+      try { await this.submit(value); this.close(); }
+      catch (error) { new Notice(describeError(this.language, error)); }
+      finally { saving = false; }
     };
     new Setting(this.contentEl).addButton((button) => button.setButtonText(translate(this.language, 'Save')).setCta().onClick(save));
   }
-  onClose(): void { this.contentEl.empty(); }
+  onClose(): void { this.contentEl.empty(); this.onDismiss?.(); }
 }
 
 function uid(): string { return crypto.randomUUID(); }
@@ -113,6 +122,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   private activityTimer: number | undefined;
   private watchedWindows = new WeakSet<Window>();
   private quickAdds = new Set<QuickAddModal>();
+  private hubPrompts = new Set<PromptModal>();
   private immersiveCapture?: ImmersiveCapture;
   private noteImmersion?: NoteImmersion;
   private noteImmersionAction?: HTMLElement;
@@ -280,6 +290,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   onunload(): void {
     this.access?.refresh();
     for (const modal of this.quickAdds) modal.close();
+    for (const modal of this.hubPrompts) modal.close();
     this.access?.dispose();
     this.immersiveCapture?.close();
     this.noteImmersion?.close();
@@ -440,6 +451,26 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   openQuickAdd(kind: QuickKind = 'capture', text = '', source?: CardSource): void {
     const modal = new QuickAddModal(this, kind, text, source, () => this.quickAdds.delete(modal));
     this.quickAdds.add(modal);
+    modal.open();
+  }
+  async openCardFromCapture(path: string, beforeOpen?: () => boolean): Promise<boolean> {
+    if (!this.alive || !this.requireAccess()) return false;
+    if (!this.settings.knowledgeEnabled) throw new Error('Knowledge features are disabled.');
+    const { file, body } = await this.readCaptureSource(path);
+    if (!this.alive || !this.requireAccess()) return false;
+    if (!this.settings.knowledgeEnabled) throw new Error('Knowledge features are disabled.');
+    const heading = /^# ([^\r\n]+)(?:\r?\n|$)/.exec(body);
+    const duplicateTitle = heading && (heading[1] === file.basename || heading[1] === file.basename.replace(/ \(\d+\)$/, ''));
+    const text = duplicateTitle ? body.slice(heading[0].length).replace(/^(?:\r?\n)+/, '') : body;
+    if (beforeOpen && !beforeOpen()) return false;
+    this.openQuickAdd('card', `${file.basename}\n\n${text}`, { path, captureFile: file });
+    return true;
+  }
+  openNewHub(): void {
+    if (!this.alive || !this.requireAccess()) return;
+    if (!this.settings.knowledgeEnabled) throw new Error('Knowledge features are disabled.');
+    const modal = new PromptModal(this.app, 'New hub', 'Hub title', (title) => this.createHub(title), this.settings.language, () => this.hubPrompts.delete(modal));
+    this.hubPrompts.add(modal);
     modal.open();
   }
   openCaptureWindow(): Promise<void> { return revealCaptureWindow(this.app, this); }
@@ -989,8 +1020,9 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     let suffix = 2;
     while (this.app.vault.getAbstractFileByPath(path)) path = `${folder}/${title} (${suffix++}).md`;
     if (source) {
-      if (source.includeLink !== false) {
-        const file = this.app.vault.getAbstractFileByPath(source.path);
+      if (source.captureFile || source.includeLink !== false) {
+        const file = source.captureFile ? this.captureFile(source.path) : this.app.vault.getAbstractFileByPath(source.path);
+        if (source.captureFile && file !== source.captureFile) throw new Error('This capture no longer exists.');
         if (!(file instanceof TFile) || file.extension !== 'md') throw new Error('The card source no longer exists.');
         fields.tangrow_sources = [this.propertyLink(file, path, source.anchor)];
       }
@@ -1124,12 +1156,24 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     await this.openNote(file.path);
   }
   async createCard(title: string, body: string, source?: CardSource): Promise<void> {
-    const file = await this.exclusive(() => {
+    const file = await this.exclusive(async () => {
       if (!this.settings.knowledgeEnabled) throw new Error('Knowledge features are disabled.');
       validateFolderSettings(this.settings);
+      if (source?.captureFile) await this.readCaptureSource(source.path, source.captureFile);
       const fields = { tangrow_kind: 'card', tangrow_id: uid(), tangrow_stage: 'seed', created: new Date().toISOString() };
       return this.createUnique(this.settings.cardFolder, title, body, fields, source);
     });
+    try { await this.openNote(file.path); }
+    catch (error) { new Notice(this.error(error)); }
+  }
+  private async createHub(title: string): Promise<void> {
+    const file = await this.exclusive(async () => {
+      if (!this.alive || !this.requireAccess()) return null;
+      if (!this.settings.knowledgeEnabled) throw new Error('Knowledge features are disabled.');
+      validateFolderSettings(this.settings);
+      return this.createUnique(this.settings.cardFolder, title, '', { tangrow_kind: 'hub', created: new Date().toISOString() });
+    });
+    if (!file || !this.alive) return;
     try { await this.openNote(file.path); }
     catch (error) { new Notice(this.error(error)); }
   }
@@ -1405,10 +1449,22 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     if (!draft || this.quickAddSaves.has(id) || this.recoverySaves.has(draft)) return;
     this.preserveRecoveryDraft(id, draft.label, '');
   }
-  async readCapture(path: string): Promise<string> {
+  private captureFile(path: string): TFile {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile) || file.extension !== 'md' || this.app.metadataCache.getFileCache(file)?.frontmatter?.tangrow_kind !== 'capture') throw new Error('This capture no longer exists.');
-    return this.app.vault.cachedRead(file);
+    return file;
+  }
+  private async readCaptureSource(path: string, expectedFile?: TFile): Promise<{ file: TFile; body: string }> {
+    const file = this.captureFile(path);
+    if (expectedFile && expectedFile !== file) throw new Error('This capture no longer exists.');
+    const content = await this.app.vault.read(file);
+    const info = getFrontMatterInfo(content);
+    const fields = info.exists ? parseYaml(info.frontmatter) as Record<string, unknown> | null : null;
+    if (fields?.tangrow_kind !== 'capture' || this.app.vault.getAbstractFileByPath(path) !== file) throw new Error('This capture no longer exists.');
+    return { file, body: content.slice(info.contentStart).replace(/^(?:\r?\n)+/, '') };
+  }
+  async readCapture(path: string): Promise<string> {
+    return this.app.vault.cachedRead(this.captureFile(path));
   }
   async processCapture(path: string, request: CaptureRequest): Promise<string | null> {
     try {

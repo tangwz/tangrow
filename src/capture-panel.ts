@@ -71,8 +71,14 @@ export class CapturePanel {
   constructor(private readonly host: SidebarHost, private readonly surface: CaptureSurface = 'sidebar') {}
 
   showPending(): void {
-    this.captureFilter = 'pending';
     this.selectedDay = null;
+    this.setCaptureFilter('pending');
+  }
+
+  focusComposer(): void { this.editor?.focus(); }
+
+  private setCaptureFilter(filter: typeof this.captureFilter): void {
+    this.captureFilter = filter;
     this.limit = PAGE_SIZE;
     if (this.statusFilter) this.statusFilter.value = this.captureFilter;
     this.refresh();
@@ -215,9 +221,7 @@ export class CapturePanel {
     for (const value of ['pending', 'processed', 'all']) this.statusFilter.createEl('option', { value });
     this.statusFilter.value = this.captureFilter;
     this.statusFilter.addEventListener('change', () => {
-      this.captureFilter = this.statusFilter!.value as typeof this.captureFilter;
-      this.limit = PAGE_SIZE;
-      this.refresh();
+      this.setCaptureFilter(this.statusFilter!.value as typeof this.captureFilter);
     });
     this.timelineCount = timelineHeader.createSpan({ cls: 'tangrow-muted', attr: { 'aria-live': 'polite' } });
     this.timeline = this.root.createDiv({ cls: 'tangrow-capture-timeline' });
@@ -565,6 +569,16 @@ export class CapturePanel {
     if (this.surface === 'sidebar' && captures.length) this.ui.comingSoon(this.timeline, 'AI suggests where each capture goes');
     if (!filtered.length) {
       const hasCaptures = captures.length > 0;
+      if (hasCaptures && this.captureFilter === 'pending' && this.selectedDay === null) {
+        this.ui.empty(this.timeline, 'Nothing left to process', 'New thoughts go in the box above. Processed captures keep their original text.', 'check', [{
+          label: this.t('See {count} processed', { count: this.number(captures.length) }),
+          onClick: () => {
+            this.setCaptureFilter('processed');
+            this.statusFilter?.focus({ preventScroll: true });
+          }
+        }]);
+        return;
+      }
       const title = hasCaptures ? 'No captures match this filter' : this.selectedDay ? 'No captures on this day' : 'Your first thought starts here';
       const detail = hasCaptures ? 'Choose another status or date to browse your captures.' : this.selectedDay ? 'Choose another day, or save a new thought above.' : 'Saved captures will appear by their creation date.';
       this.ui.empty(this.timeline, title, detail, 'inbox');
