@@ -120,7 +120,7 @@ export class TangrowSidebar extends ItemView {
   constructor(leaf: WorkspaceLeaf, host: SidebarHost) {
     super(leaf);
     this.host = host;
-    this.ui = new SidebarUI(() => this.host.settings.language);
+    this.ui = new SidebarUI(() => this.host.settings.language, () => this.host.settings.showComingSoon);
     this.aiPanel = new AiPanel(host, this);
     this.workbenchCards = new WorkbenchCards(host, this.ui, () => {
       if (this.isMounted && (this.section === 'today' || this.section === 'knowledge')) this.refreshSection(this.host.snapshot());
@@ -499,7 +499,7 @@ export class TangrowSidebar extends ItemView {
           const pending = snapshot.captures.filter((capture) => !capture.processed);
           const activity = this.workbenchCards.todayActivity;
           const next = JSON.stringify([snapshot.tasks, pending.length, pending.at(-1)?.created, snapshot.captures.length,
-            projects, today.toDateString(), this.taskSaving, this.host.settings.language, this.host.settings.knowledgeEnabled, activity]);
+            projects, today.toDateString(), this.taskSaving, this.host.settings.language, this.host.settings.knowledgeEnabled, this.host.settings.showComingSoon, activity]);
           if (next === signature) return;
           signature = next;
           this.preserveFocus(() => this.renderToday(header, content, snapshot, projects, today));

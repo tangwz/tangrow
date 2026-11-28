@@ -5,7 +5,7 @@ import test from 'node:test';
 import { build } from 'esbuild';
 import { Access, type AccessResult, type AccessState } from '../src/access';
 import type TangrowPlugin from '../src/main';
-import { ITEMS, SECTION_IDS, searchSettings } from '../src/settings/catalog';
+import { ITEMS, SECTION_IDS, SECTIONS, searchSettings } from '../src/settings/catalog';
 import { DEFAULT_SETTINGS } from '../src/types';
 import * as mock from './obsidian-mock';
 import vector from './fixtures/license-vectors.json';
@@ -192,14 +192,10 @@ function fixture(language: 'en' | 'zh-CN' = 'en') {
 test('every existing preference and maintenance action renders once in its assigned section', () => {
   const { root, navigate, byText, dispose } = fixture();
   const rendered: string[] = [];
-  const sectionNames = [
-    'Activation and updates', 'User guide', 'Purchase and support', 'Defaults', 'Folders and notes',
-    'Sidebar components', 'View enhancements', 'Report settings', 'Maintenance'
-  ];
-  for (const [index, name] of sectionNames.entries()) {
-    navigate(name);
+  for (const section of SECTION_IDS) {
+    navigate(SECTIONS[section].name);
     const ids = root.descendants().flatMap((element) => element.dataset.settingId ?? []);
-    assert.deepEqual(ids.sort(), ITEMS.filter((item) => item.section === SECTION_IDS[index]).map((item) => item.id).sort());
+    assert.deepEqual(ids.sort(), ITEMS.filter((item) => item.section === section).map((item) => item.id).sort());
     rendered.push(...ids);
     byText('Back to settings').click();
   }
@@ -219,12 +215,12 @@ test('search ranks name prefixes, name substrings, then descriptions and include
     assert.ok(devices.indexOf('requirements') < devices.indexOf('devices'));
     assert.ok(devices.indexOf('devices') < devices.indexOf('redemption'));
     assert.equal(searchSettings('周期笔记模板', locale).length, 5);
-    assert.equal(searchSettings('系统设置', locale).length, 3);
+    assert.equal(searchSettings('系统维护', locale).length, 3);
     assert.deepEqual(searchSettings('no-such-setting', locale), []);
   }
 });
 
-test('selecting a weekly template result opens Defaults, expands the group, and focuses the field', async () => {
+test('selecting a weekly template result opens Periodic notes and focuses the field', async () => {
   const { root, row, navigate, byText, dispose } = fixture();
   navigate('Report settings');
   const search = root.descendants().find((element) => element.attributes.type === 'search')!;
@@ -232,16 +228,51 @@ test('selecting a weekly template result opens Defaults, expands the group, and 
   await search.oninput?.();
   byText('Weekly note template').parentElement!.click();
   const target = row('template-weekly');
-  assert.equal(target.parentElement!.tagName, 'DETAILS');
-  assert.equal(target.parentElement!.open, true);
+  assert.equal(byText('Periodic notes').tagName, 'H2');
   assert.equal(root.ownerDocument.activeElement, target.querySelector('input'));
   assert.ok(target.classes.has('tangrow-settings-highlight'));
   dispose();
 });
 
+test('settings entries show current PARA and suggestion summaries', async () => {
+  const { app, plugin, byText, dispose } = fixture();
+  assert.ok(byText('PARA 0/5'));
+  assert.ok(byText('Suggestions off'));
+  app.vault.seedFolder('Inbox');
+  await plugin.updateVaultStructure({ inboxFolder: 'Inbox' });
+  await plugin.updateAiSettings({ aiEnabled: true });
+  assert.ok(byText('PARA 1/5'));
+  assert.ok(byText('Suggestions on'));
+  dispose();
+});
+
+test('the model selector preserves custom IDs and rolls back a failed preset save', async () => {
+  const { plugin, navigate, row, byText, dispose } = fixture();
+  await plugin.updateAiSettings({ aiModel: 'claude-custom-2026' });
+  navigate('AI');
+  const model = row('aiModel');
+  const select = model.querySelector('select')!;
+  const custom = model.querySelector('input')!;
+  assert.deepEqual([select.value, custom.value], ['', 'claude-custom-2026']);
+  select.value = 'claude-sonnet-5-5';
+  plugin.saveFailures = 1;
+  await select.onchange?.();
+  assert.deepEqual([select.value, custom.value, plugin.settings.aiModel], ['', 'claude-custom-2026', 'claude-custom-2026']);
+  select.value = 'claude-sonnet-5-5';
+  await select.onchange?.();
+  assert.equal(plugin.settings.aiModel, 'claude-sonnet-5-5');
+  select.value = '';
+  await select.onchange?.();
+  assert.equal(plugin.settings.aiModel, 'claude-sonnet-5-5');
+  custom.value = 'claude-another-model';
+  await byText('Save model').onclick?.();
+  assert.deepEqual([select.value, custom.value, plugin.settings.aiModel], ['', 'claude-another-model', 'claude-another-model']);
+  dispose();
+});
+
 test('a valid integer that was typed but not committed is saved when settings move on or close', async () => {
   const { plugin, row, navigate, byText, dispose } = fixture();
-  navigate('Sidebar components');
+  navigate('Sidebar modules');
   let duration = row('focusMinutes').querySelector('input')!;
   duration.value = '45';
   await duration.oninput?.();
@@ -251,7 +282,7 @@ test('a valid integer that was typed but not committed is saved when settings mo
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(plugin.settings.focusMinutes, 45);
   assert.equal(plugin.saveCalls, 1);
-  navigate('Sidebar components');
+  navigate('Sidebar modules');
   duration = row('focusMinutes').querySelector('input')!;
   duration.value = '50';
   await duration.oninput?.();
@@ -323,7 +354,7 @@ test('an untouched integer field shows a value changed elsewhere, and typing the
 
 test('closing settings stops integer fields from following later changes', async () => {
   const { plugin, row, navigate, dispose } = fixture();
-  navigate('Sidebar components');
+  navigate('Sidebar modules');
   const duration = row('focusMinutes').querySelector('input')!;
   const shown = duration.value;
   dispose();
@@ -377,7 +408,7 @@ test('a focused untouched integer field in an inactive window still follows exte
 test('failed external settings writes notify listeners on rollback so integer fields never keep phantom values', async () => {
   for (const [section, id, key, trigger] of [
     ['Report settings', 'activityGoalMinutes', 'activityGoalMinutes', (plugin: TangrowPlugin, value: number) => plugin.updateReportSettings({ activityGoalMinutes: value })],
-    ['Sidebar components', 'focusMinutes', 'focusMinutes', (plugin: TangrowPlugin, value: number) => plugin.saveSettings({ focusMinutes: value })]
+    ['Sidebar modules', 'focusMinutes', 'focusMinutes', (plugin: TangrowPlugin, value: number) => plugin.saveSettings({ focusMinutes: value })]
   ] as const) {
     const { plugin, row, navigate, dispose } = fixture();
     navigate(section);
@@ -467,7 +498,7 @@ test('a view that fails to refresh after a rollback neither hides the save error
 
 test('an integer typed back to its original value while the first save is in flight saves the original value', async () => {
   const { plugin, row, navigate, dispose } = fixture();
-  navigate('Sidebar components');
+  navigate('Sidebar modules');
   const field = row('focusMinutes').querySelector('input')!;
   const original = plugin.settings.focusMinutes;
   const saveSettings = plugin.saveSettings.bind(plugin);
@@ -490,7 +521,7 @@ test('an integer typed back to its original value while the first save is in fli
 
 test('a failed earlier integer save does not undo a later commit that is still in flight', async () => {
   const { plugin, row, navigate, dispose } = fixture();
-  navigate('Sidebar components');
+  navigate('Sidebar modules');
   const field = row('focusMinutes').querySelector('input')!;
   const original = plugin.settings.focusMinutes;
   const saveSettings = plugin.saveSettings.bind(plugin);
@@ -513,7 +544,7 @@ test('a failed earlier integer save does not undo a later commit that is still i
 
 test('a failed first save of a value committed twice does not drop a later return to the original', async () => {
   const { plugin, row, navigate, dispose } = fixture();
-  navigate('Sidebar components');
+  navigate('Sidebar modules');
   const field = row('focusMinutes').querySelector('input')!;
   const original = plugin.settings.focusMinutes;
   const changed = original + 20;
@@ -567,7 +598,7 @@ test('a different integer typed over a stale page still saves the user\'s value'
 
 test('an integer saved once is not written again over a later change from another view', async () => {
   const { plugin, row, navigate, dispose } = fixture();
-  navigate('Sidebar components');
+  navigate('Sidebar modules');
   const duration = row('focusMinutes').querySelector('input')!;
   duration.value = '45';
   await duration.oninput?.();
@@ -584,7 +615,7 @@ test('an integer saved once is not written again over a later change from anothe
 
 test('an earlier integer save failure does not replace an uncommitted edit', async () => {
   const { plugin, row, navigate, dispose } = fixture();
-  navigate('Sidebar components');
+  navigate('Sidebar modules');
   const field = row('focusMinutes').querySelector('input')!;
   const saveSettings = plugin.saveSettings;
   let reject!: (reason: Error) => void;
@@ -603,7 +634,7 @@ test('an earlier integer save failure does not replace an uncommitted edit', asy
 
 test('change, blur and leaving the section save one edit once', async () => {
   const { plugin, row, navigate, byText, dispose } = fixture();
-  navigate('Sidebar components');
+  navigate('Sidebar modules');
   const duration = row('focusMinutes').querySelector('input')!;
   duration.value = '90';
   await duration.oninput?.();
@@ -619,7 +650,7 @@ test('change, blur and leaving the section save one edit once', async () => {
 
 test('valid integers save when committed, out of range values show a hint, and access changes lock editing', async () => {
   const { plugin, root, row, access, navigate, byText, dispose } = fixture();
-  navigate('Sidebar components');
+  navigate('Sidebar modules');
   const duration = row('focusMinutes').querySelector('input')!;
   const original = plugin.settings.focusMinutes;
   for (const value of ['0', '241', '1.5', '']) {
@@ -652,42 +683,49 @@ test('valid integers save when committed, out of range values show a hint, and a
   await duration.onchange?.();
   assert.equal(plugin.saveCalls, 1);
   byText('Back to settings').click();
-  navigate('Defaults');
+  navigate('Language and startup');
   assert.notEqual(row('language').parentElement?.tagName, 'FIELDSET');
   assert.equal(root.querySelector('fieldset')?.disabled, true);
   dispose();
 });
 
-test('Apply rolls back failed writes and leaves inputs available for retry', async () => {
+test('section saves reject the whole candidate and keep inputs available for retry', async () => {
   const { plugin, app, row, navigate, byText, dispose } = fixture();
-  navigate('Folders and notes');
+  navigate('Vault structure');
   const previousPaths = { inbox: plugin.settings.inboxFolder, task: plugin.settings.taskOverviewPath };
+  const inbox = row('inboxFolder').querySelector('input')!;
+  const task = row('taskOverviewPath').querySelector('input')!;
   app.vault.seedFile('Tasks.md', '# Tasks');
-  for (const [key, value] of [['inboxFolder', 'New Inbox'], ['taskOverviewPath', 'Tasks.md']] as const) {
-    const target = row(key);
-    const input = target.querySelector('input')!;
-    input.value = value;
-    assert.equal(plugin.saveCalls, key === 'inboxFolder' ? 0 : 1);
-    plugin.saveFailures = 1;
-    await target.querySelector('button')!.onclick?.();
-    assert.equal(input.value, value);
-  }
-  assert.equal(plugin.settings.inboxFolder, previousPaths.inbox);
-  assert.equal(plugin.settings.taskOverviewPath, previousPaths.task);
-  assert.equal(plugin.savedData, null);
-  await row('inboxFolder').querySelector('button')!.onclick?.();
-  assert.equal(plugin.settings.inboxFolder, 'New Inbox');
+  inbox.value = 'New Inbox';
+  task.value = 'Tasks.md';
+  await inbox.oninput?.();
+  await task.oninput?.();
+  await byText('Save changes').onclick?.();
+  assert.deepEqual([plugin.settings.inboxFolder, plugin.settings.taskOverviewPath], [previousPaths.inbox, previousPaths.task]);
+  assert.equal(plugin.saveCalls, 0);
+  app.vault.seedFolder('New Inbox');
+  plugin.saveFailures = 1;
+  await byText('Save changes').onclick?.();
+  assert.deepEqual([plugin.settings.inboxFolder, plugin.settings.taskOverviewPath], [previousPaths.inbox, previousPaths.task]);
+  assert.deepEqual([inbox.value, task.value], ['New Inbox', 'Tasks.md']);
+  await byText('Save changes').onclick?.();
+  assert.deepEqual([plugin.settings.inboxFolder, plugin.settings.taskOverviewPath], ['New Inbox', 'Tasks.md']);
 
   byText('Back to settings').click();
-  navigate('Defaults');
+  navigate('Periodic notes');
+  const format = row('format-weekly').querySelector('input')!;
+  const template = row('template-weekly').querySelector('input')!;
+  const previousFormat = plugin.settings.journalFormats.weekly;
+  format.value = 'GGGG/[Weeks]/WW';
+  template.value = 'Weekly.md';
+  await format.oninput?.();
+  await template.oninput?.();
+  assert.match(row('format-weekly').querySelector('code')!.textContent, /Weeks/);
+  await byText('Save changes').onclick?.();
+  assert.deepEqual([plugin.settings.journalFormats.weekly, plugin.settings.journalTemplates.weekly], [previousFormat, '']);
   app.vault.seedFile('Weekly.md', '# Weekly');
-  const format = row('format-weekly');
-  const template = row('template-weekly');
-  format.querySelector('input')!.value = 'GGGG/[Weeks]/WW';
-  template.querySelector('input')!.value = 'Weekly.md';
-  await Promise.all([format.querySelector('button')!.onclick?.(), template.querySelector('button')!.onclick?.()]);
-  assert.equal(plugin.settings.journalFormats.weekly, 'GGGG/[Weeks]/WW');
-  assert.equal(plugin.settings.journalTemplates.weekly, 'Weekly.md');
+  await byText('Save changes').onclick?.();
+  assert.deepEqual([plugin.settings.journalFormats.weekly, plugin.settings.journalTemplates.weekly], ['GGGG/[Weeks]/WW', 'Weekly.md']);
 
   byText('Back to settings').click();
   navigate('Report settings');
@@ -738,7 +776,7 @@ test('the settings toggle and sidebar action share the default width and clear p
 
   await plugin.action('page-width');
   assert.equal(appliedWidths.at(-1), true);
-  navigate('View enhancements');
+  navigate('Sidebar modules');
   const toggle = row('wideByDefault').querySelector('input')!;
   toggle.checked = true;
   await toggle.onchange?.();

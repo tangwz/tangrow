@@ -28,7 +28,7 @@ const buttonLevels: Record<NonNullable<ButtonOptions['level']>, string> = {
 };
 
 export class SidebarUI {
-  constructor(private readonly language: () => Locale) {}
+  constructor(private readonly language: () => Locale, private readonly showComingSoon: () => boolean = () => true) {}
 
   t(source: string, values?: TranslationValues): string {
     return translate(this.language(), source, values);
@@ -84,6 +84,7 @@ export class SidebarUI {
   }
 
   comingSoon(parent: HTMLElement, source: string): void {
+    if (!this.showComingSoon()) return;
     const row = parent.createDiv({ cls: 'tangrow-coming-soon' });
     icon(row, 'sparkles').setAttribute('aria-hidden', 'true');
     row.createSpan({ cls: 'tangrow-coming-soon-description', text: this.t(source) });

@@ -3,29 +3,29 @@ import { JOURNAL_LABELS, JOURNAL_PERIODS } from '../periodic-notes';
 import type { Locale } from '../types';
 
 export const GROUPS = {
-  account: 'Account and help',
-  features: 'Feature settings',
-  system: 'System settings'
+  general: 'General',
+  workbench: 'Workbench',
+  data: 'Data and help'
 } as const;
 
 type Group = keyof typeof GROUPS;
 
 export const SECTIONS = {
-  activation: { group: 'account', name: 'Activation and updates', description: 'Trial, redemption code, devices, and plugin version.' },
-  guide: { group: 'account', name: 'User guide', description: 'Read the Tangrow guide on GitHub.' },
-  purchase: { group: 'account', name: 'Purchase and support', description: 'Purchase channels, device limits, and changing devices.' },
-  defaults: { group: 'features', name: 'Defaults', description: 'Language, startup, and periodic notes.' },
-  folders: { group: 'features', name: 'Folders and notes', description: 'Vault folders and the task overview note.' },
-  sidebar: { group: 'features', name: 'Sidebar components', description: 'Focus duration and AI suggestions.' },
-  views: { group: 'features', name: 'View enhancements', description: 'Default note width and knowledge features.' },
-  reports: { group: 'features', name: 'Report settings', description: 'Editing activity, daily targets, and exclusions.' },
-  maintenance: { group: 'system', name: 'Maintenance', description: 'Companion Bases, folder migration, and the agent guide.' }
+  activation: { group: 'general', name: 'Activation and updates', description: 'Trial, redemption code, devices, and plugin version.' },
+  defaults: { group: 'general', name: 'Language and startup', description: 'Interface language and opening the workbench on startup.' },
+  folders: { group: 'workbench', name: 'Vault structure', description: 'PARA folders, cards, and the task overview note.' },
+  periodic: { group: 'workbench', name: 'Periodic notes', description: 'Journal folder, formats and templates for all five periods.' },
+  sidebar: { group: 'workbench', name: 'Sidebar modules', description: 'Knowledge, default focus duration, and note width.' },
+  ai: { group: 'workbench', name: 'AI', description: 'Organizing engine preferences and instant suggestions.' },
+  reports: { group: 'data', name: 'Report settings', description: 'Editing activity, daily targets, and exclusions.' },
+  maintenance: { group: 'data', name: 'Maintenance', description: 'Companion Bases, folder migration, and the agent guide.' },
+  guide: { group: 'data', name: 'Guide and purchase', description: 'The user guide, purchase channels, and changing devices.' }
 } as const satisfies Record<string, { group: Group; name: string; description: string }>;
 
 export type SectionId = keyof typeof SECTIONS;
 export const SECTION_IDS = Object.keys(SECTIONS) as SectionId[];
 export const TEMPLATES = 'Periodic note templates';
-export const AI_SUGGESTIONS = 'AI suggestions';
+export const AI_SUGGESTIONS = 'Instant suggestions';
 export const PERIODIC_NOTES = 'Periodic notes';
 const folderDescription = 'Existing vault-relative folder. No files are moved.';
 const formatDescription = 'Moment format, including literal folder names in brackets.';
@@ -42,27 +42,30 @@ export interface SettingItem {
 export const ITEMS: readonly SettingItem[] = [
   { id: 'language', section: 'defaults', name: 'Interface language', description: 'Chinese is the default. Change the language without renaming notes or database files.' },
   { id: 'autoOpen', section: 'defaults', name: 'Open companion on startup', description: '' },
-  { id: 'journalFolder', section: 'defaults', name: 'Journal folder', description: folderDescription, group: PERIODIC_NOTES },
+  { id: 'journalFolder', section: 'periodic', name: 'Journal folder', description: folderDescription, group: PERIODIC_NOTES },
   ...JOURNAL_PERIODS.map((period): SettingItem => ({
-    id: `format-${period}`, section: 'defaults', name: `${JOURNAL_LABELS[period]} format`, description: formatDescription, group: PERIODIC_NOTES
+    id: `format-${period}`, section: 'periodic', name: `${JOURNAL_LABELS[period]} format`, description: formatDescription, group: PERIODIC_NOTES
   })),
   ...JOURNAL_PERIODS.map((period): SettingItem => ({
-    id: `template-${period}`, section: 'defaults', name: `${JOURNAL_LABELS[period]} template`, description: templateDescription, group: TEMPLATES
+    id: `template-${period}`, section: 'periodic', name: `${JOURNAL_LABELS[period]} template`, description: templateDescription, group: TEMPLATES
   })),
   { id: 'inboxFolder', section: 'folders', name: 'Inbox', description: folderDescription },
   { id: 'projectFolder', section: 'folders', name: 'Projects', description: folderDescription },
   { id: 'areaFolder', section: 'folders', name: 'Areas', description: folderDescription },
   { id: 'resourcesFolder', section: 'folders', name: 'Resources', description: folderDescription },
   { id: 'archiveFolder', section: 'folders', name: 'Archive', description: folderDescription },
+  { id: 'cardFolder', section: 'folders', name: 'Card folder', description: folderDescription },
   { id: 'supportFolder', section: 'folders', name: 'Companion folder', description: 'New Bases and focus/habit records only. Changing this path does not move existing files.' },
   { id: 'taskOverviewPath', section: 'folders', name: 'Task overview note', description: 'Existing Tasks note path. Tangrow opens it without changing its queries.' },
   { id: 'focusMinutes', section: 'sidebar', name: 'Default focus duration', description: 'Minutes, from 1 to 240.' },
-  { id: 'aiEnabled', section: 'sidebar', name: 'Enable AI features', description: 'Off by default. When on, quick add and capture processing send the text you are sorting to the Claude API with your own key, and only when you press an AI button. Vault workflows run in Claudian and do not use this key.', group: AI_SUGGESTIONS },
-  { id: 'aiModel', section: 'sidebar', name: 'Model', description: 'Claude model ID. The default is claude-opus-5-5; claude-sonnet-5-5 and claude-haiku-5-5 are faster and cheaper.', group: AI_SUGGESTIONS },
-  { id: 'aiApiKey', section: 'sidebar', name: 'Anthropic API key', description: 'Save, replace, or remove the key used for AI suggestions.', group: AI_SUGGESTIONS },
-  { id: 'wideByDefault', section: 'views', name: 'Widen notes by default', description: 'Apply the default width and clear per-note width overrides.' },
-  { id: 'knowledgeEnabled', section: 'views', name: 'Enable knowledge features', description: 'Show knowledge navigation, card review, and card reports.' },
-  { id: 'cardFolder', section: 'views', name: 'Card folder', description: folderDescription },
+  { id: 'prepareDailyReview', section: 'ai', name: 'Prepare the daily review', description: 'Remember your choice for when the organizing engine is available.' },
+  { id: 'showComingSoon', section: 'ai', name: 'Show “Coming soon” hints', description: 'Show upcoming organizing features in the workbench.' },
+  { id: 'aiEnabled', section: 'ai', name: 'Enable instant suggestions', description: 'Off by default. When on, quick add and capture processing send the text you are sorting to the Claude API with your own key, and only when you press an AI button. Vault workflows run in Claudian and do not use this key.', group: AI_SUGGESTIONS },
+  { id: 'aiModel', section: 'ai', name: 'Model', description: 'Choose a preset or enter a custom Claude model ID.', group: AI_SUGGESTIONS },
+  { id: 'aiApiKey', section: 'ai', name: 'Anthropic API key', description: 'Save, replace, or remove the key used for AI suggestions.', group: AI_SUGGESTIONS },
+  { id: 'claudian', section: 'ai', name: 'Claudian status', description: 'Run Claudian workflows from the workbench.' },
+  { id: 'wideByDefault', section: 'sidebar', name: 'Widen notes by default', description: 'Apply the default width and clear per-note width overrides.' },
+  { id: 'knowledgeEnabled', section: 'sidebar', name: 'Enable knowledge features', description: 'Show knowledge navigation, card review, and card reports.' },
   { id: 'trackEditingActivity', section: 'reports', name: 'Enable local editing activity', description: 'Only editing event times are counted. Note text and keyboard contents are not stored.' },
   { id: 'activityGoalMinutes', section: 'reports', name: 'Daily activity target', description: 'Use an activity goal from 1 to 1440 whole minutes.' },
   { id: 'reportExcludedFolders', section: 'reports', name: 'Excluded folders, one per line', description: 'Use at most 100 relative folder exclusions.' },
@@ -75,10 +78,10 @@ export const ITEMS: readonly SettingItem[] = [
   { id: 'devices', section: 'activation', name: 'Linked devices', description: 'View device slots or release this device.' },
   { id: 'version', section: 'activation', name: 'Check for updates', description: 'Open the latest releases on GitHub.' },
   { id: 'tutorial', section: 'guide', name: 'Read the Tangrow guide on GitHub', description: 'Find installation and usage instructions.' },
-  { id: 'lifetime', section: 'purchase', name: 'Lifetime purchase', description: 'One purchase includes free updates to local features. Anthropic API fees and Claudian are separate.' },
-  { id: 'channels', section: 'purchase', name: 'Purchase channels', description: 'Purchase from the Xiaohongshu or Douyin store. Contact the seller through your order for support.' },
-  { id: 'requirements', section: 'purchase', name: 'Device limit and internet access', description: 'A code covers up to 3 devices. Go online to activate and at least once every 30 days to renew.' },
-  { id: 'replacement', section: 'purchase', name: 'Changing devices', description: 'Release an old device, wait 45 days after its last renewal, or contact the seller. Reinstalling or clearing local data may reset your trial and cause reactivation to use a new slot.' }
+  { id: 'lifetime', section: 'guide', name: 'Lifetime purchase', description: 'One purchase includes free updates to local features. Anthropic API fees and Claudian are separate.' },
+  { id: 'channels', section: 'guide', name: 'Purchase channels', description: 'Purchase from the Xiaohongshu or Douyin store. Contact the seller through your order for support.' },
+  { id: 'requirements', section: 'guide', name: 'Device limit and internet access', description: 'A code covers up to 3 devices. Go online to activate and at least once every 30 days to renew.' },
+  { id: 'replacement', section: 'guide', name: 'Changing devices', description: 'Release an old device, wait 45 days after its last renewal, or contact the seller. Reinstalling or clearing local data may reset your trial and cause reactivation to use a new slot.' }
 ];
 
 export function searchSettings(query: string, locale: Locale): SettingItem[] {
