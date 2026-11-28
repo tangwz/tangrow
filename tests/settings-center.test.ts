@@ -12,17 +12,28 @@ import * as mock from './obsidian-mock';
 import vector from './fixtures/license-vectors.json';
 
 type ElementOptions = { text?: string; value?: string; type?: string; cls?: string; attr?: Record<string, string> };
+type ElementDocument = EventTarget & {
+  activeElement: Element | null;
+  hasFocus(): boolean;
+  defaultView?: { setTimeout(callback: () => void, delay: number): void };
+};
 
 class Element extends EventTarget {
   children: Element[] = [];
   parentElement: Element | null = null;
-  ownerDocument = { activeElement: null as Element | null, hasFocus: () => true };
+  ownerDocument: ElementDocument = Object.assign(new EventTarget(), { activeElement: null, hasFocus: () => true });
   attributes: Record<string, string> = {};
   dataset: Record<string, string> = {};
   classes = new Set<string>();
   classList = this.classes;
   textContent = '';
   value = '';
+  isConnected = true;
+  readOnly = false;
+  selectionStart = 0;
+  selectionEnd = 0;
+  selectionDirection = 'none';
+  scrollTop = 0;
   checked = false;
   disabled = false;
   hidden = false;
@@ -54,6 +65,7 @@ class Element extends EventTarget {
   empty(): void { this.children = []; }
   remove(): void { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter((child) => child !== this); }
   focus(): void { this.ownerDocument.activeElement = this; }
+  setSelectionRange(start: number, end: number): void { this.selectionStart = start; this.selectionEnd = end; }
   scrollIntoView(): void {}
   click(): void {
     if (!this.disabled) {
@@ -270,7 +282,12 @@ test('the welcome guide can be rerun from settings and completes the four steps'
   assert.equal(bases.checked, true);
   bases.checked = false;
   await bases.onchange?.();
+  const next = wizard?.contentEl.descendants().find((element) => element.textContent === 'Create 5 missing folders');
+  assert.ok(next);
+  let actionScrolledIntoView = false;
+  next.scrollIntoView = () => { actionScrolledIntoView = true; };
   await click('Create 5 missing folders');
+  assert.equal(actionScrolledIntoView, true);
   assert.equal(plugin.settings.projectFolder, '1. 项目');
   assert.equal(original.content, '# Original\n');
   assert.deepEqual(app.vault.createdPaths, ['00-Inbox', '30-Area', '40-Resources', '90-Archive', '50-Zettel']);
@@ -283,7 +300,7 @@ test('the welcome guide can be rerun from settings and completes the four steps'
   await click('Next');
   const capture = control('Capture your first thought');
   capture.value = 'First workshop thought';
-  await capture.oninput?.();
+  capture.dispatchEvent(new Event('input'));
   await click('Save');
   let settingsCloseCalls = 0;
   Object.assign(app, { setting: { close: () => {
@@ -309,6 +326,151 @@ test('the welcome guide can be rerun from settings and completes the four steps'
   assert.equal(Modal.current, null);
   assert.equal(app.vault.getMarkdownFiles().length, 2);
   dispose();
+});
+
+for (const platform of ['ios', 'android'] as const) test(`on ${platform}, first capture saves settled text`, async () => {
+  const key = platform === 'ios' ? 'isIosApp' : 'isAndroidApp';
+  const original = Object.getOwnPropertyDescriptor(mock.Platform, key);
+  Object.defineProperty(mock.Platform, key, { value: true, configurable: true });
+  const { app, navigate, dispose } = fixture();
+  navigate('Welcome guide');
+  const wizard = Modal.current!;
+  try {
+    const button = (label: string) => {
+      const element = wizard.contentEl.descendants().find((item) => item.tagName === 'BUTTON' && item.textContent === label);
+      assert.ok(element?.onclick, label);
+      return element;
+    };
+    await button('Get started').onclick?.();
+    await button('Not now').onclick?.();
+    await button('Next').onclick?.();
+    const capture = wizard.contentEl.querySelector('textarea')!;
+    const save = button('Save');
+    const document = capture.ownerDocument;
+    const timers: (() => void)[] = [];
+    document.defaultView = { setTimeout: (callback) => { timers.push(callback); } };
+    const settle = () => { for (const callback of timers.splice(0)) callback(); };
+    const input = (text: string, inputType: string, isComposing = false) => {
+      capture.value = text;
+      capture.dispatchEvent(Object.assign(new Event('input'), { inputType, isComposing }));
+    };
+
+    let expected: string;
+    if (platform === 'ios') {
+      capture.dispatchEvent(new Event('compositionstart'));
+      input('raw', 'insertCompositionText', true);
+      assert.equal(save.disabled, true);
+      document.dispatchEvent(new Event('pointerdown'));
+      capture.dispatchEvent(new Event('blur'));
+      capture.dispatchEvent(new Event('focus'));
+      input('raw', 'insertFromComposition');
+      capture.dispatchEvent(new Event('compositionend'));
+      capture.dispatchEvent(new Event('blur'));
+      settle();
+      assert.equal(capture.value, '');
+      assert.equal(save.disabled, true);
+
+      input('raw', 'insertCompositionText', true);
+      capture.dispatchEvent(new Event('compositionend'));
+      assert.equal(capture.value, '');
+      await save.onclick?.();
+      assert.equal(app.vault.getMarkdownFiles().length, 0);
+
+      input('First ', 'insertText');
+      capture.setSelectionRange(6, 6);
+      capture.dispatchEvent(new Event('compositionstart'));
+      input('First ni', 'insertCompositionText', true);
+      expected = 'First \u4f60';
+      input(expected, 'insertFromComposition');
+      capture.dispatchEvent(new Event('compositionend'));
+      assert.equal(save.disabled, true);
+      settle();
+      capture.value += 'raw';
+    } else {
+      capture.dispatchEvent(new Event('compositionstart'));
+      input('First wor', 'insertCompositionText', true);
+      assert.equal(save.disabled, false);
+      expected = 'First word';
+      capture.value = expected;
+      capture.dispatchEvent(new Event('compositionend'));
+    }
+    assert.equal(save.disabled, false);
+    await save.onclick?.();
+    const notes = app.vault.getMarkdownFiles();
+    assert.equal(notes.length, 1);
+    assert.ok(notes[0]?.content.endsWith(`${expected}\n`));
+  } finally {
+    wizard.close();
+    dispose();
+    if (original) Object.defineProperty(mock.Platform, key, original);
+    else Reflect.deleteProperty(mock.Platform, key);
+  }
+});
+
+test('dismissing the startup guide on mobile prepares the companion without revealing or activating it', async () => {
+  const { app, plugin, dispose } = fixture();
+  const original = Object.getOwnPropertyDescriptor(mock.Platform, 'isMobileApp');
+  Object.defineProperty(mock.Platform, 'isMobileApp', { value: true, configurable: true });
+  try {
+    plugin.settings.autoOpen = true;
+    const ensureRequests: unknown[][] = [];
+    const revealRequests: unknown[] = [];
+    Object.assign(app.workspace, {
+      ensureSideLeaf: async (...args: unknown[]) => {
+        ensureRequests.push(args);
+        return { view: {} };
+      },
+      revealLeaf: async (leaf: unknown) => { revealRequests.push(leaf); }
+    });
+    plugin.openOnboarding(true);
+    const wizard = Modal.current;
+    assert.ok(wizard);
+    wizard.close();
+    await Promise.resolve();
+    assert.deepEqual(ensureRequests, [['tangrow-sidebar', 'right', { active: false, reveal: false }]]);
+    assert.deepEqual(app.workspace.activationRequests, []);
+    assert.deepEqual(revealRequests, []);
+  } finally {
+    Modal.current?.close();
+    dispose();
+    if (original) Object.defineProperty(mock.Platform, 'isMobileApp', original);
+    else Reflect.deleteProperty(mock.Platform, 'isMobileApp');
+  }
+});
+
+test('a new onboarding composition started while read-only keeps its candidate', async () => {
+  const { access, navigate, dispose } = fixture();
+  navigate('Welcome guide');
+  const wizard = Modal.current!;
+  try {
+    const click = async (label: string) => {
+      const button = wizard.contentEl.descendants().find((element) => element.tagName === 'BUTTON' && element.textContent === label);
+      assert.ok(button?.onclick, label);
+      await button.onclick();
+    };
+    await click('Get started');
+    await click('Not now');
+    await click('Next');
+    const capture = wizard.contentEl.querySelector('textarea')!;
+    capture.value = 'First ';
+    capture.dispatchEvent(new Event('input'));
+    capture.dispatchEvent(new Event('compositionstart'));
+    capture.value = 'First ni';
+    access.change('expired');
+    assert.equal(capture.readOnly, true);
+    capture.dispatchEvent(new Event('compositionend'));
+    assert.equal(capture.value, 'First ');
+
+    capture.dispatchEvent(new Event('compositionstart'));
+    access.change('active');
+    assert.equal(capture.readOnly, false);
+    capture.value = 'First 你';
+    capture.dispatchEvent(new Event('compositionend'));
+    assert.equal(capture.value, 'First 你');
+  } finally {
+    wizard.close();
+    dispose();
+  }
 });
 
 test('an unactivated user can skip setup and capture without creating vault content', async () => {

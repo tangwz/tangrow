@@ -458,6 +458,8 @@ export class TangrowSidebar extends ItemView {
     this.capturePanel?.destroy();
     this.capturePanel = undefined;
     this.aiPanel.destroy();
+    // Settle any just-ended composition while its control is still connected.
+    this.clearStudioControls();
     this.section = section;
     for (const [id, item] of this.navButtons) {
       item.classList.toggle('is-active', id === section);
@@ -484,7 +486,6 @@ export class TangrowSidebar extends ItemView {
     if (section === 'knowledge') this.renderNestedTabs('Knowledge views', KNOWLEDGE_TABS, this.knowledgeTab, (tab) => this.showKnowledge(tab));
     if (section === 'more' && this.moreTab) this.renderMoreBack(this.moreTab);
     this.pane = this.workspacePane.createDiv({ cls: 'tangrow-pane' });
-    this.clearStudioControls();
     this.clock = undefined;
     this.clockStatus = undefined;
     this.clockProgress = undefined;

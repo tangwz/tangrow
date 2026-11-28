@@ -1,5 +1,6 @@
 import { Modal } from 'obsidian';
 import { accessErrorMessage } from './access-messages';
+import { DraftComposition, tracksComposition } from './draft-composition';
 import type { DraftSubmission } from './draft-submissions';
 import { translate, type TranslationValues } from './i18n';
 import type TangrowPlugin from './main';
@@ -17,7 +18,6 @@ export class OnboardingModal extends Modal {
   private step: Step = 1;
   private busy = false;
   private closed = false;
-  private composing = false;
   private unsubscribe?: () => void;
   private vaultValues?: VaultStructureValues;
   private fields?: ReturnType<typeof renderVaultStructureFields>;
@@ -30,6 +30,8 @@ export class OnboardingModal extends Modal {
   private bases?: HTMLInputElement;
   private review?: HTMLInputElement;
   private capture?: HTMLTextAreaElement;
+  private captureComposition?: DraftComposition;
+  private cancelledCaptureComposition?: DraftComposition;
   private accessPanel?: HTMLElement;
   private accessHint?: HTMLElement;
   private trial?: HTMLButtonElement;
@@ -52,6 +54,7 @@ export class OnboardingModal extends Modal {
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     this.fields?.dispose();
+    this.clearCapture();
     this.contentEl.empty();
     this.onDismiss();
   }
@@ -60,10 +63,10 @@ export class OnboardingModal extends Modal {
 
   private renderStep(): void {
     this.fields?.dispose();
-    this.fields = this.capture = this.bases = this.review = undefined;
+    this.clearCapture();
+    this.fields = this.bases = this.review = undefined;
     this.accessPanel = this.accessHint = this.trial = this.activation = undefined;
     this.languageButtons = [];
-    this.composing = false;
     this.setTitle(this.t('Welcome guide'));
     this.contentEl.empty();
     const progress = this.contentEl.createDiv({ cls: 'tangrow-onboarding-progress' });
@@ -163,19 +166,61 @@ export class OnboardingModal extends Modal {
         rows: '4', 'aria-label': this.t('Capture your first thought'), placeholder: this.t('What’s on your mind? An idea, a question, a link.')
       } });
       capture.value = this.captureText;
-      capture.oninput = () => {
+      const track = tracksComposition();
+      const isCurrent = () => !this.closed && this.capture === capture;
+      const canEdit = () => isCurrent() && !capture.readOnly;
+      const remember = () => {
         this.captureText = capture.value;
         this.showStatus();
         this.refreshControls();
       };
-      capture.addEventListener('compositionstart', () => { this.composing = true; this.refreshControls(); });
-      capture.addEventListener('compositionend', () => {
-        this.composing = false;
-        this.captureText = capture.value;
+      capture.addEventListener('input', event => {
+        if (!canEdit() || this.captureComposition || (track && (event as InputEvent).isComposing)) return;
+        this.cancelledCaptureComposition = undefined;
+        remember();
+      });
+      capture.addEventListener('compositionstart', () => {
+        if (!isCurrent()) return;
+        if (!capture.readOnly && track) this.captureComposition?.flush();
+        // A new composition invalidates the marker for late endings, even while the field is read-only.
+        this.cancelledCaptureComposition = undefined;
+        if (!canEdit() || !track) return;
+        this.captureComposition?.dispose();
+        this.captureComposition = new DraftComposition(capture);
         this.refreshControls();
+      });
+      capture.addEventListener('keydown', event => {
+        if (canEdit()) this.captureComposition?.keyDown(event);
+      });
+      capture.addEventListener('compositionend', () => {
+        if (!isCurrent()) return;
+        const composition = this.captureComposition;
+        if (!composition) {
+          if (track) this.cancelledCaptureComposition?.revertLateEnd(this.captureText);
+          else if (canEdit()) remember();
+          return;
+        }
+        const finish = (confirmed: boolean) => {
+          if (this.captureComposition !== composition) return;
+          composition.dispose();
+          this.captureComposition = undefined;
+          if (confirmed && canEdit()) remember();
+          else {
+            composition.restore();
+            this.cancelledCaptureComposition = composition;
+            this.refreshControls();
+          }
+        };
+        if (canEdit()) composition.settle(finish);
+        else finish(false);
       });
     }
     body.createEl('p', { text: this.t('You can also capture from the sidebar, a separate window, the command palette, or the editor menu.') });
+  }
+
+  private clearCapture(): void {
+    this.captureComposition?.dispose();
+    this.captureComposition = this.cancelledCaptureComposition = this.capture = undefined;
   }
 
   private renderAccess(): void {
@@ -243,7 +288,7 @@ export class OnboardingModal extends Modal {
     if (this.step === 4) {
       main = this.t(this.capturePath ? 'Done, go process it' : 'Save');
       if (!this.capturePath) secondary = this.t('Later, finish');
-      blocked = !this.capturePath && (locked || this.composing || !this.captureText.trim());
+      blocked = !this.capturePath && (locked || !!this.captureComposition || !this.captureText.trim());
     }
     this.back.textContent = secondary;
     this.back.disabled = this.busy;
@@ -273,9 +318,8 @@ export class OnboardingModal extends Modal {
       else if (this.host.access.canUse()) await this.run(() => this.saveVault());
     } else if (this.step === 3) this.move(4);
     else if (this.capturePath) await this.finish();
-    else if (this.host.access.canUse() && !this.composing) await this.run(async () => {
-      const text = this.capture?.value ?? this.captureText;
-      this.capturePath = await this.host.captureOnboardingText(text, this.receipt);
+    else if (this.host.access.canUse() && !this.captureComposition) await this.run(async () => {
+      this.capturePath = await this.host.captureOnboardingText(this.captureText, this.receipt);
       if (!this.closed) this.renderStep();
     });
   }
@@ -299,6 +343,7 @@ export class OnboardingModal extends Modal {
     if (missing) {
       this.fields?.refresh();
       this.showStatus(this.t('Your vault folders are ready.'));
+      this.next?.scrollIntoView({ block: 'nearest' });
     } else this.move(3);
   }
 
