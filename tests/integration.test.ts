@@ -129,6 +129,7 @@ interface TestSidebar {
   contentEl: { empty(): void };
   onOpen(): Promise<void>;
   onClose(): Promise<void>;
+  showSection(entry: 'studio' | 'more'): void;
   renderShell(): void;
   observeStatusBar(): void;
   refresh(): void;
@@ -2825,6 +2826,46 @@ test('confirmed studio text survives an immediate focus change or teardown befor
         timers.flush();
         assert.equal(plugin.loadWritingDraft().title, 'Confirmed title', action);
       }
+    } finally { harness.compositionTiming.later = previous; }
+  });
+});
+
+test('switching sections preserves a selected studio candidate before its grace timer settles', async () => {
+  await withWindow(async timers => {
+    const previous = harness.compositionTiming.later;
+    harness.compositionTiming.later = nativeCompositionTiming;
+    try {
+      const { plugin } = createPlugin();
+      const view = new harness.TangrowSidebar({}, plugin);
+      const candidate = '\u5019\u9009\u8bcd';
+      const root = new GateElement();
+      const workspacePane = root.createDiv();
+      workspacePane.empty = () => {
+        for (const child of workspacePane.children) {
+          for (const node of child.all()) node.isConnected = false;
+        }
+        GateElement.prototype.empty.call(workspacePane);
+      };
+      Object.assign(view, { contentEl: root, workspacePane, renderShell() {}, refresh() {}, registerInterval() {} });
+      await view.onOpen();
+      try {
+        for (const field of ['title', 'text'] as const) {
+          view.showSection('studio');
+          const editor = (field === 'title' ? view.scratchTitleInput : view.scratchEditor) as unknown as GateElement;
+          assert.ok(workspacePane.contains(editor) && editor.isConnected);
+          editor.dispatchEvent(new Event('compositionstart'));
+          editor.value = candidate;
+          editor.dispatchEvent(Object.assign(new Event('input'), { inputType: 'insertFromComposition' }));
+          editor.dispatchEvent(new Event('compositionend'));
+          assert.equal(plugin.loadWritingDraft()[field], '');
+
+          view.showSection('more');
+          assert.equal(editor.isConnected, false);
+          timers.flush();
+          assert.equal(plugin.loadWritingDraft()[field], candidate, field);
+          assert.equal(plugin.loadWritingDraft().editingView, undefined);
+        }
+      } finally { await view.onClose(); }
     } finally { harness.compositionTiming.later = previous; }
   });
 });
