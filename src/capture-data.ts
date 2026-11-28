@@ -94,14 +94,25 @@ export function shiftCaptureMonth(year: number, monthIndex: number, offset: numb
 
 export function captureCalendar(captures: readonly CaptureSummary[], year: number, monthIndex: number, today = Date.now()): CaptureCalendarCell[] {
   validateMonth(year, monthIndex);
-  const todayKey = captureDay(today);
-  const counts = new Map(groupCapturesByDay(captures).map((group) => [group.date, group.captures.length]));
   const first = new Date(0);
   first.setFullYear(year, monthIndex, 1);
+  return calendarCells(captures, first, 42, today);
+}
+
+export function captureWeek(captures: readonly CaptureSummary[], today = Date.now()): CaptureCalendarCell[] {
+  return calendarCells(captures, new Date(today), 7, today);
+}
+
+function calendarCells(captures: readonly CaptureSummary[], anchor: Date, length: number, today: number): CaptureCalendarCell[] {
+  const todayKey = captureDay(today);
+  const counts = new Map(groupCapturesByDay(captures).map((group) => [group.date, group.captures.length]));
+  const year = anchor.getFullYear();
+  const monthIndex = anchor.getMonth();
+  const first = new Date(anchor);
   first.setHours(12, 0, 0, 0);
   const mondayOffset = (first.getDay() + 6) % 7;
   first.setDate(first.getDate() - mondayOffset);
-  return Array.from({ length: 42 }, (_, index) => {
+  return Array.from({ length }, (_, index) => {
     const date = new Date(first);
     date.setDate(first.getDate() + index);
     const key = captureDay(date.getTime());

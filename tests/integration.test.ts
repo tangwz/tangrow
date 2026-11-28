@@ -109,6 +109,7 @@ interface TestSidebar {
   onOpen(): Promise<void>;
   onClose(): Promise<void>;
   renderShell(): void;
+  observeStatusBar(): void;
   refresh(): void;
   registerInterval(): void;
   clearStudioControls(): void;
@@ -994,6 +995,36 @@ test('finishing IME composition publishes the final body and releases other Stud
     assert.equal(finished.editingView, undefined);
     assert.equal(plugin.updateWritingDraft({ title: 'A title from the other view' }, finished.revision, 'second-view'), true);
   });
+});
+
+test('sidebar measures its own window status bar and stops observing on close', async () => {
+  const { plugin } = createPlugin();
+  const view = new harness.TangrowSidebar({}, plugin);
+  const properties = new Map<string, string>();
+  let height = 28;
+  let resize: () => void = () => undefined;
+  let disconnected = false;
+  const statusBar = { getBoundingClientRect: () => ({ height }) };
+  class Observer {
+    constructor(callback: () => void) { resize = callback; }
+    observe(element: unknown): void { assert.equal(element, statusBar); }
+    disconnect(): void { disconnected = true; }
+  }
+  view.contentEl = Object.assign(new EventTarget(), {
+    empty: () => undefined,
+    ownerDocument: {
+      defaultView: { ResizeObserver: Observer },
+      querySelector: (selector: string) => selector === '.status-bar' ? statusBar : null
+    },
+    style: { removeProperty: (name: string) => properties.delete(name), setProperty: properties.set.bind(properties) }
+  });
+  view.observeStatusBar();
+  assert.equal(properties.get('--tangrow-status-bar-height'), '28px');
+  height = 34;
+  resize();
+  assert.equal(properties.get('--tangrow-status-bar-height'), '34px');
+  await view.onClose();
+  assert.ok(disconnected);
 });
 
 class StudioElement extends EventTarget {
@@ -2006,6 +2037,7 @@ class GateElement extends StudioElement {
   attributes = new Map<string, string>();
   children: GateElement[] = [];
   parent?: GateElement;
+  hidden = false;
   dataset: Record<string, string> = {};
   prepend(child: GateElement): void { this.children = [child, ...this.children.filter(entry => entry !== child)]; }
   constructor(readonly tag = 'div') { super(); }
@@ -2041,6 +2073,46 @@ class GateElement extends StudioElement {
     await new Promise(resolve => setImmediate(resolve));
   }
 }
+
+test('sidebar captures start with the composer and a week, with an expandable month and a date-specific journal', async () => {
+  await withWindow(async () => {
+    const { plugin } = createPlugin();
+    plugin.settings.language = 'en';
+    const opened: Array<[JournalPeriod, string | undefined]> = [];
+    plugin.openPeriodicNote = async (period, date) => { opened.push([period, date]); };
+    const panel = new harness.CapturePanel(plugin, 'sidebar');
+    const root = new GateElement();
+    panel.mount(root);
+    try {
+      const calendar = root.querySelector('section')!;
+      assert.ok(root.all().indexOf(panel.editor) < root.all().indexOf(calendar));
+      const toggle = root.all().find((element) => element.getAttribute('aria-expanded') === 'false')!;
+      const days = () => root.all().filter((element) => element.dataset.captureDate);
+      const journal = root.all().find((element) => element.getAttribute('aria-label') === 'Journal for this day')!;
+      assert.equal(toggle.children[0]?.textContent, 'This week');
+      assert.equal(days().length, 7);
+      assert.equal(journal.hidden, true);
+
+      toggle.click();
+      assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+      assert.equal(toggle.children[0]?.textContent, 'Hide month');
+      assert.equal(days().length, 42);
+      toggle.click();
+      assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+      assert.equal(days().length, 7);
+
+      const selected = days()[0]!;
+      selected.click();
+      assert.equal(days()[0]?.getAttribute('aria-pressed'), 'true');
+      assert.equal(journal.hidden, false);
+      await root.clickButton('Journal for this day');
+      assert.deepEqual(opened, [['daily', selected.dataset.captureDate]]);
+      await root.clickButton('All days');
+      assert.equal(journal.hidden, true);
+      assert.ok(days().every((element) => element.getAttribute('aria-pressed') === 'false'));
+    } finally { panel.destroy(); }
+  });
+});
 
 test('capture preedit stays in its window until commit, and closing discards an unfinished candidate', async () => {
   await withWindow(async timers => {

@@ -13,6 +13,7 @@ import { readKnowledgeRecord } from './knowledge-index';
 import { WorkbenchCards } from './workbench-cards';
 import { captureDay } from './capture-data';
 import { JOURNAL_LABELS, JOURNAL_PERIODS, journalInterval, type JournalPeriod } from './periodic-notes';
+import { sortTaskDisplay, taskDueLabel, type TaskDisplay } from './task-display';
 import { SidebarUI, icon } from './ui';
 import { workbenchDestination, type ComposeTab, type KnowledgeTab, type MoreTab, type WorkbenchEntry, type WorkbenchTab } from './workbench-navigation';
 
@@ -73,6 +74,7 @@ export class TangrowSidebar extends ItemView {
   private setupBanner!: HTMLElement;
   private navButtons = new Map<WorkbenchTab, HTMLButtonElement>();
   private unsubscribe?: () => void;
+  private statusBarObserver?: ResizeObserver;
   private dismissCreateMenu?: (restoreFocus?: boolean) => void;
   private unsubscribeComposer?: () => void;
   private refreshSection: (state: Snapshot) => void = () => undefined;
@@ -249,6 +251,7 @@ export class TangrowSidebar extends ItemView {
     this.contentEl.empty();
     this.navButtons.clear();
     this.contentEl.addClass('tangrow-sidebar');
+    this.observeStatusBar();
     const header = this.contentEl.createDiv({ cls: 'tangrow-header' });
     const brand = header.createDiv({ cls: 'tangrow-brand' });
     icon(brand, 'sprout');
@@ -398,6 +401,8 @@ export class TangrowSidebar extends ItemView {
     this.unsubscribeAccess?.();
     this.gate?.dispose();
     this.isMounted = false;
+    this.statusBarObserver?.disconnect();
+    this.statusBarObserver = undefined;
     this.workbenchCards.pause();
     this.dismissCreateMenu?.();
     this.capturePanel?.destroy();
@@ -410,6 +415,22 @@ export class TangrowSidebar extends ItemView {
     this.clearStudioControls();
     this.contentEl.empty();
     this.navButtons.clear();
+  }
+
+  private observeStatusBar(): void {
+    this.statusBarObserver?.disconnect();
+    this.statusBarObserver = undefined;
+    const { ownerDocument, style } = this.contentEl;
+    style.removeProperty('--tangrow-status-bar-height');
+    const Observer = ownerDocument.defaultView?.ResizeObserver;
+    const statusBar = ownerDocument.querySelector<HTMLElement>('.status-bar');
+    if (!statusBar) return;
+    const measure = () => style.setProperty('--tangrow-status-bar-height', `${statusBar.getBoundingClientRect().height}px`);
+    measure();
+    if (Observer) {
+      this.statusBarObserver = new Observer(measure);
+      this.statusBarObserver.observe(statusBar);
+    }
   }
 
   private selectSection(section: WorkbenchTab): void {
@@ -705,8 +726,9 @@ export class TangrowSidebar extends ItemView {
       return;
     }
     const list = taskSection.createDiv({ cls: 'tangrow-task-list' });
-    for (const task of openTasks.slice(0, 6)) {
-      const label = task.text || this.ui.t('Untitled task');
+    const today = new Date();
+    for (const { task, display } of sortTaskDisplay(openTasks, today).slice(0, 6)) {
+      const label = display.title || this.ui.t('Untitled task');
       const row = list.createDiv({ cls: 'tangrow-task-item' });
       const check = row.createEl('button', { cls: 'tangrow-task-check', attr: { type: 'button', 'aria-label': this.ui.t('Complete: {task}', { task: label }) } });
       check.dataset.tangrowAction = `task-check-${task.path}:${task.line}`;
@@ -722,8 +744,35 @@ export class TangrowSidebar extends ItemView {
         });
       });
       const open = this.ui.userButton(row, label, () => this.host.openNote(task.path, task.line), { cls: 'tangrow-task-row' });
-      setTooltip(open, task.path);
+      setTooltip(open, task.text || task.path);
+      this.renderTaskMetadata(open, label, display, today);
     }
+  }
+
+  private renderTaskMetadata(open: HTMLButtonElement, label: string, display: TaskDisplay, today: Date): void {
+    const items: Array<{ text: string; iconName?: string; cls?: string; accessibleText?: string }> = [];
+    if (display.due) {
+      const due = taskDueLabel(display.due, today, this.host.settings.language);
+      items.push({ text: due.text, iconName: 'calendar-days', cls: due.overdue ? 'is-overdue' : undefined });
+    }
+    if (display.priority === 'highest') {
+      items.push({ text: this.ui.t('Highest'), iconName: 'flag', cls: 'is-highest', accessibleText: this.ui.t('Highest priority') });
+    }
+    if (display.priority === 'high') {
+      items.push({ text: this.ui.t('High'), iconName: 'flag', accessibleText: this.ui.t('High priority') });
+    }
+    if (display.recurrence !== null) {
+      items.push({ text: this.ui.t(display.recurrence.toLowerCase() === 'every week' ? 'Weekly' : 'Repeats'), iconName: 'repeat' });
+    }
+    for (const tag of display.tags) items.push({ text: tag });
+    if (!items.length) return;
+    const meta = open.createSpan({ cls: 'tangrow-task-meta' });
+    for (const { text, iconName, cls } of items) {
+      const item = meta.createSpan({ cls });
+      if (iconName) icon(item, iconName).setAttribute('aria-hidden', 'true');
+      item.createSpan({ text });
+    }
+    open.setAttribute('aria-label', [label, ...items.map((item) => item.accessibleText ?? item.text)].join(', '));
   }
 
   private mountCapture(): void {

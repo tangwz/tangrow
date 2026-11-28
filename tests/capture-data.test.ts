@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { captureCalendar, captureCreated, captureDay, groupCapturesByDay, shiftCaptureMonth, sortCaptures, type CaptureSummary } from '../src/capture-data';
+import { captureCalendar, captureCreated, captureDay, captureWeek, groupCapturesByDay, shiftCaptureMonth, sortCaptures, type CaptureSummary } from '../src/capture-data';
 
 function localTime(year: number, monthIndex: number, day: number, hour = 12, minute = 0): number {
   return new Date(year, monthIndex, day, hour, minute).getTime();
@@ -77,6 +77,21 @@ test('Monday-start months do not add an unnecessary leading week and year naviga
   assert.deepEqual(shiftCaptureMonth(2026, 0, 25), { year: 2028, monthIndex: 1 });
   assert.throws(() => captureCalendar([], 2026, 12), RangeError);
   assert.throws(() => shiftCaptureMonth(2026, 0, 0.5), RangeError);
+});
+
+test('the current week starts on Monday and includes dates and captures from both sides of a year boundary', () => {
+  const today = localTime(2026, 0, 1, 0, 5);
+  const captures = [
+    capture('previous-year.md', localTime(2025, 11, 31, 23, 50)),
+    capture('new-year.md', today),
+    capture('outside.md', localTime(2026, 0, 5))
+  ];
+  const week = captureWeek(captures, today);
+  assert.deepEqual(week.map((cell) => cell.date), [
+    '2025-12-29', '2025-12-30', '2025-12-31', '2026-01-01', '2026-01-02', '2026-01-03', '2026-01-04'
+  ]);
+  assert.deepEqual(week.map((cell) => cell.count), [0, 0, 1, 1, 0, 0, 0]);
+  assert.deepEqual(week.filter((cell) => cell.today).map((cell) => cell.date), ['2026-01-01']);
 });
 
 function isoWithOffset(timestamp: number, offsetMinutes: number): string {
