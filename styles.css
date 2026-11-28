@@ -97,8 +97,7 @@
 .tangrow-list-heading,
 .tangrow-habit-heading,
 .tangrow-habit-footer,
-.tangrow-focus-total,
-.tangrow-minute-input {
+.tangrow-focus-total {
   display: flex;
   align-items: center;
   gap: 9px;
@@ -426,11 +425,26 @@
 .tangrow-focus-progress::-webkit-progress-value { background: var(--interactive-accent); border-radius: 3px; }
 .tangrow-focus-note { max-width: 100%; margin-top: 19px; border: none; background: transparent; color: var(--text-muted); padding: 0; min-height: 20px; font-size: 10px; }
 .tangrow-focus-note > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tangrow-focus-controls > .tangrow-text-button { margin: 10px auto 0; }
-.tangrow-minute-presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
-.tangrow-preset { min-height: 31px; justify-content: center; }
-.tangrow-minute-input { justify-content: space-between; padding: 14px 1px; font-size: 11px; color: var(--text-muted); }
-.tangrow-minute-input input { width: 76px; font-size: 12px; }
+.tangrow-sidebar .tangrow-minute-presets { display: flex; gap: 4px; margin-bottom: 8px; }
+.tangrow-sidebar .tangrow-minute-presets > .tangrow-preset { flex: 1 1 0; }
+.tangrow-sidebar .tangrow-focus-custom { display: flex; flex: 1.5 1 0; min-width: 0; }
+.tangrow-sidebar .tangrow-preset,
+.tangrow-sidebar .tangrow-focus-custom input {
+  width: 100%;
+  min-width: 0;
+  min-height: 31px;
+  padding: 4px 2px;
+  border-radius: var(--radius-s);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.tangrow-sidebar .tangrow-preset { justify-content: center; font-size: var(--font-ui-smaller); }
+.tangrow-sidebar .tangrow-focus-custom input { height: auto; appearance: textfield; }
+.tangrow-sidebar .tangrow-focus-custom input::-webkit-inner-spin-button { appearance: none; }
+.tangrow-sidebar .tangrow-focus-custom input[aria-invalid="true"] { border-color: var(--text-error); }
+.tangrow-sidebar .tangrow-focus-controls > .tangrow-input-error { margin: 0; }
+.tangrow-sidebar .tangrow-focus-controls > .tangrow-input-error:not(:empty) { margin-bottom: 8px; }
+.tangrow-sidebar .tangrow-focus-active-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .tangrow-focus-total { justify-content: center; color: var(--text-muted); font-size: 11px; margin: 23px 0 14px; }
 .tangrow-habit-form { display: flex; gap: 6px; margin: 16px 0 22px; }
 .tangrow-habit-form input { min-width: 0; flex: 1; height: 36px; font-size: 11px; }
@@ -1114,4 +1128,39 @@ button.tangrow-report-day:hover { outline: 1px solid var(--text-accent); outline
 @keyframes tangrow-settings-highlight {
   from { background: var(--text-highlight-bg); }
   to { background: transparent; }
+}
+
+/* File tools */
+.tangrow-sidebar .tangrow-more-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 12px; }
+.tangrow-sidebar .tangrow-more-heading .tangrow-section-title { margin: 0; }
+.tangrow-sidebar .tangrow-more-menu .tangrow-note-row { background: transparent; }
+.tangrow-sidebar .tangrow-more-menu .tangrow-note-row:hover { background: var(--background-modifier-hover); }
+
+@container (max-width: 180px) {
+  .tangrow-sidebar .tangrow-minute-presets { gap: 2px; }
+  .tangrow-sidebar .tangrow-preset,
+  .tangrow-sidebar .tangrow-focus-custom input { padding-inline: 0; font-size: 10px; }
+}
+
+.tangrow-sidebar .tangrow-tool-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+.tangrow-sidebar .tangrow-tool-list > .tangrow-button {
+  min-inline-size: 0;
+  min-block-size: var(--size-4-8);
+  padding: var(--size-4-1) var(--size-4-2);
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+}
+.tangrow-sidebar .tangrow-tool-list > .tangrow-button:hover:not(:disabled) {
+  background: var(--background-modifier-hover);
+}
+.tangrow-sidebar .tangrow-tool-list > .tangrow-button[aria-pressed="true"] {
+  background: var(--background-modifier-active-hover);
+}
+.tangrow-sidebar .tangrow-tool-list > .tangrow-button .tangrow-icon {
+  flex: none;
+  color: var(--text-muted);
 }
