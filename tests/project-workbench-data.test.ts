@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildWorkbenchPara, type WorkbenchProjectRecord, type WorkbenchProjectTaskSource } from '../src/project-workbench-data';
+import { buildWorkbenchPara, projectTypeKey, type WorkbenchProjectRecord, type WorkbenchProjectTaskSource } from '../src/project-workbench-data';
 import { DEFAULT_SETTINGS } from '../src/types';
 
 function note(path: string, frontmatter?: Record<string, unknown>, linkedProjectPath?: string, modified = 1): WorkbenchProjectRecord {
@@ -111,4 +111,39 @@ test('an existing project area link keeps its canonical owner when a higher-prio
   assert.equal(plan?.areaNotePath, readme);
   assert.equal(plan?.areaPath, area);
   assert.equal(projects.find((entry) => entry.name === 'No canonical')?.areaNotePath, null);
+});
+
+test('project types come from canonical visible project notes, merge case and whitespace, and sort by usage', () => {
+  const settings = { ...DEFAULT_SETTINGS, archiveFolder: '20-Project/Archive' };
+  const records = [
+    note('20-Project/Alpha/Alpha.md'), note('20-Project/Alpha/README.md', { tangrow_project_type: '  Writing  ' }),
+    note('20-Project/Beta.md', { tangrow_project_type: 'writing' }), note('20-Project/Code.md', { tangrow_project_type: 'Code' }),
+    note('20-Project/None.md', { tangrow_project_type: '  ' }), note('20-Project/Noncanonical/Chapter.md', { tangrow_project_type: 'Ignore' }),
+    note('20-Project/Archive/Archive.md', { tangrow_project_type: 'Archived type' }),
+    note('00-Inbox/Not a project.md', { tangrow_project_type: 'Outside' })
+  ];
+  const { projects, types } = buildWorkbenchPara(records, [], [], settings);
+  const alpha = projects.find((project) => project.name === 'Alpha');
+  assert.equal(alpha?.notePath, '20-Project/Alpha/Alpha.md');
+  assert.equal(alpha?.typeNotePath, '20-Project/Alpha/README.md');
+  assert.equal(alpha?.projectType, 'Writing');
+  assert.equal(projects.find((project) => project.name === 'None')?.projectType, null);
+  assert.equal(projects.find((project) => project.name === 'Noncanonical')?.typeNotePath, null);
+  assert.deepEqual(types, [{ key: 'writing', name: 'Writing', count: 2 }, { key: 'code', name: 'Code', count: 1 }]);
+  assert.equal(projectTypeKey('  Écriture '), projectTypeKey('e\u0301CRITURE'));
+  assert.equal(projectTypeKey('Video  essay'), 'video  essay');
+});
+
+test('draft classification requires a draft role outside project directories and an empty project property', () => {
+  const draft = { tangrow_kind: 'draft' };
+  const records = [
+    note('00-Inbox/No link.md', draft, undefined, 1),
+    note('30-Area/Work/Blank link.md', { ...draft, tangrow_project: '   ' }, undefined, 3),
+    note('00-Inbox/Unresolved link.md', { ...draft, tangrow_project: '[[Missing]]' }),
+    note('00-Inbox/Existing list link.md', { ...draft, tangrow_project: ['[[Missing]]'] }),
+    note('20-Project/Plan/Chapter.md', draft), note('20-Project/Old standalone draft.md', draft),
+    note('00-Inbox/Ordinary note.md'), note('90-Archive/Old draft.md', draft), note('99-Tangrow/Records/Draft.md', draft)
+  ];
+  const { drafts } = buildWorkbenchPara(records, [], [], DEFAULT_SETTINGS);
+  assert.deepEqual(drafts.map(({ path }) => path), ['30-Area/Work/Blank link.md', '00-Inbox/No link.md']);
 });

@@ -3,7 +3,7 @@ import type { ReportPreferences, ReportRange, ReportRecord, ReportResource, Repo
 import type { CardFilter, CardReport, MaterialReportRow } from './card-report-data';
 import type { CardReviewQueue } from './card-review';
 import type { JournalPeriod } from './periodic-notes';
-import type { WorkbenchArea, WorkbenchLinkCandidate, WorkbenchProject } from './project-workbench-data';
+import type { WorkbenchArea, WorkbenchLinkCandidate, WorkbenchProject, WorkbenchProjectType } from './project-workbench-data';
 import type { CaptureSuggestion, QuickKind } from './ai';
 import type { RecoveryDraft, RecoveryLabel } from './draft-submissions';
 import type { AgentStatus, WorkflowId, WorkflowRun } from './claudian';
@@ -70,7 +70,7 @@ export const DEFAULT_SETTINGS: Settings = {
   activityGoalMinutes: 60
 };
 export interface ComposerState { capture: string; scratchTitle: string }
-export interface WritingDraft { text: string; title: string; revision: number; editingView?: string }
+export interface WritingDraft { text: string; title: string; revision: number; editingView?: string; preparedProjectPath?: string | null }
 export interface WritingSaveOrigin {
   leaf: WorkspaceLeaf;
   editor: HTMLTextAreaElement;
@@ -121,6 +121,9 @@ export interface SidebarHost {
   settings: Settings;
   snapshot(): Snapshot;
   workbenchProjects(): WorkbenchProject[];
+  workbenchProjectTypes(): WorkbenchProjectType[];
+  setWorkbenchProjectType(projectPath: string, type: string | null): Promise<void>;
+  workbenchDrafts(): NoteSummary[];
   workbenchAreas(): WorkbenchArea[];
   workbenchResources(): ReportResource[];
   workbenchLinkCandidates(): WorkbenchLinkCandidate[];
@@ -143,7 +146,7 @@ export interface SidebarHost {
   action(id: ActionId): Promise<void>;
   openNote(path: string, line?: number, anchor?: string): Promise<void>;
   openBase(id: BaseId): Promise<void>;
-  createNote(kind: NoteKind, title: string, projectFolder?: string, body?: string): Promise<void>;
+  createNote(kind: NoteKind, title: string, projectFolder?: string, body?: string, projectType?: string): Promise<void>;
   createCard(title: string, body: string, source?: CardSource): Promise<void>;
   addTask(text: string, options?: { due?: string; target?: 'overview' | 'daily' }): Promise<string>;
   addProjectTask(projectNotePath: string, title: string): Promise<void>;
@@ -178,7 +181,7 @@ export interface SidebarHost {
   updateWritingDraft(patch: Partial<Pick<WritingDraft, 'text' | 'title'>>, expectedRevision: number, viewId?: string): boolean;
   beginWritingDraftComposition(viewId: string, expectedRevision: number): boolean;
   endWritingDraftComposition(viewId: string): void;
-  submitWritingDraft(expectedRevision: number, origin?: WritingSaveOrigin, rescue?: boolean): Promise<void>;
+  submitWritingDraft(expectedRevision: number, origin?: WritingSaveOrigin, rescue?: boolean, projectPath?: string): Promise<void>;
   setup(): Promise<void>;
   startFocus(minutes: number): Promise<void>;
   pauseFocus(): Promise<void>;

@@ -32,8 +32,9 @@ import { addEditingActivity, createActivityState, normalizeActivityState, summar
 import { ReportSource } from './report-source';
 import { captureWritingNavigation } from './writing-navigation';
 import { aggregateReport } from './report-data';
-import { areaAssociationOwner, buildWorkbenchPara, workbenchPathIncluded, type WorkbenchArea, type WorkbenchLinkCandidate, type WorkbenchParaData, type WorkbenchProject,
-  type WorkbenchProjectRecord, type WorkbenchProjectTaskSource } from './project-workbench-data';
+import { buildWorkbenchPara, projectMetadataOwner, readProjectType, workbenchPathIncluded, type ProjectNoteProperty, type WorkbenchArea,
+  type WorkbenchLinkCandidate, type WorkbenchParaData, type WorkbenchProject, type WorkbenchProjectRecord, type WorkbenchProjectTaskSource,
+  type WorkbenchProjectType } from './project-workbench-data';
 import { canonicalEntityNotes, reportStatusSource } from './report-metrics';
 import { writeReportStatus } from './report-editing';
 import { buildCardReport, buildWorkbenchCards, type CardFilter } from './card-report-data';
@@ -673,6 +674,8 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     return cards;
   }
   workbenchProjects(): WorkbenchProject[] { return this.workbenchPara().projects; }
+  workbenchProjectTypes(): WorkbenchProjectType[] { return this.workbenchPara().types; }
+  workbenchDrafts(): NoteSummary[] { return this.workbenchPara().drafts; }
   workbenchAreas(): WorkbenchArea[] { return this.workbenchPara().areas; }
   workbenchResources(): ReportResource[] { return this.workbenchPara().resources; }
   workbenchLinkCandidates(): WorkbenchLinkCandidate[] { return this.workbenchPara().candidates; }
@@ -903,7 +906,12 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     });
   }
   loadWritingDraft(): WritingDraft {
-    return { text: this.scratch, title: this.composer.scratchTitle, revision: this.scratchRevision, ...(this.scratchEditingView ? { editingView: this.scratchEditingView } : {}) };
+    const receipt = this.submissions.writing;
+    return {
+      text: this.scratch, title: this.composer.scratchTitle, revision: this.scratchRevision,
+      ...(this.scratchEditingView ? { editingView: this.scratchEditingView } : {}),
+      ...(receipt?.path ? { preparedProjectPath: receipt.project?.path ?? null } : {})
+    };
   }
   beginWritingDraftComposition(viewId: string, expectedRevision: number): boolean {
     if (!this.alive) return false;
@@ -1139,7 +1147,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       catch (error) { this.scheduleComposerSave(); throw error; }
     }
   }
-  private async createSubmittedNote(submission: DraftSubmission, kind: SubmissionKind, title: string, body: string, fields: Record<string, unknown>): Promise<TFile> {
+  private async createSubmittedNote(submission: DraftSubmission, kind: SubmissionKind, title: string, body: string, fields: Record<string, unknown>, projectPath?: string): Promise<TFile> {
     if (submission.path !== null) {
       const saved = await findSubmittedNote(this.app, submission, kind);
       if (saved) return saved;
@@ -1149,6 +1157,10 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       let path = `${folder}/${title}.md`;
       let suffix = 2;
       while (this.app.vault.getAbstractFileByPath(path)) path = `${folder}/${title} (${suffix++}).md`;
+      if (kind === 'draft' && projectPath) {
+        const project = this.workbenchProjectNote(projectPath);
+        submission.project = { path: safeFolder(projectPath), notePath: safeFolder(project.path) };
+      }
       submission.path = path;
     }
     // Persist the receipt before creating Markdown. A failed barrier must not write a note.
@@ -1156,8 +1168,9 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     if (!this.alive || this.persistenceCoordinator().owner !== this.persistenceOwner) throw new Error('Tangrow could not complete this action.');
     const path = submission.path;
     await this.ensureFolder(path.slice(0, path.lastIndexOf('/')));
+    const projectLink = submission.project ? await this.submittedDraftProjectLink(submission, path) : undefined;
     const heading = path.slice(path.lastIndexOf('/') + 1, -3);
-    const content = `---\n${stringifyYaml({ ...fields, tangrow_submission_id: submission.id })}---\n\n# ${heading}\n\n${body}\n`;
+    const content = `---\n${stringifyYaml({ ...fields, ...(projectLink ? { tangrow_project: projectLink } : {}), tangrow_submission_id: submission.id })}---\n\n# ${heading}\n\n${body}\n`;
     try { return await this.app.vault.create(path, content); }
     catch (error) {
       // A create can report failure after writing; retry only if no matching receipt exists.
@@ -1165,6 +1178,21 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       if (saved) return saved;
       throw error;
     }
+  }
+  private async submittedDraftProjectLink(submission: DraftSubmission, path: string): Promise<string | undefined> {
+    const project = submission.project;
+    if (!project) return;
+    try {
+      const entity = this.workbenchEntity(project.path, this.settings.projectFolder, 'Choose an existing project.');
+      const note = entity instanceof TFile && entity.path === project.notePath ? entity
+        : this.workbenchLinkedNote(project.notePath, entity.path, 'Choose an existing project note.');
+      const link = this.propertyLink(note, path);
+      if (/^\[\[[^\[\]\r\n|]+\]\]$/.test(link)) return link;
+    } catch { /* the project or its saved note is no longer usable */ }
+    submission.path = null;
+    delete submission.project;
+    await this.persist();
+    throw new Error('The saved project is unavailable. Choose a project again or save as a draft.');
   }
   async setup(): Promise<void> {
     await this.exclusive(async () => {
@@ -1206,10 +1234,11 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     const leaf = useNewTab ? this.app.workspace.getLeaf('tab') : candidate;
     await leaf.openFile(file, { active: true, eState: line === undefined ? undefined : { line } });
   }
-  async createNote(kind: NoteKind, title: string, projectFolder?: string, body = ''): Promise<void> {
+  async createNote(kind: NoteKind, title: string, projectFolder?: string, body = '', projectType?: string): Promise<void> {
     if (kind === 'card') return this.createCard(title, body);
     const file = await this.exclusive(() => {
       let folder = this.settings.inboxFolder;
+      let type: string | null = null;
       if (kind === 'project') {
         const root = safeFolder(this.settings.projectFolder);
         if (projectFolder) {
@@ -1218,10 +1247,13 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
         } else {
           folder = `${root}/${safeTitle(title)}`;
           if (this.app.vault.getAbstractFileByPath(folder)) throw new Error('This project folder already exists. Choose it from the existing project list.');
+          type = readProjectType(projectType);
         }
       }
-      return this.createUnique(folder, title, body, { tangrow_kind: kind, tangrow_status: 'open', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') });
+      return this.createUnique(folder, title, body, { tangrow_kind: kind, tangrow_status: 'open', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ'),
+        ...(type ? { tangrow_project_type: type } : {}) });
     });
+    if (kind === 'project' && this.alive) this.notify();
     await this.openNote(file.path);
   }
   async createCard(title: string, body: string, source?: CardSource): Promise<void> {
@@ -1288,11 +1320,11 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     const included = workbenchPathIncluded(this.settings);
     return canonicalEntityNotes(this.app.vault.getMarkdownFiles().filter((file) => file.parent?.path === folder.path && included(file.path)), folder.path);
   }
-  private workbenchProjectNote(path: string, canonical = false): TFile {
+  private workbenchProjectNote(path: string, property?: ProjectNoteProperty): TFile {
     const project = this.workbenchEntity(path, this.settings.projectFolder, 'Choose an existing project.');
     if (project instanceof TFile) return project;
-    const notePath = canonical
-      ? areaAssociationOwner(this.canonicalWorkbenchNotes(project).map((file) => ({ path: file.path, frontmatter: this.app.metadataCache.getFileCache(file)?.frontmatter })))?.path
+    const notePath = property
+      ? projectMetadataOwner(this.canonicalWorkbenchNotes(project).map((file) => ({ path: file.path, frontmatter: this.app.metadataCache.getFileCache(file)?.frontmatter })), property)?.path
       : this.workbenchProjects().find((entry) => entry.path === path)?.notePath;
     return this.workbenchLinkedNote(notePath, project.path, 'Choose an existing project note.');
   }
@@ -1303,12 +1335,34 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
   }
   async setWorkbenchProjectArea(projectPath: string, areaPath: string | null): Promise<void> {
     await this.exclusive(async () => {
-      const project = this.workbenchProjectNote(projectPath, true);
+      const project = this.workbenchProjectNote(projectPath, 'tangrow_area');
       const area = areaPath === null ? null : this.workbenchAreaNote(areaPath);
       const link = area ? this.propertyLink(area, project.path) : null;
       await this.app.fileManager.processFrontMatter(project, (fields) => {
         if (link === null) delete fields.tangrow_area;
         else fields.tangrow_area = link;
+      });
+    });
+    this.notify();
+  }
+  async setWorkbenchProjectType(projectPath: string, type: string | null): Promise<void> {
+    const value = readProjectType(type);
+    await this.exclusive(async () => {
+      const project = this.workbenchEntity(projectPath, this.settings.projectFolder, 'Choose an existing project.');
+      const canonical = project instanceof TFile ? [project] : this.canonicalWorkbenchNotes(project);
+      const notes = await Promise.all(canonical.map(async (file) => {
+        const path = file.path;
+        const info = getFrontMatterInfo(await this.app.vault.read(file));
+        const parsed: unknown = info.exists ? parseYaml(info.frontmatter) : null;
+        const frontmatter = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
+        return { file, path, frontmatter };
+      }));
+      const owner = projectMetadataOwner(notes, 'tangrow_project_type');
+      if (!owner || this.app.vault.getAbstractFileByPath(owner.path) !== owner.file) throw new Error('Choose an existing project note.');
+      const hasFallback = notes.some((note) => note !== owner && readProjectType(note.frontmatter?.tangrow_project_type) !== null);
+      await this.app.fileManager.processFrontMatter(owner.file, (fields) => {
+        if (value === null && !hasFallback) delete fields.tangrow_project_type;
+        else fields.tangrow_project_type = value;
       });
     });
     this.notify();
@@ -1655,7 +1709,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       this.notify();
     }
   }
-  async saveDraft(text: string, title: string, origin?: WritingSaveOrigin, submission?: DraftSubmission, rescue = false): Promise<void> {
+  async saveDraft(text: string, title: string, origin?: WritingSaveOrigin, submission?: DraftSubmission, rescue = false, projectPath?: string): Promise<void> {
     if (!(rescue ? text : text.trim())) throw new Error('Write a draft before saving.');
     const revision = this.scratchRevision;
     const navigation = captureWritingNavigation(this.app.workspace, origin);
@@ -1663,7 +1717,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       const file = await this.exclusive(() => {
         const name = title || this.t('Draft {date}', { date: dateTime().format('YYYY-MM-DD HHmmss') });
         const fields = { tangrow_kind: 'draft', tangrow_status: 'draft', created: dateTime().format('YYYY-MM-DDTHH:mm:ssZ') };
-        return submission ? this.createSubmittedNote(submission, 'draft', name, rescue ? text : text.trim(), fields) : this.createUnique(this.settings.inboxFolder, name, text, fields);
+        return submission ? this.createSubmittedNote(submission, 'draft', name, rescue ? text : text.trim(), fields, projectPath) : this.createUnique(this.settings.inboxFolder, name, text, fields);
       });
       if (!this.alive || this.scratchRevision !== revision || this.scratchEditingView !== undefined) return;
       const target = navigation.destination();
@@ -1673,7 +1727,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
       catch (error) { new Notice(this.t('Draft saved, but it could not be opened: {error}', { error: this.error(error) })); }
     } finally { navigation.dispose(); }
   }
-  submitWritingDraft(expectedRevision: number, origin?: WritingSaveOrigin, rescue = false): Promise<void> {
+  submitWritingDraft(expectedRevision: number, origin?: WritingSaveOrigin, rescue = false, projectPath?: string): Promise<void> {
     const draft = this.loadWritingDraft();
     if (draft.editingView !== undefined) return Promise.reject(new Error('Finish typing before saving this draft.'));
     if (draft.revision !== expectedRevision) return Promise.reject(new Error('The writing draft changed in another view. Review the latest text before saving.'));
@@ -1683,7 +1737,7 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
     const receipt = this.submissions.writing ??= { id: uid(), path: null };
     // A working title may be empty or contain characters forbidden in a filename.
     const body = rescue ? [draft.title, draft.text].filter(Boolean).join('\n\n') : draft.text;
-    const submission = this.saveDraft(body, rescue ? '' : draft.title, origin, receipt, rescue).then(async () => {
+    const submission = this.saveDraft(body, rescue ? '' : draft.title, origin, receipt, rescue, rescue ? undefined : projectPath).then(async () => {
       if (!this.alive) return;
       this.updateWritingDraft({ text: '', title: '' }, draft.revision);
       try { await this.persist(); }
@@ -1691,6 +1745,11 @@ export default class TangrowPlugin extends Plugin implements SidebarHost {
         new Notice(this.t('Draft saved, but scratchpad state could not be saved. It will be retried.'));
         this.scheduleComposerSave();
       }
+    }, (error: unknown) => {
+      if (this.alive && this.submissions.writing === receipt) {
+        for (const listener of this.composerListeners) listener();
+      }
+      throw error;
     }).finally(() => { this.scratchSubmissions.delete(draft.revision); });
     this.scratchSubmissions.set(draft.revision, submission);
     return submission;

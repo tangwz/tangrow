@@ -13,8 +13,8 @@ import type { QuickKind } from '../src/ai';
 import type { RecoveryDraft } from '../src/draft-submissions';
 import { baseDefinitions, setupReadme } from '../src/bases';
 import { aggregateReport } from '../src/report-data';
-import type { WorkbenchProject } from '../src/project-workbench-data';
-import type { ActionId, CardSource, ComposerState, FocusSession, Locale, NoteKind, Settings, Snapshot, WritingDraft } from '../src/types';
+import type { WorkbenchProject, WorkbenchProjectType } from '../src/project-workbench-data';
+import type { ActionId, CardSource, ComposerState, FocusSession, Locale, NoteKind, Settings, Snapshot, WritingDraft, WritingSaveOrigin } from '../src/types';
 import { JOURNAL_PERIODS, type JournalPeriod } from '../src/periodic-notes';
 import type { FileView as MockFileView, ItemView as MockItemView, MarkdownView as MockMarkdownView, MockApp, Plugin as MockPlugin, TFile as MockFile, TFolder as MockFolder, createMockApp as MockAppFactory } from './obsidian-mock';
 
@@ -33,6 +33,9 @@ interface TestPlugin extends MockPlugin {
   openBase(id: 'captures'): Promise<void>;
   snapshot(): Snapshot;
   workbenchProjects(): WorkbenchProject[];
+  workbenchProjectTypes(): WorkbenchProjectType[];
+  setWorkbenchProjectType(projectPath: string, type: string | null): Promise<void>;
+  workbenchDrafts(): Snapshot['drafts'];
   setWorkbenchProjectArea(projectPath: string, areaPath: string | null): Promise<void>;
   setWorkbenchProjectStatus(projectPath: string, status: 'open' | 'done'): Promise<void>;
   linkWorkbenchNote(notePath: string, projectPath: string): Promise<void>;
@@ -42,7 +45,7 @@ interface TestPlugin extends MockPlugin {
   addProjectTask(projectNotePath: string, title: string): Promise<void>;
   completeTask(path: string, line: number, expectedLabel?: string): Promise<void>;
   action(id: ActionId): Promise<void>;
-  createNote(kind: NoteKind, title: string, projectFolder?: string): Promise<void>;
+  createNote(kind: NoteKind, title: string, projectFolder?: string, body?: string, projectType?: string): Promise<void>;
   createCard(title: string, body: string, source?: CardSource): Promise<void>;
   createHub(title: string): Promise<void>;
   openCardFromCapture(path: string, beforeOpen?: () => boolean): Promise<boolean>;
@@ -54,7 +57,7 @@ interface TestPlugin extends MockPlugin {
   updateWritingDraft(patch: Partial<Pick<WritingDraft, 'text' | 'title'>>, expectedRevision: number, viewId?: string): boolean;
   beginWritingDraftComposition(viewId: string, expectedRevision: number): boolean;
   endWritingDraftComposition(viewId: string): void;
-  submitWritingDraft(expectedRevision: number): Promise<void>;
+  submitWritingDraft(expectedRevision: number, origin?: WritingSaveOrigin, rescue?: boolean, projectPath?: string): Promise<void>;
   loadComposer(): ComposerState;
   saveComposer(patch: Partial<ComposerState>): void;
   subscribe(listener: () => void): () => void;
@@ -686,6 +689,70 @@ test('new project notes use project subfolders and existing destinations stay wi
   assert.equal(original.content, '# Keep this project\n');
 });
 
+test('project type creation and edits change only the selected project type owner', async () => {
+  const { plugin, app } = createPlugin();
+  const root = '20-Project/Legacy';
+  const named = app.vault.seedFile(`${root}/Legacy.md`, '# Keep this text\n');
+  const owner = app.vault.seedFile(`${root}/README.md`, '---\ntangrow_project_type: "Writing"\ncustom: "keep"\n---\n\n# Old project summary\n');
+  const fallbackOnly = app.vault.seedFile('20-Project/No canon/Chapter.md', '# Existing work\n');
+  assert.deepEqual(plugin.workbenchProjectTypes(), [{ key: 'writing', name: 'Writing', count: 1 }]);
+  await plugin.createNote('project', 'New production', undefined, 'A new article.', '  Writing  ');
+  const created = app.vault.getAbstractFileByPath('20-Project/New production/New production.md');
+  assert.ok(created instanceof harness.TFile);
+  assert.equal(app.metadataCache.getFileCache(created).frontmatter?.tangrow_project_type, 'Writing');
+  assert.ok(created.content.endsWith('# New production\n\nA new article.\n'));
+  assert.deepEqual(plugin.workbenchProjectTypes(), [{ key: 'writing', name: 'Writing', count: 2 }]);
+  await plugin.createNote('project', 'Additional note', root, '', 'Not its own project');
+  const existingFolderNote = app.vault.getAbstractFileByPath(`${root}/Additional note.md`);
+  assert.ok(existingFolderNote instanceof harness.TFile);
+  assert.equal(app.metadataCache.getFileCache(existingFolderNote).frontmatter?.tangrow_project_type, undefined);
+
+  await plugin.setWorkbenchProjectType(root, '  Code  ');
+  assert.equal(app.metadataCache.getFileCache(owner).frontmatter?.tangrow_project_type, 'Code');
+  assert.equal(plugin.workbenchProjects().find((project) => project.path === root)?.typeNotePath, owner.path);
+  await plugin.setWorkbenchProjectType(root, null);
+  assert.deepEqual(app.metadataCache.getFileCache(owner).frontmatter, { custom: 'keep' });
+  assert.equal(plugin.workbenchProjects().find((project) => project.path === root)?.projectType, null);
+  await assert.rejects(plugin.setWorkbenchProjectType('20-Project/No canon', 'Code'), /Choose an existing project note/);
+  assert.equal(fallbackOnly.content, '# Existing work\n');
+  assert.equal(named.content, '# Keep this text\n');
+  assert.deepEqual(app.vault.processedPaths, [owner.path, owner.path]);
+});
+
+test('clearing a project type suppresses secondary canonical types without editing the secondary notes', async () => {
+  const { plugin, app } = createPlugin();
+  const path = '20-Project/Multiple';
+  const owner = app.vault.seedFile(`${path}/Multiple.md`, '---\ntangrow_project_type: "Primary"\n---\n\n# Main\n');
+  const secondary = app.vault.seedFile(`${path}/README.md`, '---\ntangrow_project_type: "Secondary"\n---\n\n# Keep\n');
+  const original = secondary.content;
+  assert.equal(plugin.workbenchProjects()[0]?.projectType, 'Primary');
+  await plugin.setWorkbenchProjectType(path, null);
+  const project = plugin.workbenchProjects()[0];
+  assert.equal(project?.projectType, null);
+  assert.equal(project?.typeNotePath, owner.path);
+  assert.equal(app.metadataCache.getFileCache(owner).frontmatter?.tangrow_project_type, null);
+  assert.deepEqual(plugin.workbenchProjectTypes(), []);
+  assert.equal(secondary.content, original);
+  assert.deepEqual(app.vault.processedPaths, [owner.path]);
+  await plugin.setWorkbenchProjectType(path, 'Replacement');
+  assert.deepEqual(plugin.workbenchProjectTypes(), [{ key: 'replacement', name: 'Replacement', count: 1 }]);
+  assert.equal(secondary.content, original);
+});
+
+test('assigning an unclassified draft removes it from the Drafts view while retaining its original path', async () => {
+  const { plugin, app } = createPlugin();
+  const draft = app.vault.seedFile('00-Inbox/Article.md', '---\ntangrow_kind: "draft"\n---\n\nArticle body.\n');
+  const project = app.vault.seedFile('20-Project/Production/Production.md', '# Production\n');
+  app.metadataCache.getFirstLinkpathDest = (link) => link === '20-Project/Production/Production' ? project : null;
+  assert.deepEqual(plugin.workbenchDrafts().map((entry) => entry.path), [draft.path]);
+  await plugin.linkWorkbenchNote(draft.path, '20-Project/Production');
+  assert.deepEqual(plugin.workbenchDrafts(), []);
+  assert.deepEqual(plugin.workbenchProjects()[0]?.notes.map((entry) => entry.path), [draft.path]);
+  assert.equal(app.vault.getAbstractFileByPath('00-Inbox/Article.md'), draft);
+  assert.ok(draft.content.endsWith('Article body.\n'));
+  assert.deepEqual(app.vault.createdPaths, []);
+});
+
 test('unfinished task summaries include in-progress checkboxes and exclude completed or cancelled ones', async () => {
   const { plugin, app } = createPlugin();
   const note = app.vault.seedFile('00-Inbox/Task sources.md', '# Task sources\n\n- [ ] Todo item\n- [/] Working item\n- [x] Completed item\n- [-] Cancelled item\n');
@@ -1057,6 +1124,9 @@ class StudioElement extends EventTarget {
   createDiv(): StudioElement { return new StudioElement(); }
   createEl(): StudioElement { return new StudioElement(); }
   createSpan(): StudioElement { return new StudioElement(); }
+  empty(): void {}
+  setAttribute(_key: string, _value: string): void {}
+  querySelector(_selector: string): StudioElement | undefined { return undefined; }
   setSelectionRange(start: number, end: number): void {
     this.selectionStart = start;
     this.selectionEnd = end;
@@ -1270,7 +1340,7 @@ test('failed writing submissions retain the draft for retry and originless retri
     const draft = plugin.loadWritingDraft();
     app.vault.failCreates = 1;
     await assert.rejects(plugin.submitWritingDraft(draft.revision), /Simulated vault write failure/);
-    assert.deepEqual(plugin.loadWritingDraft(), draft);
+    assert.deepEqual(plugin.loadWritingDraft(), { ...draft, preparedProjectPath: null });
     assert.equal(draftFiles(app).length, 0);
     app.workspace.setNavigationLeaf({ view: { getViewType: () => 'markdown' }, openFile: async () => { throw new Error('Simulated navigation failure'); } });
     await plugin.submitWritingDraft(draft.revision);
@@ -1281,6 +1351,52 @@ test('failed writing submissions retain the draft for retry and originless retri
     assert.equal(draftFiles(app).length, 1);
     assert.equal(app.workspace.navigationRequests.length, 0);
     assert.equal(harness.notices.some((notice) => notice.includes('Simulated navigation failure')), false);
+  });
+});
+
+test('writing submissions keep the selected project across a failed save and retry', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    const project = app.vault.seedFile('20-Project/First.md', '# First project\n');
+    const second = app.vault.seedFile('20-Project/Second.md', '# Second project\n');
+    plugin.updateWritingDraft({ text: 'A project manuscript.', title: 'My manuscript' }, plugin.loadWritingDraft().revision);
+    const { revision } = plugin.loadWritingDraft();
+    app.vault.failCreates = 1;
+    await assert.rejects(plugin.submitWritingDraft(revision, undefined, false, project.path), /Simulated vault write failure/);
+    assert.equal(plugin.loadWritingDraft().preparedProjectPath, project.path);
+    assert.equal(draftFiles(app).length, 0);
+    const restarted = new harness.TangrowPlugin(app);
+    restarted.savedData = structuredClone(plugin.savedData);
+    await restarted.onload();
+    const restored = restarted.loadWritingDraft();
+    assert.equal(restored.preparedProjectPath, project.path);
+    await restarted.submitWritingDraft(restored.revision, undefined, false, second.path);
+    const drafts = draftFiles(app);
+    assert.equal(drafts.length, 1);
+    assert.equal(app.metadataCache.getFileCache(drafts[0]!).frontmatter?.tangrow_project, '[[20-Project/First]]');
+    assert.deepEqual(restarted.workbenchDrafts(), []);
+    assert.equal(project.content, '# First project\n');
+    assert.equal(second.content, '# Second project\n');
+  });
+});
+
+test('a failed writing save can choose a new project after the original project moves', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    const project = app.vault.seedFile('20-Project/First.md', '# First project\n');
+    const second = app.vault.seedFile('20-Project/Second.md', '# Second project\n');
+    plugin.updateWritingDraft({ text: 'Keep this manuscript.' }, plugin.loadWritingDraft().revision);
+    const { revision } = plugin.loadWritingDraft();
+    app.vault.failCreates = 1;
+    await assert.rejects(plugin.submitWritingDraft(revision, undefined, false, project.path), /Simulated vault write failure/);
+    await app.vault.rename(project, '20-Project/Moved.md');
+    await assert.rejects(plugin.submitWritingDraft(revision), /saved project is unavailable/);
+    assert.deepEqual(plugin.loadWritingDraft(), { text: 'Keep this manuscript.', title: '', revision });
+    assert.equal(draftFiles(app).length, 0);
+    await plugin.submitWritingDraft(revision, undefined, false, second.path);
+    const drafts = draftFiles(app);
+    assert.equal(drafts.length, 1);
+    assert.equal(app.metadataCache.getFileCache(drafts[0]!).frontmatter?.tangrow_project, '[[20-Project/Second]]');
   });
 });
 
@@ -3031,12 +3147,88 @@ test('Escape in a composing capture synchronizes the latest committed text from 
 });
 
 function openQuickAdd(plugin: TestPlugin, kind: QuickKind, text: string, source?: CardSource) {
+  type KeyHandler = (event: Pick<KeyboardEvent, 'isComposing' | 'keyCode'>) => boolean | void;
   const modal = new harness.QuickAddModal(plugin, kind, text, source);
   const root = new GateElement();
-  Object.assign(modal, { modalEl: new GateElement(), contentEl: root, scope: { register() {} }, setTitle() {}, close: () => modal.onClose() });
+  const hotkeys = new Map<string, KeyHandler>();
+  Object.assign(modal, {
+    modalEl: new GateElement(), contentEl: root,
+    scope: { register: (_modifiers: string[], key: string, handler: KeyHandler) => { hotkeys.set(key, handler); } },
+    setTitle() {}, close: () => modal.onClose()
+  });
   modal.onOpen();
-  return { modal, root, editor: root.querySelector('textarea')! };
+  return { modal, root, editor: root.querySelector('textarea')!, hotkeys };
 }
+
+test('quick project creation offers existing types and keeps a newly typed value across view changes', async () => {
+  await withWindow(async () => {
+    const { plugin } = createPlugin();
+    plugin.settings.language = 'en';
+    plugin.workbenchProjectTypes = () => [{ key: 'writing', name: 'Writing', count: 2 }];
+    const calls: unknown[][] = [];
+    plugin.createNote = async (...args) => { calls.push(args); };
+    const { modal, root } = openQuickAdd(plugin, 'project', 'Publish\n\nPlan');
+    const typeInput = () => root.all().find((element) => element.getAttribute('aria-label') === 'Project type (optional)');
+    const suggestions = root.all().find((element) => element.getAttribute('aria-label') === 'Existing project types')!;
+    suggestions.value = 'Writing';
+    suggestions.dispatchEvent(new Event('change'));
+    assert.equal(typeInput()?.value, 'Writing');
+    typeInput()!.value = '  Podcast  ';
+    typeInput()!.dispatchEvent(new Event('input'));
+    modal.setKind('note');
+    assert.equal(typeInput(), undefined);
+    modal.setKind('project');
+    assert.equal(typeInput()?.value, '  Podcast  ');
+    await modal.save();
+    assert.deepEqual(calls, [['project', 'Publish', undefined, 'Plan', 'Podcast']]);
+  });
+});
+
+test('quick project creation omits project type when creating inside an existing project folder', async () => {
+  await withWindow(async () => {
+    const { plugin, app } = createPlugin();
+    plugin.settings.language = 'en';
+    const folder = app.vault.seedFolder(`${plugin.settings.projectFolder}/Existing`);
+    const calls: unknown[][] = [];
+    plugin.createNote = async (...args) => { calls.push(args); };
+    const { modal, root } = openQuickAdd(plugin, 'project', 'Related project note');
+    const type = root.all().find((element) => element.getAttribute('aria-label') === 'Project type (optional)')!;
+    type.value = 'Local type';
+    type.dispatchEvent(new Event('input'));
+    const location = root.all().find((element) => element.getAttribute('aria-label') === 'Project location')!;
+    location.value = folder.path;
+    location.dispatchEvent(new Event('change'));
+    assert.equal(type.parent?.parent?.hidden, true);
+    await modal.save();
+    assert.deepEqual(calls, [['project', 'Related project note', folder.path, '', undefined]]);
+  });
+});
+
+test('quick project creation blocks save while the project type is composing', async () => {
+  await withWindow(async () => {
+    const { plugin } = createPlugin();
+    plugin.settings.language = 'en';
+    const calls: unknown[][] = [];
+    plugin.createNote = async (...args) => { calls.push(args); };
+    const { modal, root, hotkeys } = openQuickAdd(plugin, 'project', 'Publish');
+    const enter = hotkeys.get('Enter')!;
+    const type = root.all().find((element) => element.getAttribute('aria-label') === 'Project type (optional)')!;
+    type.dispatchEvent(new Event('compositionstart'));
+    type.value = 'boke';
+    type.dispatchEvent(Object.assign(new Event('input'), { isComposing: true }));
+    enter({ isComposing: true, keyCode: 229 });
+    enter({ isComposing: false, keyCode: 13 });
+    await modal.save();
+    assert.deepEqual(calls, []);
+    type.value = '播客';
+    type.dispatchEvent(new Event('compositionend'));
+    enter({ isComposing: true, keyCode: 13 });
+    assert.deepEqual(calls, []);
+    enter({ isComposing: false, keyCode: 13 });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(calls, [['project', 'Publish', undefined, '', '播客']]);
+  });
+});
 
 test('distilling a capture opens an editable card with its required source link and leaves the source untouched', async () => {
   await withWindow(async () => {

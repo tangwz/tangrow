@@ -5,8 +5,8 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { readSettings } from '../src/model';
-import type { WorkbenchArea, WorkbenchLinkCandidate, WorkbenchProject, WorkbenchProjectTask } from '../src/project-workbench-data';
-import type { SidebarHost } from '../src/types';
+import type { WorkbenchArea, WorkbenchLinkCandidate, WorkbenchProject, WorkbenchProjectTask, WorkbenchProjectType } from '../src/project-workbench-data';
+import type { NoteSummary, SidebarHost } from '../src/types';
 
 interface ElementOptions { cls?: string; text?: string; attr?: Record<string, string> }
 interface MockDocument { activeElement: Element | null }
@@ -47,6 +47,7 @@ class Element extends EventTarget {
     this.children = [];
   }
   focus(): void { this.ownerDocument.activeElement = this; }
+  click(): void { if (!this.disabled) this.dispatchEvent(new Event('click')); }
   setSelectionRange(): void {}
   querySelectorAll(selector: string): Element[] {
     if (selector === '[data-tangrow-action]') return this.all().filter((element) => !!element.dataset.tangrowAction);
@@ -74,11 +75,14 @@ const { ProjectWorkbench, SidebarUI } = moduleObject.exports as typeof import('.
 function project(name: string, data: Partial<WorkbenchProject> = {}): WorkbenchProject {
   const root = `20-Project/${name}`;
   const notePath = `${root}/${name}.md`;
-  return { path: root, name, notePath, status: 'open', notes: [], tasks: [], due: null, areaNotePath: notePath, areaPath: null, references: [], ...data };
+  return { path: root, name, notePath, status: 'open', notes: [], tasks: [], due: null, areaNotePath: notePath, areaPath: null,
+    typeNotePath: notePath, projectType: null, references: [], ...data };
 }
 
-function fixture(projects: WorkbenchProject[], areas: WorkbenchArea[] = [], candidates: WorkbenchLinkCandidate[] = []) {
+function fixture(projects: WorkbenchProject[], areas: WorkbenchArea[] = [], candidates: WorkbenchLinkCandidate[] = [],
+  options: { types?: WorkbenchProjectType[]; drafts?: NoteSummary[] } = {}) {
   const settings = readSettings({ language: 'en' });
+  let drafts = options.drafts ?? [];
   const opened: Array<[string, number | undefined]> = [];
   const added: Array<[string, string]> = [];
   const completed: Array<[string, number, string | undefined]> = [];
@@ -92,6 +96,8 @@ function fixture(projects: WorkbenchProject[], areas: WorkbenchArea[] = [], cand
   const host = {
     settings,
     workbenchProjects: () => projects,
+    workbenchProjectTypes: () => options.types ?? [],
+    workbenchDrafts: () => drafts,
     workbenchAreas: () => areas,
     workbenchLinkCandidates: () => candidates,
     openNote: async (path, line) => { opened.push([path, line]); },
@@ -104,6 +110,10 @@ function fixture(projects: WorkbenchProject[], areas: WorkbenchArea[] = [], cand
       writes.push(['area', path, area]);
       findProject(path).areaPath = area;
     },
+    setWorkbenchProjectType: async (path, type) => {
+      writes.push(['type', path, type]);
+      findProject(path).projectType = type;
+    },
     setWorkbenchProjectStatus: async (path, status) => {
       writes.push(['status', path, status]);
       findProject(path).status = status;
@@ -111,6 +121,7 @@ function fixture(projects: WorkbenchProject[], areas: WorkbenchArea[] = [], cand
     },
     linkWorkbenchNote: async (notePath, projectPath) => {
       writes.push(['link', notePath, projectPath]);
+      drafts = drafts.filter((draft) => draft.path !== notePath);
       const note = candidates.find((item) => item.path === notePath);
       if (note) findProject(projectPath).references.push(note);
     },
@@ -119,25 +130,30 @@ function fixture(projects: WorkbenchProject[], areas: WorkbenchArea[] = [], cand
       const entry = projects.flatMap((item) => item.tasks).find((task) => task.path === path && task.line === line);
       if (entry) entry.done = true;
     }
-  } satisfies Pick<SidebarHost, 'settings' | 'workbenchProjects' | 'workbenchAreas' | 'workbenchLinkCandidates'
+  } satisfies Pick<SidebarHost, 'settings' | 'workbenchProjects' | 'workbenchAreas' | 'workbenchLinkCandidates' | 'workbenchProjectTypes' | 'workbenchDrafts'
     | 'openNote' | 'openQuickAdd' | 'addProjectTask' | 'addAreaTask' | 'openNewAreaNote' | 'revealWorkbenchPath'
-    | 'setWorkbenchProjectArea' | 'setWorkbenchProjectStatus' | 'linkWorkbenchNote' | 'completeTask'>;
+    | 'setWorkbenchProjectArea' | 'setWorkbenchProjectType' | 'setWorkbenchProjectStatus' | 'linkWorkbenchNote' | 'completeTask'>;
   const root = new Element();
   const ui = new SidebarUI(() => settings.language);
-  let areaView = false;
+  let view: 'projects' | 'areas' | 'drafts' = 'projects';
   const pane = root as unknown as HTMLElement;
-  const render = () => { if (areaView) workbench.renderAreas(pane); else workbench.render(pane); };
+  const render = () => {
+    if (view === 'areas') workbench.renderAreas(pane);
+    else if (view === 'drafts') workbench.renderDrafts(pane);
+    else workbench.render(pane);
+  };
   const workbench = new ProjectWorkbench(host as SidebarHost, ui, render, (path, fromArea) => {
-    areaView = false;
+    view = 'projects';
     workbench.showProject(path, fromArea);
     render();
   }, (path) => {
-    areaView = true;
+    view = 'areas';
     workbench.showArea(path);
     render();
-  });
+  }, () => { writes.push(['scratchpad']); });
   render();
-  return { workbench, root, opened, added, completed, quickAdd, writes, render, showAreas: () => { areaView = true; render(); } };
+  return { workbench, root, opened, added, completed, quickAdd, writes, render,
+    showAreas: () => { view = 'areas'; render(); }, showDrafts: () => { view = 'drafts'; render(); } };
 }
 
 function control(root: Element, action: string): Element {
@@ -358,4 +374,82 @@ test('References link selected material in place and the archive hint only revea
   story.status = 'archived';
   workbench.render(root as unknown as HTMLElement);
   assert.ok(labelledButton(root, 'Reveal in file list'));
+});
+
+const declaredTypes = [{ key: 'writing', name: 'Writing', count: 2 }, { key: 'podcast', name: 'Podcast', count: 1 }];
+
+test('the project list groups named types case-insensitively and switches to a flat due-date order', async () => {
+  const outline = project('Outline', { projectType: 'writing', due: new Date('2030-05-10T00:00:00Z') });
+  const chapter = project('Chapter', { projectType: 'Writing', due: null });
+  const episode = project('Episode', { projectType: 'Podcast', due: new Date('2030-04-16T00:00:00Z') });
+  const other = project('Other', { projectType: null, due: new Date('2030-03-15T00:00:00Z') });
+  const { root } = fixture([outline, chapter, episode, other], [], [], { types: declaredTypes });
+  const groups = () => root.all().filter((entry) => entry.dataset.tangrowAction?.startsWith('project-type-group-'));
+  assert.deepEqual(groups().map((entry) => entry.getAttribute('aria-label')), ['Writing · 2', 'Podcast · 1', 'Uncategorized · 1']);
+  await click(control(root, 'project-type-group-writing'));
+  const rows = () => root.all().filter((entry) => entry.dataset.tangrowAction?.startsWith('project-open-'));
+  assert.equal(rows().length, 2);
+
+  const mode = control(root, 'project-group-mode');
+  mode.value = 'due';
+  mode.dispatchEvent(new Event('change'));
+  assert.equal(groups().length, 0);
+  assert.deepEqual(rows().map((entry) => entry.dataset.tangrowAction), [other, episode, outline, chapter].map((entry) => `project-open-${entry.path}`));
+});
+
+test('project type edits save an existing choice, freely entered value, or explicit clear without changing continuation', async () => {
+  const story = project('Story', { projectType: 'Writing' });
+  const { workbench, root, writes } = fixture([story], [], [], { types: declaredTypes });
+  workbench.showProject(story.path);
+  await click(control(root, 'project-change-type'));
+  const suggestions = root.querySelectorAll('select')[0]!;
+  suggestions.value = 'Podcast';
+  suggestions.dispatchEvent(new Event('change'));
+  assert.equal(control(root, 'project-type-input').value, 'Podcast');
+  assert.deepEqual(writes, []);
+  await click(labelledButton(root, 'Save type'));
+  assert.equal(control(root, 'project-change-type').getAttribute('aria-label'), 'Change project type · Podcast');
+
+  await click(control(root, 'project-change-type'));
+  const input = control(root, 'project-type-input');
+  input.focus();
+  input.dispatchEvent(new Event('compositionstart'));
+  input.value = ' Animation ';
+  workbench.render(root as unknown as HTMLElement);
+  assert.equal(control(root, 'project-type-input'), input);
+  await click(labelledButton(root, 'Save type'));
+  assert.equal(writes.length, 1);
+  input.dispatchEvent(new Event('compositionend'));
+  await flush();
+  assert.equal(control(root, 'project-type-input').value, ' Animation ');
+  await click(labelledButton(root, 'Save type'));
+  assert.equal(control(root, 'project-change-type').getAttribute('aria-label'), 'Change project type · Animation');
+  await click(control(root, 'project-change-type'));
+  control(root, 'project-type-input').value = '';
+  await click(labelledButton(root, 'Save type'));
+  assert.equal(control(root, 'project-change-type').getAttribute('aria-label'), 'Change project type · Uncategorized');
+  assert.equal(primary(root).getAttribute('aria-label'), 'Open the project note');
+  assert.deepEqual(writes, [['type', story.path, 'Podcast'], ['type', story.path, 'Animation'], ['type', story.path, null]]);
+});
+
+test('Drafts opens the scratchpad and links a chosen manuscript without moving it', async () => {
+  const story = project('Editing a story', { projectType: 'Writing' });
+  const episode = project('Recording an episode', { projectType: 'Podcast' });
+  const draft = { path: '00-Inbox/Outline.md', name: 'Outline', folder: '00-Inbox', modified: 1, kind: 'draft' };
+  const { root, opened, showDrafts, writes } = fixture([story, episode], [], [], { drafts: [draft] });
+  showDrafts();
+  await click(control(root, 'draft-scratchpad'));
+  await click(control(root, `draft-open-${draft.path}`));
+  await click(control(root, `draft-project-link-${draft.path}`));
+  const query = control(root, `draft-project-search-${draft.path}`);
+  query.value = 'podcast';
+  query.dispatchEvent(new Event('input'));
+  selectOnlyOption(root);
+  assert.deepEqual(writes, [['scratchpad']]);
+  await click(labelledButton(root, 'Confirm selection'));
+  assert.deepEqual(opened, [[draft.path, undefined]]);
+  assert.deepEqual(writes, [['scratchpad'], ['link', draft.path, episode.path]]);
+  assert.ok(!root.all().some((entry) => entry.dataset.tangrowAction === `draft-open-${draft.path}`));
+  assert.ok(root.all().some((entry) => entry.textContent === 'No drafts yet'));
+  assert.equal(root.ownerDocument.activeElement, control(root, 'draft-scratchpad'));
 });

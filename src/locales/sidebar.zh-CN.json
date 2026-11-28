@@ -1,4 +1,9 @@
 {
+  "Back to drafts": "返回草稿",
+  "Project (optional)": "归入项目（可选）",
+  "None, keep as a draft": "不选项目，保存为草稿",
+  "Save as manuscript": "保存为稿件",
+  "The saved project is unavailable. Choose a project again or save as a draft.": "原先选择的项目已不可用，请重新选项目或保存为草稿。",
   "Tools": "工具",
   "Capture": "速记",
   "Pins": "收藏",

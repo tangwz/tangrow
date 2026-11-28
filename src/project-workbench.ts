@@ -1,6 +1,7 @@
 import { Notice, setTooltip } from 'obsidian';
 import { describeError } from './i18n';
-import type { WorkbenchArea, WorkbenchLinkCandidate, WorkbenchProject, WorkbenchProjectTask } from './project-workbench-data';
+import { projectTypeKey, type WorkbenchArea, type WorkbenchLinkCandidate, type WorkbenchProject, type WorkbenchProjectTask } from './project-workbench-data';
+import { renderProjectTypeInput } from './project-type-input';
 import { sortTaskDisplay, taskDisplayRank, taskDueLabel, type TaskDisplay } from './task-display';
 import { renderTaskMetadata } from './task-row';
 import type { NoteSummary, SidebarHost } from './types';
@@ -11,6 +12,7 @@ const TASK_PREVIEW_LIMIT = 5;
 const PROJECT_STATUS = { open: 'Active', done: 'Completed', archived: 'Archived', unknown: 'Status not set' } as const;
 type EntityKind = 'project' | 'area';
 type PickerKind = 'area' | 'notes' | 'references';
+type ProjectMode = 'type' | 'area' | 'due';
 type TaskEntity = Pick<WorkbenchProject, 'path' | 'notePath' | 'tasks'>;
 type RankedProject = { project: WorkbenchProject; nextTask: TaskDisplay | undefined };
 
@@ -29,9 +31,11 @@ export class ProjectWorkbench {
   private selectedArea: string | null = null;
   private projectFromArea?: string;
   private renderedEntity: string | null = null;
-  private groupByArea = false;
-  private readonly collapsedAreaGroups = new Set<string>();
+  private projectMode: ProjectMode = 'type';
+  private readonly collapsedGroups = new Set<string>();
   private picker?: { kind: PickerKind; state: WorkbenchPickerState; saving: boolean };
+  private typeEditor?: { value: string; saving: boolean; composing: boolean };
+  private draftPicker?: { path: string; state: WorkbenchPickerState; saving: boolean };
   private expandedTasks = false;
   private readonly taskListId = `tangrow-project-tasks-${crypto.randomUUID()}`;
   private taskInput?: HTMLInputElement;
@@ -46,7 +50,8 @@ export class ProjectWorkbench {
     private readonly ui: SidebarUI,
     private readonly onChange: () => void,
     private readonly openProject?: (path: string, fromArea?: string) => void,
-    private readonly openArea?: (path: string) => void
+    private readonly openArea?: (path: string) => void,
+    private readonly openScratchpad?: () => void
   ) {}
 
   showProject(path: string | null, fromArea?: string): void {
@@ -54,6 +59,7 @@ export class ProjectWorkbench {
     this.selectedProject = path;
     this.projectFromArea = fromArea;
     this.picker = undefined;
+    this.typeEditor = undefined;
     this.expandedTasks = false;
     this.onChange();
   }
@@ -68,12 +74,87 @@ export class ProjectWorkbench {
   render(parent: HTMLElement): void { this.renderView(parent, 'project'); }
   renderAreas(parent: HTMLElement): void { this.renderView(parent, 'area'); }
 
+  renderDrafts(parent: HTMLElement): void {
+    if (parent === this.container && this.renderedEntity === 'drafts' && this.draftPicker?.saving) return;
+    this.container = parent;
+    this.renderedEntity = 'drafts';
+    this.taskInput = this.composingInput = undefined;
+    parent.empty();
+    const view = parent.createDiv({ cls: 'tangrow-project-workbench' });
+    if (this.openScratchpad) {
+      const scratchpad = this.ui.button(view, 'Writing scratchpad', this.openScratchpad, { icon: 'pen-line', cls: 'tangrow-note-row' });
+      scratchpad.dataset.tangrowAction = 'draft-scratchpad';
+      scratchpad.createSpan({ cls: 'tangrow-note-folder', text: this.ui.t('Saving without a project makes a draft.') });
+    }
+    const drafts = this.host.workbenchDrafts();
+    if (!drafts.some((draft) => draft.path === this.draftPicker?.path)) this.draftPicker = undefined;
+    if (!drafts.length) {
+      this.ui.empty(view, 'No drafts yet', 'Manuscripts saved without a project appear here.', 'file-text');
+      return;
+    }
+    const projects = this.host.workbenchProjects().filter((project) => project.notePath !== null);
+    for (const draft of drafts) {
+      const row = view.createDiv({ cls: 'tangrow-draft-row' });
+      this.noteRow(row, draft, this.updatedLabel(draft.modified), 'file-text', 'draft-open');
+      const link = this.ui.button(row, 'Link into project', () => {
+        if (this.draftPicker?.saving) return;
+        this.draftPicker = this.draftPicker?.path === draft.path ? undefined
+          : { path: draft.path, state: { query: '', selected: null }, saving: false };
+        this.onChange();
+        this.focusAction(this.draftPicker ? `draft-project-search-${draft.path}` : `draft-project-link-${draft.path}`);
+      }, { level: 'text', disabled: !projects.length });
+      link.dataset.tangrowAction = `draft-project-link-${draft.path}`;
+      link.setAttribute('aria-label', this.ui.t('Link {draft} into project', { draft: draft.name }));
+      link.setAttribute('aria-expanded', String(this.draftPicker?.path === draft.path));
+      if (this.draftPicker?.path === draft.path) this.renderDraftPicker(view, projects);
+    }
+  }
+
+  private renderDraftPicker(parent: HTMLElement, projects: readonly WorkbenchProject[]): void {
+    const picker = this.draftPicker;
+    if (!picker) return;
+    const link = `draft-project-link-${picker.path}`;
+    const query = `draft-project-search-${picker.path}`;
+    const items = projects.map((project) => ({ path: project.path, label: project.name,
+      detail: [project.projectType || this.ui.t('Uncategorized'), project.path].join(' · ') }));
+    const search = renderWorkbenchPicker(parent, this.ui, {
+      label: this.ui.t('Link into project'), items, state: picker.state,
+      onCancel: () => {
+        if (this.draftPicker !== picker) return;
+        this.draftPicker = undefined;
+        this.onChange();
+        this.focusAction(link);
+      },
+      onConfirm: async (path) => {
+        if (this.draftPicker !== picker || picker.saving) return;
+        picker.saving = true;
+        try {
+          await this.host.linkWorkbenchNote(picker.path, path);
+          if (this.draftPicker === picker) this.draftPicker = undefined;
+        } finally {
+          picker.saving = false;
+          if (this.renderedEntity === 'drafts') {
+            this.onChange();
+            this.focusAction(this.draftPicker === picker ? query : 'draft-scratchpad');
+          }
+        }
+      }
+    });
+    search.dataset.tangrowAction = query;
+  }
+
   private renderView(parent: HTMLElement, kind: EntityKind): void {
     const selected = kind === 'project' ? this.selectedProject : this.selectedArea;
     const entity = selected ? `${kind}:${selected}` : null;
     const previous = this.taskInput;
-    const focused = previous && parent.ownerDocument.activeElement === previous && parent.contains(previous);
-    if (parent === this.container && entity === this.renderedEntity && this.picker?.saving) return;
+    const active = parent.ownerDocument.activeElement as HTMLElement | null;
+    const focused = previous && active === previous && parent.contains(previous);
+    if (parent === this.container && entity === this.renderedEntity && (this.picker?.saving || this.typeEditor?.saving)) return;
+    if (parent === this.container && entity === this.renderedEntity && this.typeEditor?.composing
+      && active?.dataset.tangrowAction === 'project-type-input' && parent.contains(active)) {
+      this.deferredRender = true;
+      return;
+    }
     if (focused && previous === this.composingInput && entity === this.renderedEntity) {
       this.deferredRender = true;
       return;
@@ -94,6 +175,7 @@ export class ProjectWorkbench {
       else {
         this.selectedProject = null;
         this.picker = undefined;
+        this.typeEditor = undefined;
         this.renderList(view, projects, today);
       }
       this.ui.comingSoon(view, 'AI writes a project brief and breaks down tasks');
@@ -135,38 +217,57 @@ export class ProjectWorkbench {
     const toolbar = parent.createDiv({ cls: 'tangrow-project-toolbar' });
     this.ui.button(toolbar, 'New project', create, { icon: 'plus', level: 'text' });
     const mode = toolbar.createEl('select', { attr: { 'aria-label': this.ui.t('Organize projects') } });
-    mode.createEl('option', { value: 'urgency', text: this.ui.t('By task urgency') });
+    mode.createEl('option', { value: 'type', text: this.ui.t('By type') });
     mode.createEl('option', { value: 'area', text: this.ui.t('By area') });
-    mode.value = this.groupByArea ? 'area' : 'urgency';
+    mode.createEl('option', { value: 'due', text: this.ui.t('By due date') });
+    mode.value = this.projectMode;
     mode.dataset.tangrowAction = 'project-group-mode';
-    mode.addEventListener('change', () => { this.groupByArea = mode.value === 'area'; this.onChange(); });
+    mode.addEventListener('change', () => {
+      const value = mode.value;
+      this.projectMode = value === 'area' || value === 'due' ? value : 'type';
+      this.onChange();
+    });
     const ranked = rankWorkbenchProjects(projects, today);
-    if (!this.groupByArea) {
+    if (this.projectMode === 'due') {
+      const due = (entry: RankedProject) => entry.project.due?.getTime() ?? Number.MAX_SAFE_INTEGER;
+      ranked.sort((left, right) => due(left) - due(right));
       this.renderProjectRows(parent, ranked, today);
+      return;
+    }
+    if (this.projectMode === 'type') {
+      const types = this.host.workbenchProjectTypes();
+      const keyOf = (project: WorkbenchProject) => project.projectType ? projectTypeKey(project.projectType) : '';
+      const known = new Set(types.map((type) => type.key));
+      for (const type of types) {
+        const entries = ranked.filter(({ project }) => keyOf(project) === type.key);
+        if (entries.length) this.renderProjectGroup(parent, `project-type-group-${type.key}`, type.name, entries, today);
+      }
+      const uncategorized = ranked.filter(({ project }) => !known.has(keyOf(project)));
+      if (uncategorized.length) this.renderProjectGroup(parent, 'project-type-group-', this.ui.t('Uncategorized'), uncategorized, today);
       return;
     }
     const areas = this.host.workbenchAreas();
     const known = new Set(areas.map((area) => area.path));
     for (const area of areas) {
       const entries = ranked.filter(({ project }) => project.areaPath === area.path);
-      if (entries.length) this.renderProjectGroup(parent, area.path, area.name, entries, today);
+      if (entries.length) this.renderProjectGroup(parent, `project-group-${area.path}`, area.name, entries, today);
     }
     const unlinked = ranked.filter(({ project }) => !project.areaPath || !known.has(project.areaPath));
-    if (unlinked.length) this.renderProjectGroup(parent, '', this.ui.t('No linked area'), unlinked, today);
+    if (unlinked.length) this.renderProjectGroup(parent, 'project-group-', this.ui.t('No linked area'), unlinked, today);
   }
 
-  private renderProjectGroup(parent: HTMLElement, areaPath: string, name: string, ranked: readonly RankedProject[], today: Date): void {
+  private renderProjectGroup(parent: HTMLElement, action: string, name: string, ranked: readonly RankedProject[], today: Date): void {
     const group = parent.createEl('section');
-    const expanded = !this.collapsedAreaGroups.has(areaPath);
+    const expanded = !this.collapsedGroups.has(action);
     const heading = group.createEl('h3', { cls: 'tangrow-section-title tangrow-project-group-heading' });
     const rows = group.createDiv({ attr: { id: `tangrow-project-group-${crypto.randomUUID()}` } });
     const title = this.ui.userButton(heading, `${name} · ${this.ui.number(ranked.length)}`, () => {
-      if (expanded) this.collapsedAreaGroups.add(areaPath);
-      else this.collapsedAreaGroups.delete(areaPath);
+      if (expanded) this.collapsedGroups.add(action);
+      else this.collapsedGroups.delete(action);
       this.onChange();
-      this.focusAction(`project-group-${areaPath}`);
+      this.focusAction(action);
     }, { icon: expanded ? 'chevron-down' : 'chevron-right', level: 'text' });
-    title.dataset.tangrowAction = `project-group-${areaPath}`;
+    title.dataset.tangrowAction = action;
     title.setAttribute('aria-expanded', String(expanded));
     title.setAttribute('aria-controls', rows.id);
     if (expanded) this.renderProjectRows(rows, ranked, today);
@@ -174,12 +275,13 @@ export class ProjectWorkbench {
 
   private renderProjectRows(parent: HTMLElement, ranked: readonly RankedProject[], today: Date): void {
     const list = parent.createDiv({ cls: 'tangrow-note-list' });
-    const areaNames = new Map(this.groupByArea ? [] : this.host.workbenchAreas().map((area) => [area.path, area.name]));
+    const areaNames = new Map(this.projectMode === 'area' ? [] : this.host.workbenchAreas().map((area) => [area.path, area.name]));
     for (const { project, nextTask } of ranked) {
       const next = nextTask?.title ? this.ui.t('Next: {task}', { task: nextTask.title }) : this.ui.t('No next step yet');
       const area = project.areaPath ? areaNames.get(project.areaPath) : undefined;
+      const type = this.projectMode === 'type' ? undefined : project.projectType || this.ui.t('Uncategorized');
       const status = this.awaitingArchive(project) ? this.ui.t('Completed · move to archive') : this.projectMeta(project, today);
-      const detail = [status, area, next].filter(Boolean).join(' · ');
+      const detail = [status, area, type, next].filter(Boolean).join(' · ');
       const row = this.ui.userButton(list, project.name, () => {
         this.showProject(project.path);
         this.focusAction('project-back');
@@ -202,6 +304,7 @@ export class ProjectWorkbench {
       }
     });
     parent.createEl('p', { cls: 'tangrow-muted tangrow-project-status', text: this.projectMeta(project, today) });
+    if (project.typeNotePath) this.renderProjectType(parent, project);
     if (project.areaNotePath) this.renderProjectArea(parent, project);
 
     const latest = project.notes[0];
@@ -233,6 +336,69 @@ export class ProjectWorkbench {
     const back = this.ui.button(heading, label, onBack, { icon: 'chevron-left', level: 'text' });
     back.dataset.tangrowAction = action;
     heading.createEl('h3', { text: name });
+  }
+
+  private renderProjectType(parent: HTMLElement, project: WorkbenchProject): void {
+    const type = project.projectType || this.ui.t('Uncategorized');
+    const action = 'project-change-type';
+    const fieldAction = 'project-type-input';
+    const edit = this.ui.userButton(parent, type, () => {
+      if (this.picker?.saving || this.typeEditor?.saving) return;
+      this.picker = undefined;
+      this.typeEditor = this.typeEditor ? undefined : { value: project.projectType ?? '', saving: false, composing: false };
+      this.onChange();
+      this.focusAction(this.typeEditor ? fieldAction : action);
+    }, { level: 'text', icon: 'tag' });
+    edit.dataset.tangrowAction = action;
+    edit.setAttribute('aria-label', this.ui.t('Change project type · {type}', { type }));
+    edit.setAttribute('aria-expanded', String(!!this.typeEditor));
+    const editor = this.typeEditor;
+    if (!editor) return;
+    editor.composing = false;
+
+    const form = parent.createEl('form', { cls: 'tangrow-workbench-picker', attr: { 'aria-label': this.ui.t('Change project type') } });
+    const choices = this.host.workbenchProjectTypes().map((item) => item.name);
+    const current = () => this.typeEditor === editor && this.container?.contains(form);
+    const input = renderProjectTypeInput(form, this.ui, choices, editor.value, (value) => { if (current()) editor.value = value; });
+    input.dataset.tangrowAction = fieldAction;
+    const footer = form.createDiv({ cls: 'tangrow-workbench-picker-actions' });
+    const cancel = this.ui.button(footer, 'Cancel', () => {
+      if (!current() || editor.saving) return;
+      this.typeEditor = undefined;
+      this.onChange();
+      this.focusAction(action);
+    }, { level: 'text' });
+    const save = this.ui.button(footer, 'Save type', async () => {
+      if (!current() || editor.saving || editor.composing) return;
+      const value = input.value.trim();
+      const entity = this.renderedEntity;
+      editor.saving = true;
+      input.disabled = cancel.disabled = save.disabled = true;
+      form.querySelectorAll<HTMLSelectElement>('select').forEach((select) => { select.disabled = true; });
+      try {
+        await this.host.setWorkbenchProjectType(project.path, value || null);
+        if (this.typeEditor === editor) this.typeEditor = undefined;
+      } finally {
+        editor.saving = false;
+        if (this.renderedEntity === entity) {
+          this.onChange();
+          this.focusAction(this.typeEditor === editor ? fieldAction : action);
+        }
+      }
+    });
+    input.addEventListener('compositionstart', () => { editor.composing = true; });
+    input.addEventListener('compositionend', () => {
+      if (!current()) return;
+      editor.composing = false;
+      if (this.deferredRender) queueMicrotask(() => this.onChange());
+    });
+    form.addEventListener('submit', (event) => { event.preventDefault(); save.click(); });
+    form.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape' || event.isComposing) return;
+      event.preventDefault();
+      event.stopPropagation();
+      cancel.click();
+    });
   }
 
   private renderProjectArea(parent: HTMLElement, project: WorkbenchProject): void {
@@ -290,7 +456,8 @@ export class ProjectWorkbench {
   }
 
   private togglePicker(kind: PickerKind, selected: string | null = null): void {
-    if (this.picker?.saving) return;
+    if (this.picker?.saving || this.typeEditor?.saving) return;
+    this.typeEditor = undefined;
     this.picker = this.picker?.kind === kind ? undefined : { kind, state: { query: '', selected }, saving: false };
     this.onChange();
     this.focusAction(this.picker ? `project-picker-search-${kind}` : `project-picker-${kind}`);

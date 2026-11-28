@@ -1322,3 +1322,18 @@ button.tangrow-report-day:hover { outline: 1px solid var(--text-accent); outline
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
 }
+.tangrow-sidebar .tangrow-project-type-control,
+.tangrow-quick .tangrow-project-type-control {
+  display: grid;
+  gap: var(--size-4-2);
+  min-inline-size: 0;
+}
+.tangrow-sidebar .tangrow-project-type-control :is(input, select),
+.tangrow-quick .tangrow-project-type-control :is(input, select) { min-inline-size: 0; inline-size: 100%; }
+.tangrow-sidebar .tangrow-workbench-picker > .tangrow-project-type-control { margin-block-end: var(--size-4-2); }
+.tangrow-sidebar .tangrow-draft-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+  align-items: center;
+  gap: var(--size-4-1);
+}

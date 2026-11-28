@@ -29,9 +29,7 @@ const SECTIONS: { id: WorkbenchTab; label: string; icon: string }[] = [
   { id: 'more', label: 'More workspaces', icon: 'ellipsis' }
 ];
 
-const PROJECT_TABS: Record<ProjectTab, string> = {
-  list: 'Projects', areas: 'Areas', scratchpad: 'Writing scratchpad', manuscripts: 'Manuscripts'
-};
+const PROJECT_TABS = { list: 'Projects', areas: 'Areas', drafts: 'Drafts' } as const;
 const KNOWLEDGE_TABS: Record<KnowledgeTab, string> = {
   cards: 'Cards', hubs: 'Knowledge hubs', review: 'Card review', materials: 'Knowledge materials'
 };
@@ -98,6 +96,11 @@ export class TangrowSidebar extends ItemView {
   /** The last writing composition that ended unconfirmed, until a new composition or ordinary input follows it. */
   private cancelledScratchComposition?: DraftComposition;
   private scratchTitleInput?: HTMLInputElement;
+  private scratchProjectSelect?: HTMLSelectElement;
+  private scratchProjectLabel?: HTMLElement;
+  private scratchProjectPath = '';
+  private scratchProjectOptions = '';
+  private scratchPreparedProject?: string | null;
   private studioHeading?: HTMLElement;
   private studioCaption?: HTMLElement;
   private scratchSaveButton?: HTMLButtonElement;
@@ -126,11 +129,11 @@ export class TangrowSidebar extends ItemView {
       this.capturePanel?.focusComposer();
     });
     this.projectWorkbench = new ProjectWorkbench(host, this.ui, () => {
-      if (this.isMounted && this.section === 'projects' && (this.projectTab === 'list' || this.projectTab === 'areas')) this.refreshSection(this.host.snapshot());
+      if (this.isMounted && this.section === 'projects' && this.projectTab !== 'scratchpad' && this.projectTab !== 'manuscripts') this.refreshSection(this.host.snapshot());
     }, (path, fromArea) => this.showProject(path, fromArea), (path) => {
       this.projectWorkbench.showArea(path);
       this.showProjectTab('areas');
-    });
+    }, () => this.showProjectTab('scratchpad'));
   }
 
   /** Opens a workspace from a command or menu item. */
@@ -460,7 +463,21 @@ export class TangrowSidebar extends ItemView {
     }
     this.workspacePane.setAttribute('aria-labelledby', `${this.viewId}-tab-${section}`);
     this.workspacePane.empty();
-    if (section === 'projects') this.renderNestedTabs('Project views', PROJECT_TABS, this.projectTab, (tab) => this.showProjectTab(tab));
+    if (section === 'projects') {
+      const writing = this.projectTab === 'scratchpad' || this.projectTab === 'manuscripts';
+      const active = this.projectTab === 'list' || this.projectTab === 'areas' ? this.projectTab : 'drafts';
+      this.renderNestedTabs('Project views', PROJECT_TABS, active, (tab) => this.showProjectTab(tab));
+      if (writing) {
+        const back = this.workspacePane.createDiv({ cls: 'tangrow-subnav' }).createEl('button', {
+          cls: 'tangrow-subnav-item', text: this.ui.t('Back to drafts'), attr: { type: 'button' }
+        });
+        back.dataset.workbenchLabel = 'Back to drafts';
+        back.addEventListener('click', () => {
+          this.showProjectTab('drafts');
+          this.workspacePane.querySelector<HTMLButtonElement>('.tangrow-subnav button[aria-pressed="true"]')?.focus({ preventScroll: true });
+        });
+      }
+    }
     if (section === 'knowledge') this.renderNestedTabs('Knowledge views', KNOWLEDGE_TABS, this.knowledgeTab, (tab) => this.showKnowledge(tab));
     if (section === 'more' && this.moreTab) this.renderMoreBack(this.moreTab);
     this.pane = this.workspacePane.createDiv({ cls: 'tangrow-pane' });
@@ -494,6 +511,12 @@ export class TangrowSidebar extends ItemView {
         switch (this.projectTab) {
           case 'list': this.refreshSection = () => this.preserveFocus(() => this.projectWorkbench.render(this.pane)); break;
           case 'areas': this.refreshSection = () => this.preserveFocus(() => this.projectWorkbench.renderAreas(this.pane)); break;
+          case 'drafts': {
+            const drafts = this.pane.createDiv();
+            this.ui.button(this.pane, 'Manuscripts', () => this.showProjectTab('manuscripts'), { icon: 'files', cls: 'tangrow-full-width' });
+            this.refreshSection = () => this.preserveFocus(() => this.projectWorkbench.renderDrafts(drafts));
+            break;
+          }
           case 'scratchpad': this.mountStudio(); break;
           case 'manuscripts': {
             let signature = '';
@@ -960,6 +983,13 @@ export class TangrowSidebar extends ItemView {
     });
     text.value = this.scratch;
     this.scratchEditor = text;
+    const project = composer.createEl('label', { cls: 'tangrow-project-type-control' });
+    this.scratchProjectLabel = project.createSpan({ text: this.ui.t('Project (optional)') });
+    this.scratchProjectSelect = project.createEl('select');
+    this.scratchProjectSelect.addEventListener('change', () => {
+      this.scratchProjectPath = this.scratchProjectSelect?.value ?? '';
+      this.updateStudioControls();
+    });
     const footer = composer.createDiv({ cls: 'tangrow-composer-footer' });
     this.scratchCount = footer.createSpan({ cls: 'tangrow-muted' });
     this.scratchSaveButton = this.ui.button(footer, 'Save as draft', async () => {
@@ -967,9 +997,11 @@ export class TangrowSidebar extends ItemView {
       this.scratchSaving = true;
       this.updateStudioControls();
       try {
-        await this.host.submitWritingDraft(this.scratchRevision, { leaf: this.leaf, editor: text });
+        await this.host.submitWritingDraft(this.scratchRevision, { leaf: this.leaf, editor: text }, false, this.scratchProjectSelect?.value || undefined);
+        this.scratchProjectPath = '';
       } finally {
         this.scratchSaving = false;
+        this.refreshStudioProjects();
         this.updateStudioControls();
       }
     }, { icon: 'file-plus-2', cls: 'mod-cta' });
@@ -1053,9 +1085,12 @@ export class TangrowSidebar extends ItemView {
         });
       });
     }
+    this.refreshStudioProjects();
     this.syncStudio();
     const history = this.pane.createDiv();
     this.refreshSection = (state) => {
+      this.refreshStudioProjects();
+      this.updateStudioControls();
       history.empty();
       this.listHeading(history, 'Drafts to return to', state.counts.drafts, 'drafts');
       this.noteList(history, state.drafts.slice(0, 12), 'Give an idea a little room', 'Drafts you save from the studio will appear here.', 'pen-line');
@@ -1078,6 +1113,9 @@ export class TangrowSidebar extends ItemView {
     this.scratchComposition = undefined;
     this.cancelledScratchComposition = undefined;
     this.scratchTitleInput = undefined;
+    this.scratchProjectSelect = undefined;
+    this.scratchProjectLabel = undefined;
+    this.scratchProjectOptions = '';
     this.scratchSaveButton = undefined;
     this.scratchCount = undefined;
     this.studioHeading = undefined;
@@ -1114,12 +1152,7 @@ export class TangrowSidebar extends ItemView {
       this.scratchEditor.placeholder = this.ui.t('Start with a sentence...');
       this.scratchEditor.setAttribute('aria-label', this.ui.t('Writing scratchpad'));
     }
-    if (this.scratchSaveButton) {
-      const label = this.ui.t('Save as draft');
-      this.scratchSaveButton.setAttribute('aria-label', label);
-      const text = this.scratchSaveButton.querySelector('span:not(.tangrow-icon)');
-      if (text) text.textContent = label;
-    }
+    this.refreshStudioProjects();
     this.updateStudioControls();
   }
 
@@ -1360,8 +1393,39 @@ export class TangrowSidebar extends ItemView {
   }
 
   private updateStudioControls(): void {
-    if (this.scratchSaveButton) this.scratchSaveButton.disabled = this.scratchSaving || !this.scratch.trim() || this.host.loadWritingDraft().editingView !== undefined;
+    const draft = this.host.loadWritingDraft();
+    const disabled = !!this.gate?.locked || this.scratchSaving || draft.editingView !== undefined;
+    if (this.scratchProjectSelect) {
+      if (draft.preparedProjectPath !== this.scratchPreparedProject) this.refreshStudioProjects();
+      this.scratchProjectSelect.disabled = disabled || draft.preparedProjectPath !== undefined;
+    }
+    if (this.scratchSaveButton) {
+      this.scratchSaveButton.disabled = disabled || !this.scratch.trim();
+      const label = this.ui.t(this.scratchProjectSelect?.value ? 'Save as manuscript' : 'Save as draft');
+      this.scratchSaveButton.setAttribute('aria-label', label);
+      const text = this.scratchSaveButton.querySelector('span:not(.tangrow-icon)');
+      if (text) text.textContent = label;
+    }
     if (this.scratchCount) this.scratchCount.textContent = this.ui.t('{count} words · saved locally', { count: this.ui.number(wordCount(this.scratch, this.host.settings.language)) });
+  }
+
+  private refreshStudioProjects(): void {
+    const select = this.scratchProjectSelect;
+    if (!select) return;
+    if (this.scratchProjectLabel) this.scratchProjectLabel.textContent = this.ui.t('Project (optional)');
+    const prepared = this.host.loadWritingDraft().preparedProjectPath;
+    this.scratchPreparedProject = prepared;
+    const choices = this.host.workbenchProjects().filter((project) => project.notePath && project.status !== 'archived');
+    const options = [{ path: '', name: this.ui.t('None, keep as a draft') }, ...choices];
+    if (prepared && !choices.some((project) => project.path === prepared)) options.push({ path: prepared, name: prepared });
+    const signature = JSON.stringify(options.map(({ path, name }) => [path, name]));
+    if (signature !== this.scratchProjectOptions) {
+      this.scratchProjectOptions = signature;
+      select.empty();
+      for (const { path, name } of options) select.createEl('option', { text: name, attr: { value: path } });
+    }
+    select.value = (prepared === undefined ? this.scratchProjectPath : prepared) ?? '';
+    if (select.value === '') this.scratchProjectPath = '';
   }
 
   private updateHabitControls(): void {
