@@ -83,12 +83,15 @@ export function projectTypeKey(value: string): string {
   return value.trim().normalize('NFC').toLowerCase();
 }
 
+export function hasProjectMetadataValue(value: unknown): value is string {
+  return typeof value === 'string' && value.trim() !== '';
+}
+
 export function projectMetadataOwner<T extends { frontmatter?: Record<string, unknown> }>(canonical: readonly T[], property: ProjectNoteProperty): T | undefined {
   return canonical.find((note) => {
     const value = note.frontmatter?.[property];
-    // A clear can leave null on the owner when another canonical note still has a type.
-    if (property === 'tangrow_project_type' && value === null) return true;
-    return typeof value === 'string' && value.trim() !== '';
+    // An explicit clear belongs to the owner even if another canonical note still has a value.
+    return value === null || hasProjectMetadataValue(value);
   }) ?? canonical[0];
 }
 

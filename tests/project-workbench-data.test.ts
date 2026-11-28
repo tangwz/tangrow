@@ -147,3 +147,16 @@ test('draft classification requires a draft role outside project directories and
   const { drafts } = buildWorkbenchPara(records, [], [], DEFAULT_SETTINGS);
   assert.deepEqual(drafts.map(({ path }) => path), ['30-Area/Work/Blank link.md', '00-Inbox/No link.md']);
 });
+
+test('an explicit project area clear suppresses another canonical note’s area link', () => {
+  const folder = '20-Project/Plan';
+  const owner = `${folder}/README.md`;
+  const area = '30-Area/Work.md';
+  const { projects, areas } = buildWorkbenchPara([
+    note(`${folder}/Plan.md`), note(owner, { tangrow_area: null }),
+    { ...note(`${folder}/Index.md`, { tangrow_area: '[[Work]]' }), linkedAreaPath: area }, note(area)
+  ], [], [], DEFAULT_SETTINGS);
+  assert.equal(projects[0]?.areaNotePath, owner);
+  assert.equal(projects[0]?.areaPath, null);
+  assert.deepEqual(areas[0]?.projects, []);
+});

@@ -4,6 +4,9 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
+import { reportCaptureCoverage } from '../src/card-report-data';
+import type { WorkbenchArea, WorkbenchProject } from '../src/project-workbench-data';
+import type { ReportRange, ReportSnapshot } from '../src/report-contract';
 import type { CaptureRequest, Settings, Snapshot } from '../src/types';
 import type { MockApp, Plugin as MockPlugin, TFile as MockFile, createMockApp as MockAppFactory } from './obsidian-mock';
 
@@ -11,6 +14,9 @@ interface TestPlugin extends MockPlugin {
   settings: Settings;
   snapshot(): Snapshot;
   processCapture(path: string, request: CaptureRequest): Promise<string | null>;
+  loadReport(range: ReportRange): Promise<ReportSnapshot>;
+  workbenchProjects(): WorkbenchProject[];
+  workbenchAreas(): WorkbenchArea[];
 }
 interface Harness {
   TangrowPlugin: new (app: MockApp) => TestPlugin;
@@ -43,6 +49,32 @@ function fields(file: MockFile): Record<string, unknown> {
 }
 function body(file: MockFile): string { return file.content.slice(harness.getFrontMatterInfo(file.content).contentStart); }
 function notes(app: MockApp): MockFile[] { return app.vault.getMarkdownFiles().filter((file) => fields(file).tangrow_capture_action_id); }
+
+async function assertTaskOwnershipAndProvenance(
+  app: MockApp, plugin: TestPlugin, overview: MockFile, source: MockFile, association: MockFile, role: 'project' | 'area'
+): Promise<void> {
+  const lines = overview.content.split('\n');
+  const line = lines.findIndex((text) => text.startsWith('- [ ]'));
+  const offset = lines.slice(0, line).reduce((sum, text) => sum + text.length + 1, 0);
+  const links = [...lines[line]!.matchAll(/\[\[([^\]]+)\]\]/gu)].map((match) => {
+    const start = match.index!;
+    const end = start + match[0].length;
+    return { link: match[1]!, original: match[0], position: { start: { line, col: start, offset: offset + start }, end: { line, col: end, offset: offset + end } } };
+  });
+  const readCache = app.metadataCache.getFileCache;
+  app.metadataCache.getFileCache = (file) => ({ ...readCache(file), ...(file === overview ? { links } : {}) });
+  app.metadataCache.getFirstLinkpathDest = (path) => app.vault.getMarkdownFiles().find((file) => file.path === path || file.path === `${path}.md`) ?? null;
+  Object.assign(app.metadataCache, { resolvedLinks: {} });
+
+  const report = await plugin.loadReport(90);
+  assert.deepEqual(report.records.find((record) => record.path === overview.path)?.captureTaskSources, [source.path]);
+  assert.equal(reportCaptureCoverage(report).withResult, 1);
+  plugin.snapshot();
+  await new Promise((resolve) => setImmediate(resolve));
+  const entities = role === 'project' ? plugin.workbenchProjects() : plugin.workbenchAreas();
+  const owner = entities.find((entity) => entity.notePath === association.path);
+  assert.deepEqual(owner?.tasks.map((task) => [task.path, task.line, task.sourceKind]), [[overview.path, line, 'overview']]);
+}
 
 test('turning a capture into a note preserves the source body and unknown properties with two-way links', async () => {
   const { app, plugin, source } = setup();
@@ -179,9 +211,10 @@ test('task conversion keeps the selected project link through an interrupted ope
   assert.ok(overview.content.startsWith(content));
   assert.equal((overview.content.match(/^- \[ \]/gm) ?? []).length, 1);
   const projectLink = `[[${app.metadataCache.fileToLinktext(project, overview.path)}]]`;
-  assert.ok(overview.content.includes(`Follow up [[${source.path}]] ${projectLink}`));
+  assert.ok(overview.content.includes(`Follow up ${projectLink} [[${source.path}]] <!-- tangrow-capture:`));
   assert.equal(project.content, '# Launch');
   assert.equal(fields(source).tangrow_capture_processing, undefined);
+  await assertTaskOwnershipAndProvenance(app, plugin, overview, source, project, 'project');
 });
 
 test('PARA filing creates only a new note in an existing area or resource folder', async () => {
@@ -265,9 +298,10 @@ test('task conversion appends the chosen area link from the saved action after a
   await plugin.processCapture(source.path, { action: 'resume' });
   assert.equal((overview.content.match(/^- \[ \]/gm) ?? []).length, 1);
   const areaLink = `[[${app.metadataCache.fileToLinktext(area, overview.path)}]]`;
-  assert.ok(overview.content.includes(`Follow up [[${source.path}]] ${areaLink}`));
+  assert.ok(overview.content.includes(`Follow up ${areaLink} [[${source.path}]] <!-- tangrow-capture:`));
   assert.equal(area.content, '# Work');
   assert.equal(fields(source).tangrow_capture_processing, undefined);
+  await assertTaskOwnershipAndProvenance(app, plugin, overview, source, area, 'area');
 });
 
 test('linking a project and marking processed only update the selected capture properties', async () => {
