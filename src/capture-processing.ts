@@ -1,7 +1,7 @@
 import { getFrontMatterInfo, parseYaml, stringifyYaml, TFile, TFolder, type App } from 'obsidian';
 import { inFolder, safeFolder, safeTitle } from './model';
 import { hasValidSupportFolder } from './folders';
-import { rebaseMarkdownLinks } from './markdown-links';
+import { newNoteCollisionWikiTarget, rebaseMarkdownLinks } from './markdown-links';
 import { collectReportEntities, collectReportResources } from './report-metrics';
 import type { CaptureFilingDestination, CaptureRequest, Settings } from './types';
 
@@ -172,8 +172,8 @@ async function savedResult(app: App, job: CaptureJob, searchMoved: boolean): Pro
 async function createResult(app: App, source: TFile, job: CaptureJob, resume: boolean): Promise<TFile> {
   const saved = await savedResult(app, job, resume);
   if (saved) return saved;
-  const sourceLink = app.fileManager.generateMarkdownLink(source, job.target);
   if (job.action === 'task') {
+    const sourceLink = app.fileManager.generateMarkdownLink(source, job.target);
     const target = markdownFile(app, job.target);
     if (target === source) throw new Error('The task overview must be different from the capture.');
     const marker = `<!-- tangrow-capture:${job.id} -->`;
@@ -188,6 +188,8 @@ async function createResult(app: App, source: TFile, job: CaptureJob, resume: bo
   const info = getFrontMatterInfo(content);
   const body = rebaseMarkdownLinks(info.exists ? content.slice(info.contentStart) : content, source.path, job.target,
     (linkpath, sourcePath) => app.metadataCache.getFirstLinkpathDest(linkpath, sourcePath)?.path ?? null);
+  const collisionTarget = newNoteCollisionWikiTarget(source, job.target);
+  const sourceLink = collisionTarget === null ? app.fileManager.generateMarkdownLink(source, job.target) : `[[${collisionTarget}]]`;
   const fields = {
     tangrow_kind: 'note', created: new Date().toISOString(), tangrow_source: sourceLink,
     tangrow_capture_action_id: job.id, ...(job.project ? { tangrow_project: job.project } : {})

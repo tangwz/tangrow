@@ -235,6 +235,29 @@ test('PARA filing creates only a new note in an existing area or resource folder
   }
 });
 
+test('same-title PARA filing links the result back to the original capture', async () => {
+  const { app, plugin, source } = setup();
+  const original = body(source);
+  const folder = app.vault.seedFolder(`${plugin.settings.resourcesFolder}/Research`);
+  const resultPath = `${folder.path}/${source.basename}.md`;
+  const hostLink = app.fileManager.generateMarkdownLink;
+  app.fileManager.generateMarkdownLink = (file, from) => file === source && from === resultPath
+    ? `[[${file.basename}]]` : hostLink(file, from);
+
+  const path = await plugin.processCapture(source.path, {
+    action: 'note', title: source.basename, destination: { kind: 'resource', path: folder.path }
+  });
+
+  const result = notes(app)[0]!;
+  assert.equal(path, resultPath);
+  assert.equal(result.path, resultPath);
+  assert.equal(fields(result).tangrow_source, '[[00-Inbox/Capture]]');
+  assert.equal(fields(source).tangrow_capture_result, `[[${resultPath}]]`);
+  assert.equal(fields(source).tangrow_capture_processing, undefined);
+  assert.equal(body(source), original);
+  assert.deepEqual(app.vault.createdPaths, [resultPath]);
+});
+
 test('invalid PARA selections cannot prepare an action or create a destination folder', async () => {
   const { app, plugin, source } = setup();
   const nested = app.vault.seedFolder(`${plugin.settings.areaFolder}/Work/Nested`);
